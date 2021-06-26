@@ -14,20 +14,20 @@
  * limitations under the License.
  */
 
-package org.http4s.websocket
+package org.http4s
 
-import java.nio.charset.StandardCharsets._
-import java.util.Base64
-import java.security.MessageDigest
-import cats.effect.Async
+import org.scalajs.dom.crypto.Crypto
+import org.scalajs.dom.crypto.GlobalCrypto
+import scala.util.Try
+import scala.scalajs.js.JavaScriptException
+import scala.scalajs.js.ReferenceError
 
-private[websocket] trait WebSocketHandshakePlatform { self: WebSocketHandshake.type =>
-  private[websocket] def genAcceptKey[F[_]: Async](str: String): F[String] = Async[F].pure {
-    val crypt = MessageDigest.getInstance("SHA-1")
-    crypt.reset()
-    crypt.update(str.getBytes(US_ASCII))
-    crypt.update(magicString)
-    val bytes = crypt.digest()
-    Base64.getEncoder.encodeToString(bytes)
-  }
+package object js {
+
+  lazy val webcrypto: Crypto =
+    Try(GlobalCrypto.crypto).recover {
+      case JavaScriptException(_: ReferenceError) =>
+        NodeJsWebCrypto
+    }.get
+
 }

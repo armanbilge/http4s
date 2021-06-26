@@ -204,7 +204,11 @@ lazy val core = libraryProject("core", CrossType.Full, List(JVMPlatform, JSPlatf
     libraryDependencies += fs2Io.value
   )
   .jsSettings(
-    libraryDependencies += scalaJavaTime.value
+    libraryDependencies ++= Seq(
+      scalaJavaTime.value,
+      scalaJsDom.value // Gets us Web Crypto
+    ),
+    scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
   )
   .jsConfigure(_.disablePlugins(DoctestPlugin))
 
