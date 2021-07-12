@@ -134,7 +134,9 @@ lazy val crossModules: List[CrossProject] = List(
   theDsl,
   jawn,
   boopickle,
+  circeBase,
   circe,
+  circeLight,
   playJson,
   scalaXml,
   twirl,
@@ -189,7 +191,9 @@ lazy val rootFirefox = project
     theDsl.js,
     boopickle.js,
     jawn.js,
-    circe.js,
+    circeBase.js,
+    // circe.js,
+    circeLight.js,
     fetchClient.js)
 
 lazy val core = libraryProject("core", CrossType.Full, List(JVMPlatform, JSPlatform))
@@ -550,22 +554,44 @@ lazy val boopickle = libraryProject("boopickle", CrossType.Pure, List(JVMPlatfor
   .jsConfigure(_.disablePlugins(DoctestPlugin))
   .dependsOn(core, testing % "test->test")
 
-lazy val circe = libraryProject("circe", CrossType.Full, List(JVMPlatform, JSPlatform))
+lazy val circeBase = libraryProject("circe-base", CrossType.Pure, List(JVMPlatform, JSPlatform))
   .settings(
-    description := "Provides Circe codecs for http4s",
-    startYear := Some(2015),
+    description := "Base library to provide Circe codecs for http4s",
+    startYear := Some(2021),
     libraryDependencies ++= Seq(
       circeCore.value,
       circeTesting.value % Test,
       munit.value % Test
     )
   )
-  .jvmSettings(libraryDependencies += circeJawn.value)
-  .jsSettings(
-    libraryDependencies += circeParser.value
-  )
   .dependsOn(core, testing % "test->test")
-  .jvmConfigure(_.dependsOn(jawn.jvm % "compile;test->test"))
+  
+lazy val circe = libraryProject("circe", CrossType.Pure, List(JVMPlatform/*, JSPlatform*/))
+  .settings(
+    description := "Provides Circe codecs for http4s via Jawn",
+    startYear := Some(2015),
+    libraryDependencies ++= Seq(
+      circeCore.value,
+      circeJawn.value,
+      circeTesting.value % Test,
+      munit.value % Test
+    )
+  )
+  .jvmSettings(libraryDependencies += circeJawn.value)
+  .dependsOn(core, circeBase, jawn % "compile;test->test", testing % "test->test")
+
+lazy val circeLight = libraryProject("circe-light", CrossType.Pure, List(JSPlatform))
+  .settings(
+    description := "Provide Circe codecs for http4s via Javascript's built-in JSON parser",
+    startYear := Some(2021),
+    libraryDependencies ++= Seq(
+      circeCore.value,
+      circeParser.value,
+      circeTesting.value % Test,
+      munit.value % Test
+    )
+  )
+  .dependsOn(core, circeBase, testing % "test->test")
 
 lazy val playJson = libraryProject("play-json")
   .settings(
