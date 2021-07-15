@@ -274,6 +274,9 @@ object Http4sPlugin extends AutoPlugin {
       // ),
       // this results in nonexistant directories trying to be compressed
       githubWorkflowArtifactUpload := false,
+      githubWorkflowPublish ~= {
+        _.init ++ Seq(WorkflowStep.Sbt(List("sonatypeBundleRelease"))) 
+      }
       // githubWorkflowAddedJobs := Seq(
       //   siteBuildJob("website"),
       //   siteBuildJob("docs")
