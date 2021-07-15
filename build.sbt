@@ -16,6 +16,10 @@ ThisBuild / publishFullName := "Ross A. Baker"
 
 sonatypeCredentialHost := "s01.oss.sonatype.org"
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+ThisBuild / version ~= {
+  _.replace("-SNAPSHOT", "")
+}
+ThisBuild / isSnapshot := false
 
 ThisBuild / githubWorkflowUseSbtThinClient := false
 ThisBuild / githubWorkflowBuildPreamble ++=
