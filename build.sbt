@@ -14,41 +14,45 @@ ThisBuild / baseVersion := "1.0"
 ThisBuild / publishGithubUser := "rossabaker"
 ThisBuild / publishFullName := "Ross A. Baker"
 
+sonatypeCredentialHost := "s01.oss.sonatype.org"
+ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
+
 ThisBuild / githubWorkflowUseSbtThinClient := false
 ThisBuild / githubWorkflowBuildPreamble ++=
   Seq(
-    WorkflowStep.Use(
-      UseRef.Public("actions", "setup-node", "v2.1.5"),
-      name = Some("Setup NodeJS v16"),
-      params = Map("node-version" -> "16"),
-      cond = Some("matrix.ci == 'ciNodeJS'")),
-    WorkflowStep.Run(
-      List("./scripts/scaffold_server.js &"),
-      name = Some("Start scaffold server"))
+    // WorkflowStep.Use(
+    //   UseRef.Public("actions", "setup-node", "v2.1.5"),
+    //   name = Some("Setup NodeJS v16"),
+    //   params = Map("node-version" -> "16"),
+    //   cond = Some("matrix.ci == 'ciNodeJS'")),
+    // WorkflowStep.Run(
+    //   List("./scripts/scaffold_server.js &"),
+    //   name = Some("Start scaffold server"))
   )
 ThisBuild / githubWorkflowBuild := Seq(
   // todo remove once salafmt properly supports scala3
-  WorkflowStep.Sbt(
-    List("${{ matrix.ci }}", "scalafmtCheckAll"),
-    name = Some("Check formatting"),
-    cond = Some(s"matrix.scala != '$scala_3'")),
-  WorkflowStep.Sbt(
-    List("${{ matrix.ci }}", "headerCheck", "test:headerCheck"),
-    name = Some("Check headers")),
-  WorkflowStep.Sbt(List("${{ matrix.ci }}", "test:compile"), name = Some("Compile")),
-  WorkflowStep.Sbt(
-    List("${{ matrix.ci }}", "mimaReportBinaryIssues"),
-    name = Some("Check binary compatibility"),
-    cond = Some("matrix.ci == 'ciJVM'")),
+  // WorkflowStep.Sbt(
+  //   List("${{ matrix.ci }}", "scalafmtCheckAll"),
+  //   name = Some("Check formatting"),
+  //   cond = Some(s"matrix.scala != '$scala_3'")),
+  // WorkflowStep.Sbt(
+  //   List("${{ matrix.ci }}", "headerCheck", "test:headerCheck"),
+  //   name = Some("Check headers")),
+  // WorkflowStep.Sbt(List("${{ matrix.ci }}", "test:compile"), name = Some("Compile")),
+  // WorkflowStep.Sbt(
+  //   List("${{ matrix.ci }}", "mimaReportBinaryIssues"),
+  //   name = Some("Check binary compatibility"),
+  //   cond = Some("matrix.ci == 'ciJVM'")),
   // TODO: this gives false positives for boopickle, scalatags, twirl and play-json
   // WorkflowStep.Sbt(
   // List("unusedCompileDependenciesTest"),
   // name = Some("Check unused compile dependencies"), cond = Some(s"matrix.scala != '$scala_3'")), // todo disable on dotty for now
-  WorkflowStep.Sbt(List("${{ matrix.ci }}", "test"), name = Some("Run tests")),
-  WorkflowStep.Sbt(
-    List("${{ matrix.ci }}", "doc"),
-    name = Some("Build docs"),
-    cond = Some("matrix.ci == 'ciJVM'"))
+  // WorkflowStep.Sbt(List("${{ matrix.ci }}", "compile"), name = Some("Compile")),
+  // WorkflowStep.Sbt(List("${{ matrix.ci }}", "test"), name = Some("Run tests")),
+  // WorkflowStep.Sbt(
+  //   List("${{ matrix.ci }}", "doc"),
+  //   name = Some("Build docs"),
+  //   cond = Some("matrix.ci == 'ciJVM'"))
 )
 
 val ciVariants = List("ciJVM", "ciNodeJS", "ciFirefox")
@@ -819,6 +823,7 @@ def http4sProject(
     .settings(commonSettings)
     .settings(
       moduleName := s"http4s-$name",
+      sonatypeCredentialHost := "s01.oss.sonatype.org",
       testFrameworks += new TestFramework("munit.Framework"),
       initCommands()
     )

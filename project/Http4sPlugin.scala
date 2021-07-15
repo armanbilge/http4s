@@ -83,8 +83,7 @@ object Http4sPlugin extends AutoPlugin {
     dependencyUpdatesFilter -= moduleFilter(name = "boopickle", revision = "1.3.2"),
     headerSources / excludeFilter := HiddenFileFilter ||
       new FileFilter {
-        def accept(file: File) =
-          attributedSources.contains(baseDirectory.value.toPath.relativize(file.toPath).toString)
+        def accept(file: File) = true
 
         val attributedSources = Set(
           "shared/src/main/scala/org/http4s/CacheDirective.scala",
@@ -124,12 +123,7 @@ object Http4sPlugin extends AutoPlugin {
         )
       },
     nowarnCompatAnnotationProvider := None,
-    mimaPreviousArtifacts := {
-      mimaPreviousArtifacts.value.filterNot(
-        // cursed release
-        _.revision == "0.21.10"
-      )
-    }
+    mimaPreviousArtifacts := Set.empty
   )
 
   def extractApiVersion(version: String) = {
@@ -249,16 +243,16 @@ object Http4sPlugin extends AutoPlugin {
 
     Http4sOrgPlugin.githubActionsSettings ++ Seq(
       githubWorkflowBuild := Seq(
-        WorkflowStep
-          .Sbt(List("scalafmtCheckAll"), name = Some("Check formatting")),
-        WorkflowStep.Sbt(List("headerCheck", "test:headerCheck"), name = Some("Check headers")),
-        WorkflowStep.Sbt(List("test:compile"), name = Some("Compile")),
-        WorkflowStep.Sbt(List("mimaReportBinaryIssues"), name = Some("Check binary compatibility")),
-        WorkflowStep.Sbt(
-          List("unusedCompileDependenciesTest"),
-          name = Some("Check unused dependencies")),
-        WorkflowStep.Sbt(List("test"), name = Some("Run tests")),
-        WorkflowStep.Sbt(List("doc"), name = Some("Build docs"))
+        // WorkflowStep
+        //   .Sbt(List("scalafmtCheckAll"), name = Some("Check formatting")),
+        // WorkflowStep.Sbt(List("headerCheck", "test:headerCheck"), name = Some("Check headers")),
+        WorkflowStep.Sbt(List("compile"), name = Some("Compile")),
+        // WorkflowStep.Sbt(List("mimaReportBinaryIssues"), name = Some("Check binary compatibility")),
+        // WorkflowStep.Sbt(
+        //   List("unusedCompileDependenciesTest"),
+        //   name = Some("Check unused dependencies")),
+        // WorkflowStep.Sbt(List("test"), name = Some("Run tests")),
+        // WorkflowStep.Sbt(List("doc"), name = Some("Build docs"))
       ),
       githubWorkflowTargetBranches :=
         // "*" doesn't include slashes
@@ -270,19 +264,20 @@ object Http4sPlugin extends AutoPlugin {
       },
       githubWorkflowPublishTargetBranches := Seq(
         RefPredicate.Equals(Ref.Branch("main")),
-        RefPredicate.StartsWith(Ref.Tag("v"))
+        RefPredicate.StartsWith(Ref.Tag("v")),
+        RefPredicate.Equals(Ref.Branch("series/armanbilge"))
       ),
-      githubWorkflowPublishPostamble := Seq(
-        setupHugoStep,
-        sitePublishStep("website")
-        // sitePublishStep("docs")
-      ),
+      // githubWorkflowPublishPostamble := Seq(
+      //   setupHugoStep,
+      //   sitePublishStep("website")
+      //   sitePublishStep("docs")
+      // ),
       // this results in nonexistant directories trying to be compressed
       githubWorkflowArtifactUpload := false,
-      githubWorkflowAddedJobs := Seq(
-        siteBuildJob("website"),
-        siteBuildJob("docs")
-      )
+      // githubWorkflowAddedJobs := Seq(
+      //   siteBuildJob("website"),
+      //   siteBuildJob("docs")
+      // )
     )
   }
 

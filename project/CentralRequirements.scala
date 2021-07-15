@@ -11,7 +11,7 @@ object CentralRequirementsPlugin extends AutoPlugin {
   override def requires = Sonatype
 
   override lazy val projectSettings = Seq(
-    sonatypeProfileName := "org.http4s",
+    sonatypeProfileName := "com.armanbilge",
     developers ++= List(
       // n.b. alphabetical by GitHub username
       Developer("aeons", "Bjørn Madsen", "bm@aeons.dk", url("https://github.com/aeons")),
