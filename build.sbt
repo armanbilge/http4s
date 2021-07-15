@@ -14,6 +14,8 @@ ThisBuild / baseVersion := "1.0"
 ThisBuild / publishGithubUser := "rossabaker"
 ThisBuild / publishFullName := "Ross A. Baker"
 
+sonatypeProfileName := "com.armanbilge"
+ThisBuild / sonatypeProfileName := "com.armanbilge"
 sonatypeCredentialHost := "s01.oss.sonatype.org"
 ThisBuild / sonatypeCredentialHost := "s01.oss.sonatype.org"
 ThisBuild / version ~= {
@@ -827,6 +829,7 @@ def http4sProject(
     .settings(commonSettings)
     .settings(
       moduleName := s"http4s-$name",
+      sonatypeProfileName := "com.armanbilge",
       sonatypeCredentialHost := "s01.oss.sonatype.org",
       testFrameworks += new TestFramework("munit.Framework"),
       initCommands()
