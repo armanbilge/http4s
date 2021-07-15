@@ -22,6 +22,10 @@ ThisBuild / version ~= {
   _.replace("-SNAPSHOT", "")
 }
 ThisBuild / isSnapshot := false
+organization := "com.armanbilge"
+organizationName := "Arman Bilge"
+ThisBuild / organization := "com.armanbilge"
+ThisBuild / organizationName := "Arman Bilge"
 
 ThisBuild / githubWorkflowUseSbtThinClient := false
 ThisBuild / githubWorkflowBuildPreamble ++=
@@ -830,6 +834,8 @@ def http4sProject(
     .settings(
       moduleName := s"http4s-$name",
       sonatypeProfileName := "com.armanbilge",
+      organization := "com.armanbilge",
+      organizationName := "Arman Bilge",
       sonatypeCredentialHost := "s01.oss.sonatype.org",
       testFrameworks += new TestFramework("munit.Framework"),
       initCommands()
