@@ -218,7 +218,7 @@ lazy val core = libraryProject("core", CrossType.Full, List(JVMPlatform, JSPlatf
       scalaVersion,
       BuildInfoKey.map(http4sApiVersion) { case (_, v) => "apiVersion" -> v }
     ),
-    buildInfoPackage := organization.value,
+    buildInfoPackage := "org.http4s",
     libraryDependencies ++= Seq(
       caseInsensitive.value,
       catsCore.value,
