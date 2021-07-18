@@ -129,6 +129,9 @@ lazy val crossModules: List[CrossProject] = List(
   fetchClient,
   jettyServer,
   jettyClient,
+  nodeCore,
+  nodeServer,
+  nodeClient,
   okHttpClient,
   servlet,
   tomcatServer,
@@ -472,6 +475,37 @@ lazy val jettyClient = libraryProject("jetty-client")
     )
   )
   .dependsOn(core, testing % "test->test", client % "compile;test->test")
+
+lazy val nodeCore = libraryProject("node-core", CrossType.Pure, List(JSPlatform))
+  .settings(
+    description := "base for Node.js server/client",
+    startYear := Some(2021),
+    libraryDependencies ++= Seq(
+      "co.fs2" %%% "fs2-node" % V.fs2,
+      munit.value % Test
+    )
+  )
+  .dependsOn(core, testing % "test->test", client % "compile;test->test")
+
+lazy val nodeServer = libraryProject("node-server", CrossType.Pure, List(JSPlatform))
+  .settings(
+    description := "Node.js implementation for http4s servers",
+    startYear := Some(2021),
+    libraryDependencies ++= Seq(
+      munit.value % Test
+    )
+  )
+  .dependsOn(nodeCore, testing % "test->test", server % "compile;test->test")
+
+lazy val nodeClient = libraryProject("node-client", CrossType.Pure, List(JSPlatform))
+  .settings(
+    description := "Node.js implementation for http4s clients",
+    startYear := Some(2021),
+    libraryDependencies ++= Seq(
+      munit.value % Test
+    )
+  )
+  .dependsOn(nodeCore, testing % "test->test", client % "compile;test->test")
 
 lazy val okHttpClient = libraryProject("okhttp-client")
   .settings(
