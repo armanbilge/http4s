@@ -493,7 +493,7 @@ lazy val nodeCore = libraryProject("node-core", CrossType.Pure, List(JSPlatform)
     description := "base for Node.js server/client",
     startYear := Some(2021),
     libraryDependencies ++= Seq(
-      "co.fs2" %%% "fs2-node" % V.fs2,
+      fs2Io.value,
       munit.value % Test
     )
   )

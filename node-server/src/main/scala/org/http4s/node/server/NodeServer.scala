@@ -23,6 +23,7 @@ import cats.effect.std.Dispatcher
 import cats.effect.kernel.Async
 import cats.effect.kernel.Resource
 import com.comcast.ip4s.{Host, SocketAddress}
+import fs2.io
 import fs2.internal.jsdeps.node.httpMod
 import fs2.internal.jsdeps.node.netMod
 import scala.scalajs.js
@@ -97,7 +98,7 @@ object NodeServer {
         method <- F.fromEither(Method.fromString(req.method.get))
         uri <- F.fromEither(Uri.fromString(req.url.get))
         headers = Headers(req.headers.asInstanceOf[js.Dictionary[String]].toList)
-        body = fromReadable(F.pure(req.asInstanceOf[streamMod.Readable]))
+        body = io.fromReadable(F.pure(req.asInstanceOf[io.Readable]))
         request = Request(method, uri, headers = headers, body = body)
         response <- app.run(request)
         _ <- F.delay[Unit] {
@@ -108,7 +109,7 @@ object NodeServer {
           res.writeHead(response.status.code.toDouble, response.status.reason, headers)
         }
         _ <- response.body
-          .through(fromWritable(F.pure(res.asInstanceOf[streamMod.Writable])))
+          .through(io.fromWritable(F.pure(res.asInstanceOf[io.Writable])))
           .compile
           .drain
         _ <- F.async_[Unit](cb => res.asInstanceOf[streamMod.Writable].end(() => cb(Right(()))))
