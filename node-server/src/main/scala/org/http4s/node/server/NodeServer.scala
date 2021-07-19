@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-package org.http4s.node
+package org.http4s
+package node
 package server
 
 import org.http4s.server.Server
@@ -36,10 +37,14 @@ import org.http4s.Headers
 import fs2.internal.jsdeps.node.streamMod
 import org.http4s.Header
 import scala.scalajs.js.|
+import com.comcast.ip4s.Port
+import fs2.internal.jsdeps.node.nodeStrings
 
 object NodeServer {
 
   def apply[F[_]](
+      host: Option[Host] = Host.fromString(org.http4s.server.defaults.IPv4Host),
+      port: Port = Port.fromInt(org.http4s.server.defaults.HttpPort).get,
       httpApp: HttpApp[F],
       insecureHttpParser: Boolean = false,
       maxHeaderSize: Int = 16384
@@ -59,10 +64,27 @@ object NodeServer {
             cb(e.toLeft(()).leftMap(js.JavaScriptException(_)))
           }
         })
-      ipAddress <- F
-        .delay(
-          SocketAddress.fromString(server.asInstanceOf[netMod.Server].address().toString()).get)
+      error <- F.deferred[Throwable].toResource
+      _ <- F.delay {
+        server
+          .asInstanceOf[netMod.Server]
+          .on_error(
+            nodeStrings.error,
+            e => dispatcher.unsafeRunAndForget(error.complete(js.JavaScriptException(e))))
+      }.toResource
+      _ <- error.get
+        .race(F.async_[Unit] { cb =>
+          val options = netMod.ListenOptions()
+          host.map(_.toString).foreach(options.setHost)
+          options.setPort(port.value.toDouble)
+          server.asInstanceOf[netMod.Server].listen(options, () => cb(Right(())))
+        })
         .toResource
+        .rethrow
+      ipAddress <- F.delay {
+        val info = server.asInstanceOf[netMod.Server].address().asInstanceOf[netMod.AddressInfo]
+        (Host.fromString(info.address), Port.fromInt(info.port.toInt)).mapN(SocketAddress(_, _)).get
+      }.toResource
     } yield new Server {
       override val address: SocketAddress[Host] = ipAddress
       override def isSecure: Boolean = false
@@ -89,6 +111,7 @@ object NodeServer {
           .through(fromWritable(F.pure(res.asInstanceOf[streamMod.Writable])))
           .compile
           .drain
+        _ <- F.async_[Unit](cb => res.asInstanceOf[streamMod.Writable].end(() => cb(Right(()))))
       } yield ()
 
       dispatcher.unsafeRunAndForget(run)
