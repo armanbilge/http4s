@@ -504,9 +504,11 @@ lazy val nodeServer = libraryProject("node-server", CrossType.Pure, List(JSPlatf
     description := "Node.js implementation for http4s servers",
     startYear := Some(2021),
     libraryDependencies ++= Seq(
+      catsEffect.value,
       munit.value % Test
     ),
-    Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+    scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)),
+    scalaJSUseMainModuleInitializer := true
   )
   .dependsOn(
     nodeCore,
