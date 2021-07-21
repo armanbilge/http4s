@@ -59,10 +59,9 @@ http.createServer(async (req, res) => {
   } else if (req.method === 'POST') {
     let body = [];
     req.on('data', (chunk) => {
-      body.push(chunk);
+      res.write(chunk);
     }).on('end', () => {
-      body = Buffer.concat(body).toString();
-      res.end(body);
+      res.end();
     });
   } else {
     res.statusCode = 404;

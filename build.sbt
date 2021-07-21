@@ -7,6 +7,8 @@ import org.scalajs.jsenv.selenium.SeleniumJSEnv
 import sbtcrossproject.{CrossProject, CrossType, Platform}
 import scala.xml.transform.{RewriteRule, RuleTransformer}
 
+Global / scalaJSStage := FullOptStage
+
 // Global settings
 ThisBuild / crossScalaVersions := Seq(scala_213, scala_212, scala_3)
 ThisBuild / scalaVersion := (ThisBuild / crossScalaVersions).value.filter(_.startsWith("2.")).last
