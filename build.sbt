@@ -2,10 +2,19 @@ import com.typesafe.tools.mima.core._
 import explicitdeps.ExplicitDepsPlugin.autoImport.moduleFilterRemoveValue
 import org.http4s.sbt.Http4sPlugin._
 import org.http4s.sbt.ScaladocApiMapping
+import org.openqa.selenium.WebDriver
+import org.openqa.selenium.remote.server.DriverFactory
+import org.openqa.selenium.remote.server.DriverProvider
+import org.openqa.selenium.chrome.ChromeDriver
+import org.openqa.selenium.chrome.ChromeOptions
 import org.openqa.selenium.firefox.FirefoxOptions
+import org.openqa.selenium.firefox.FirefoxProfile
 import org.scalajs.jsenv.selenium.SeleniumJSEnv
 import sbtcrossproject.{CrossProject, CrossType, Platform}
+import java.util.concurrent.TimeUnit
 import scala.xml.transform.{RewriteRule, RuleTransformer}
+
+import JSEnv._
 
 // Global settings
 ThisBuild / crossScalaVersions := Seq(scala_213, scala_212, scala_3)
@@ -65,12 +74,13 @@ ThisBuild / githubWorkflowBuild := Seq(
   //   cond = Some("matrix.ci == 'ciJVM'"))
 )
 
-val ciVariants = List("ciJVM", "ciNodeJS", "ciFirefox")
+val ciVariants = List("ciJVM", "ciNodeJS", "ciFirefox", "ciChrome")
+val jsCiVariants = ciVariants.tail
 ThisBuild / githubWorkflowBuildMatrixAdditions += "ci" -> ciVariants
 
 val ScalaJSJava = "adopt@1.8"
 ThisBuild / githubWorkflowBuildMatrixExclusions ++= {
-  Seq("ciNodeJS", "ciFirefox").flatMap { ci =>
+  jsCiVariants.flatMap { ci =>
     val javaFilters =
       (ThisBuild / githubWorkflowJavaVersions).value.filterNot(Set(ScalaJSJava)).map { java =>
         MatrixExclude(Map("ci" -> ci, "java" -> java))
@@ -80,19 +90,42 @@ ThisBuild / githubWorkflowBuildMatrixExclusions ++= {
   }
 }
 
-lazy val useFirefoxEnv =
-  settingKey[Boolean]("Use headless Firefox (via geckodriver) for running tests")
-Global / useFirefoxEnv := false
+lazy val useJSEnv =
+  settingKey[JSEnv]("Use Node.js or a headless browser for running Scala.js tests")
+Global / useJSEnv := NodeJS
 
 ThisBuild / Test / jsEnv := {
   val old = (Test / jsEnv).value
 
-  if (useFirefoxEnv.value) {
-    val options = new FirefoxOptions()
-    options.addArguments("-headless")
-    new SeleniumJSEnv(options)
-  } else {
-    old
+  val config = SeleniumJSEnv
+    .Config()
+    .withMaterializeInServer("target/selenium", "http://localhost:8889/target/selenium/")
+
+  useJSEnv.value match {
+    case NodeJS => old
+    case Firefox =>
+      val profile = new FirefoxProfile()
+      profile.setPreference("devtools.serviceWorkers.testing.enabled", true)
+      val options = new FirefoxOptions()
+      options.setProfile(profile)
+      options.addArguments("-headless")
+      new SeleniumJSEnv(options, config)
+    case Chrome =>
+      val options = new ChromeOptions()
+      options.setHeadless(true)
+      options.addArguments("--allow-file-access-from-files")
+      val factory = new DriverFactory {
+        val defaultFactory = SeleniumJSEnv.Config().driverFactory
+        def newInstance(capabilities: org.openqa.selenium.Capabilities): WebDriver = {
+          val driver = defaultFactory.newInstance(capabilities).asInstanceOf[ChromeDriver]
+          driver.manage().timeouts().pageLoadTimeout(1, TimeUnit.HOURS)
+          driver.manage().timeouts().setScriptTimeout(1, TimeUnit.HOURS)
+          driver
+        }
+        def registerDriverProvider(provider: DriverProvider): Unit =
+          defaultFactory.registerDriverProvider(provider)
+      }
+      new SeleniumJSEnv(options, config.withDriverFactory(factory))
   }
 }
 
@@ -112,9 +145,10 @@ ThisBuild / githubWorkflowAddedJobs ++= Seq(
 
 addCommandAlias("ciJVM", "; project rootJVM")
 addCommandAlias("ciNodeJS", "; set parallelExecution := false; project rootNodeJS")
-addCommandAlias(
-  "ciFirefox",
-  "; set parallelExecution := false; set Global / useFirefoxEnv := true; project rootFirefox")
+def browserCiCommand(browser: JSEnv) =
+  s"; set parallelExecution := false; set Global / useJSEnv := JSEnv.$browser; project rootBrowser"
+addCommandAlias("ciFirefox", browserCiCommand(Firefox))
+addCommandAlias("ciChrome", browserCiCommand(Chrome))
 
 enablePlugins(SonatypeCiReleasePlugin)
 
@@ -128,6 +162,7 @@ lazy val crossModules: List[CrossProject] = List(
   testing,
   tests,
   server,
+  serverTesting,
   prometheusMetrics,
   client,
   dropwizardMetrics,
@@ -138,9 +173,13 @@ lazy val crossModules: List[CrossProject] = List(
   blazeServer,
   blazeClient,
   asyncHttpClient,
-  fetchClient,
+  domCore,
+  domFetchClient,
+  domServiceWorker,
+  domServiceWorkerTests,
   jettyServer,
   jettyClient,
+  nodeServerless,
   okHttpClient,
   servlet,
   tomcatServer,
@@ -189,9 +228,15 @@ lazy val rootJS = project
 
 lazy val rootNodeJS = project
   .enablePlugins(NoPublishPlugin)
-  .aggregate(jsModules.filter(_ != (fetchClient.js: ProjectReference)): _*)
+  .aggregate(
+    jsModules.filterNot(
+      Set[ProjectReference](
+        domCore.js,
+        domFetchClient.js,
+        domServiceWorker.js,
+        domServiceWorkerTests.js)): _*)
 
-lazy val rootFirefox = project
+lazy val rootBrowser = project
   .enablePlugins(NoPublishPlugin)
   .aggregate(
     core.js,
@@ -203,7 +248,11 @@ lazy val rootFirefox = project
     boopickle.js,
     jawn.js,
     circe.js,
-    fetchClient.js)
+    domCore.js,
+    domFetchClient.js,
+    domServiceWorker.js,
+    domServiceWorkerTests.js
+  )
 
 lazy val core = libraryProject("core", CrossType.Full, List(JVMPlatform, JSPlatform))
   .enablePlugins(
@@ -228,6 +277,7 @@ lazy val core = libraryProject("core", CrossType.Full, List(JVMPlatform, JSPlatf
       ip4sCore.value,
       literally.value,
       log4s.value,
+      munit.value % Test,
       scodecBits.value,
       slf4jApi, // residual dependency from macros
       vault.value
@@ -311,6 +361,17 @@ lazy val server = libraryProject("server", CrossType.Full, List(JVMPlatform, JSP
   .jsSettings(Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
   .dependsOn(core, testing % "test->test", theDsl % "test->compile")
 
+// Defined outside server to avoid circular dependency with client
+lazy val serverTesting =
+  libraryProject("server-testing", CrossType.Pure, List(JVMPlatform, JSPlatform))
+    .enablePlugins(NoPublishPlugin)
+    .settings(
+      description := "Tests for server project",
+      startYear := Some(2021)
+    )
+    .jsConfigure(_.disablePlugins(DoctestPlugin))
+    .dependsOn(server, testing % "test->test", client % "test->test")
+
 lazy val prometheusMetrics = libraryProject("prometheus-metrics")
   .settings(
     description := "Support for Prometheus Metrics",
@@ -363,7 +424,9 @@ lazy val emberCore = libraryProject("ember-core", CrossType.Pure, List(JVMPlatfo
       log4catsTesting.value % Test
     )
   )
-  .jsSettings(Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)))
+  .jsSettings(
+    Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+  )
   .dependsOn(core, testing % "test->test")
 
 lazy val emberServer = libraryProject("ember-server", CrossType.Full, List(JVMPlatform, JSPlatform))
@@ -371,15 +434,25 @@ lazy val emberServer = libraryProject("ember-server", CrossType.Full, List(JVMPl
     description := "ember implementation for http4s servers",
     startYear := Some(2019)
   )
-  .jvmSettings(libraryDependencies += log4catsSlf4j.value)
+  .jvmSettings(
+    libraryDependencies ++= Seq(
+      log4catsSlf4j.value,
+      javaWebSocket % Test
+    ),
+    Test / parallelExecution := false
+  )
   .jsSettings(
     libraryDependencies += log4catsNoop.value,
+    Test / npmDependencies += "ws" -> "8.0.0",
+    useYarn := true,
     Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
   )
   .dependsOn(
     emberCore % "compile;test->test",
     server % "compile;test->test",
+    serverTesting % "test->test",
     emberClient % "test->compile")
+  .jsEnablePlugins(ScalaJSBundlerPlugin)
 
 lazy val emberClient = libraryProject("ember-client", CrossType.Full, List(JVMPlatform, JSPlatform))
   .settings(
@@ -408,12 +481,7 @@ lazy val blazeCore = libraryProject("blaze-core")
 lazy val blazeServer = libraryProject("blaze-server")
   .settings(
     description := "blaze implementation for http4s servers",
-    startYear := Some(2014),
-    mimaBinaryIssueFilters ++= Seq(
-      // private constructor with new parameter
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.server.blaze.BlazeServerBuilder.this")
-    )
+    startYear := Some(2014)
   )
   .dependsOn(blazeCore % "compile;test->test", server % "compile;test->test")
 
@@ -421,29 +489,7 @@ lazy val blazeClient = libraryProject("blaze-client")
   .settings(
     description := "blaze implementation for http4s clients",
     startYear := Some(2014),
-    mimaBinaryIssueFilters ++= Seq(
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.client.blaze.Http1Connection#Idle.canEqual"),
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.client.blaze.Http1Connection#Idle.productArity"),
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.client.blaze.Http1Connection#Idle.productElement"),
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.client.blaze.Http1Connection#Idle.productElementName"),
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.client.blaze.Http1Connection#Idle.productElementNames"),
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.client.blaze.Http1Connection#Idle.productIterator"),
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.client.blaze.Http1Connection#Idle.productPrefix"),
-      ProblemFilters.exclude[DirectMissingMethodProblem](
-        "org.http4s.client.blaze.Http1Connection.reset"),
-      ProblemFilters.exclude[FinalMethodProblem](
-        "org.http4s.client.blaze.Http1Connection#Idle.toString"),
-      ProblemFilters.exclude[MissingClassProblem](
-        "org.http4s.client.blaze.Http1Connection$Running$"),
-      ProblemFilters.exclude[MissingTypesProblem]("org.http4s.client.blaze.Http1Connection$Idle$")
-    )
+    mimaBinaryIssueFilters ++= Seq()
   )
   .dependsOn(blazeCore % "compile;test->test", client % "compile;test->test")
 
@@ -462,16 +508,47 @@ lazy val asyncHttpClient = libraryProject("async-http-client")
   )
   .dependsOn(core, testing % "test->test", client % "compile;test->test")
 
-lazy val fetchClient = libraryProject("fetch-client", CrossType.Pure, List(JSPlatform))
+lazy val domCore = libraryProject("dom-core", CrossType.Pure, List(JSPlatform))
   .settings(
-    description := "browser fetch implementation for http4s clients",
+    description := "Base library for dom http4s client and apps",
     startYear := Some(2021),
     libraryDependencies ++= Seq(
       scalaJsDom.value.cross(CrossVersion.for3Use2_13),
       munit.value % Test
     )
   )
-  .dependsOn(core, testing % "test->test", client % "compile;test->test")
+  .dependsOn(core, testing % "test->test")
+
+lazy val domFetchClient = libraryProject("dom-fetch-client", CrossType.Pure, List(JSPlatform))
+  .settings(
+    description := "browser fetch implementation for http4s clients",
+    startYear := Some(2021)
+  )
+  .dependsOn(domCore, testing % "test->test", client % "compile;test->test")
+
+lazy val domServiceWorker = libraryProject("dom-service-worker", CrossType.Pure, List(JSPlatform))
+  .settings(
+    description := "browser service worker implementation for http4s apps",
+    startYear := Some(2021),
+    libraryDependencies += catsEffect.value
+  )
+  .dependsOn(domCore)
+
+// These
+lazy val domServiceWorkerTests =
+  libraryProject("dom-service-worker-tests", CrossType.Pure, List(JSPlatform))
+    .enablePlugins(BuildInfoPlugin, NoPublishPlugin)
+    .settings(
+      scalaJSUseMainModuleInitializer := true,
+      (Test / test) := (Test / test).dependsOn(Compile / fastOptJS).value,
+      buildInfoKeys := Seq[BuildInfoKey](scalaVersion),
+      buildInfoPackage := "org.http4s.dom"
+    )
+    .dependsOn(
+      domServiceWorker,
+      testing % "test->test",
+      serverTesting % "compile->test",
+      domFetchClient % Test)
 
 lazy val jettyClient = libraryProject("jetty-client")
   .settings(
@@ -484,6 +561,19 @@ lazy val jettyClient = libraryProject("jetty-client")
     )
   )
   .dependsOn(core, testing % "test->test", client % "compile;test->test")
+
+lazy val nodeServerless = libraryProject("node-serverless", CrossType.Pure, List(JSPlatform))
+  .settings(
+    description := "Node.js serverless wrapper for http4s apps",
+    startYear := Some(2021),
+    libraryDependencies ++= Seq(
+      fs2Io.value,
+      munit.value % Test
+    ),
+    scalacOptions ~= { _.filterNot(_ == "-Xfatal-warnings") },
+    Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+  )
+  .dependsOn(core, testing % "test->test", serverTesting % "test->test", emberClient % Test)
 
 lazy val okHttpClient = libraryProject("okhttp-client")
   .settings(
@@ -560,31 +650,25 @@ lazy val boopickle = libraryProject("boopickle", CrossType.Pure, List(JVMPlatfor
     description := "Provides Boopickle codecs for http4s",
     startYear := Some(2018),
     libraryDependencies ++= Seq(
-      Http4sPlugin.boopickle.value.cross(CrossVersion.for3Use2_13),
+      Http4sPlugin.boopickle.value,
       munit.value % Test
-    ),
-    compile / skip := isDotty.value,
-    publish / skip := isDotty.value
+    )
   )
   .jsConfigure(_.disablePlugins(DoctestPlugin))
   .dependsOn(core, testing % "test->test")
 
-lazy val circe = libraryProject("circe", CrossType.Full, List(JVMPlatform, JSPlatform))
+lazy val circe = libraryProject("circe", CrossType.Pure, List(JVMPlatform, JSPlatform))
   .settings(
     description := "Provides Circe codecs for http4s",
     startYear := Some(2015),
     libraryDependencies ++= Seq(
       circeCore.value,
+      circeJawn.value,
       circeTesting.value % Test,
       munit.value % Test
     )
   )
-  .jvmSettings(libraryDependencies += circeJawn.value)
-  .jsSettings(
-    libraryDependencies += circeParser.value
-  )
-  .dependsOn(core, testing % "test->test")
-  .jvmConfigure(_.dependsOn(jawn.jvm % "compile;test->test"))
+  .dependsOn(core, jawn % "compile;test->test", testing % "test->test")
 
 lazy val playJson = libraryProject("play-json")
   .settings(
