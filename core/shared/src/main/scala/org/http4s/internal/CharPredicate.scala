@@ -123,35 +123,14 @@ object CharPredicate {
   def apply(magnets: ApplyMagnet*): CharPredicate =
     magnets.foldLeft(Empty)((a, m) => a ++ m.predicate)
 
-  class ApplyMagnet(val predicate: CharPredicate)
-
-  object ApplyMagnet {
-    implicit def fromPredicate(predicate: Char => Boolean): ApplyMagnet = new ApplyMagnet(
-      from(predicate)
-    )
-    implicit def fromChar(c: Char): ApplyMagnet = fromChars(c :: Nil)
-    implicit def fromCharArray(array: Array[Char]): ApplyMagnet = fromChars(array.toIndexedSeq)
-    implicit def fromString(chars: String): ApplyMagnet = fromChars(chars)
-
-    implicit def fromChars(chars: Seq[Char]): ApplyMagnet =
-      chars match {
-        case _ if chars.size < 128 & !chars.exists(unmaskable) =>
-          @tailrec def rec(ix: Int, result: CharPredicate): CharPredicate =
-            if (ix == chars.length) result else rec(ix + 1, result ++ chars(ix))
-          new ApplyMagnet(rec(0, Empty))
-        case r: NumericRange[Char] => new ApplyMagnet(new RangeBased(r))
-        case _ => new ApplyMagnet(new ArrayBased(chars.toArray))
-      }
-  }
-
   // /////////////////////// PRIVATE ////////////////////////////
 
-  private def unmaskable(c: Char) = c >= 128
+  private[internal] def unmaskable(c: Char) = c >= 128
 
   // scalafix:off Http4sGeneralLinters.nonValidatingCopyConstructor; bincompat until 1.0
 
   // efficient handling of 7bit-ASCII chars
-  final case class MaskBased private[CharPredicate] (lowMask: Long, highMask: Long)
+  final case class MaskBased private[internal] (lowMask: Long, highMask: Long)
       extends CharPredicate {
 
     def apply(c: Char): Boolean = {
@@ -230,7 +209,7 @@ object CharPredicate {
     override def toString(): String = "CharPredicate.MaskBased(" + new String(toArray) + ')'
   }
 
-  final class RangeBased private[CharPredicate] (private val range: NumericRange[Char])
+  final class RangeBased private[internal] (private val range: NumericRange[Char])
       extends CharPredicate {
     def apply(c: Char): Boolean = range contains c
 
@@ -263,8 +242,7 @@ object CharPredicate {
         s"step = ${range.step.toInt}, inclusive = ${range.isInclusive})"
   }
 
-  final class ArrayBased private[CharPredicate] (private val chars: Array[Char])
-      extends CharPredicate {
+  final class ArrayBased private[internal] (private val chars: Array[Char]) extends CharPredicate {
     import java.util.Arrays._
     sort(chars)
 
@@ -346,4 +324,27 @@ object CharPredicate {
   }
 
   // scalafix:on
+}
+
+class ApplyMagnet(val predicate: CharPredicate)
+
+object ApplyMagnet {
+  import CharPredicate._
+
+  implicit def fromPredicate(predicate: Char => Boolean): ApplyMagnet = new ApplyMagnet(
+    from(predicate)
+  )
+  implicit def fromChar(c: Char): ApplyMagnet = fromChars(c :: Nil)
+  implicit def fromCharArray(array: Array[Char]): ApplyMagnet = fromChars(array.toIndexedSeq)
+  implicit def fromString(chars: String): ApplyMagnet = fromChars(chars)
+
+  implicit def fromChars(chars: Seq[Char]): ApplyMagnet =
+    chars match {
+      case _ if chars.size < 128 & !chars.exists(unmaskable) =>
+        @tailrec def rec(ix: Int, result: CharPredicate): CharPredicate =
+          if (ix == chars.length) result else rec(ix + 1, result ++ chars(ix))
+        new ApplyMagnet(rec(0, Empty))
+      case r: NumericRange[Char] => new ApplyMagnet(new RangeBased(r))
+      case _ => new ApplyMagnet(new ArrayBased(chars.toArray))
+    }
 }
