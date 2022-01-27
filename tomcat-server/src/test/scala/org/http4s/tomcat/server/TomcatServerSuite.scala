@@ -70,7 +70,7 @@ class TomcatServerSuite extends Http4sSuite {
       )
       .resource
 
-  private val tomcatServer = ResourceFixture[Server](serverR)
+  private lazy val tomcatServer = ResourceFixture[Server](serverR)
 
   private def get(server: Server, path: String): IO[String] =
     IO.blocking(

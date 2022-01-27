@@ -50,7 +50,7 @@ class JsonXmlHttpEndpoint[F[_]](implicit F: Async[F]) extends Http4sDsl[F] {
   implicit private def jsonXmlDecoder: EntityDecoder[F, Person] =
     jsonOf[F, Person].orElse(personXmlDecoder)
 
-  val service: HttpRoutes[F] = HttpRoutes.of {
+  lazy val service: HttpRoutes[F] = HttpRoutes.of {
     case GET -> Root / ApiVersion / "media" =>
       Ok(
         "Send either json or xml via POST method. Eg: \n{\n  \"name\": \"gvolpe\",\n  \"age\": 30\n}\n or \n <person>\n  <name>gvolpe</name>\n  <age>30</age>\n</person>"

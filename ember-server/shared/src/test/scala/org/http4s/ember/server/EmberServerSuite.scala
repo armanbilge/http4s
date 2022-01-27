@@ -54,7 +54,7 @@ class EmberServerSuite extends Http4sSuite {
       .withHttpApp(service[IO])
       .build
 
-  val client = ResourceFixture(EmberClientBuilder.default[IO].build)
+  lazy val client = ResourceFixture(EmberClientBuilder.default[IO].build)
 
   def server(receiveBufferSize: Int = 256 * 1024) = ResourceFixture(
     EmberServerBuilder

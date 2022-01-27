@@ -91,7 +91,7 @@ final class CSRF[F[_], G[_]] private[middleware] (
 )(implicit F: Sync[F]) { self =>
   import CSRF._
 
-  private val csrfChecker: CSRFCheck[F, G] = csrfCheck(self)
+  private lazy val csrfChecker: CSRFCheck[F, G] = csrfCheck(self)
 
   /** Sign our token using the current time in milliseconds as a nonce
     * Signing and generating a token is potentially a unsafe operation

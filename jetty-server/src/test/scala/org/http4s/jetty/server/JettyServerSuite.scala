@@ -62,7 +62,7 @@ class JettyServerSuite extends Http4sSuite {
       )
       .resource
 
-  private val jettyServer = ResourceFixture[Server](serverR)
+  private lazy val jettyServer = ResourceFixture[Server](serverR)
 
   private def get(server: Server, path: String): IO[String] =
     IO.blocking(

@@ -41,7 +41,7 @@ import java.nio.charset.StandardCharsets
 class CirceSuite extends JawnDecodeSupportSuite[Json] with Http4sLawSuite {
   implicit val testContext: TestContext = TestContext()
 
-  val CirceInstancesWithCustomErrors = CirceInstances.builder
+  lazy val CirceInstancesWithCustomErrors = CirceInstances.builder
     .withEmptyBodyMessage(MalformedMessageBodyFailure("Custom Invalid JSON: empty body"))
     .withJawnParseExceptionMessage(_ => MalformedMessageBodyFailure("Custom Invalid JSON jawn"))
     .withCirceParseExceptionMessage(_ => MalformedMessageBodyFailure("Custom Invalid JSON circe"))

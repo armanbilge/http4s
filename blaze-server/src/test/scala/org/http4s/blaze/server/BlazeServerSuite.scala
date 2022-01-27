@@ -105,7 +105,7 @@ class BlazeServerSuite extends Http4sSuite {
       .withHttpApp(service)
       .resource
 
-  private val blazeServer =
+  private lazy val blazeServer =
     ResourceFixture[Server](
       serverR,
       (_: TestOptions, _: Server) => IO.unit,

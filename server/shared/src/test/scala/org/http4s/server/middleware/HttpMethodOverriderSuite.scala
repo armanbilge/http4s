@@ -35,7 +35,7 @@ class HttpMethodOverriderSuite extends Http4sSuite {
   private def headerOverrideStrategy[F[_], G[_]] =
     HeaderOverrideStrategy[F, G](CIString(overrideHeader))
   private def queryOverrideStrategy[F[_], G[_]] = QueryOverrideStrategy[F, G](overrideParam)
-  private val formOverrideStrategy = FormOverrideStrategy(
+  private lazy val formOverrideStrategy = FormOverrideStrategy(
     overrideParam,
     new (IO ~> IO) { def apply[A](i: IO[A]): IO[A] = i },
   )

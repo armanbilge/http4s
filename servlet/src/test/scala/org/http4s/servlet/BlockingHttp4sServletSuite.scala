@@ -46,7 +46,7 @@ class BlockingHttp4sServletSuite extends Http4sSuite {
     }
     .orNotFound
 
-  private val servletServer = ResourceFixture(
+  private lazy val servletServer = ResourceFixture(
     Dispatcher[IO].flatMap(d => TestEclipseServer(servlet(d)))
   )
 

@@ -177,13 +177,13 @@ private[discipline] trait ArbitraryInstances { this: ArbitraryInstancesBinCompat
     "Custom status phrases will be removed in 1.0. They are an optional feature, pose a security risk, and already unsupported on some backends.",
     "0.22.6",
   )
-  val genCustomStatus = for {
+  lazy val genCustomStatus = for {
     code <- genValidStatusCode
     reason <- genCustomStatusReason
   } yield Status.fromInt(code).yolo.withReason(reason)
 
   @nowarn("cat=deprecation")
-  implicit val http4sTestingArbitraryForStatus: Arbitrary[Status] = Arbitrary(
+  implicit lazy val http4sTestingArbitraryForStatus: Arbitrary[Status] = Arbitrary(
     frequency(
       4 -> genStandardStatus,
       1 -> genCustomStatus,
@@ -392,7 +392,7 @@ private[discipline] trait ArbitraryInstances { this: ArbitraryInstancesBinCompat
       1 -> const(LanguageTag.`*`),
     )
 
-  implicit val http4sTestingArbitraryForLanguageTag: Arbitrary[LanguageTag] =
+  implicit lazy val http4sTestingArbitraryForLanguageTag: Arbitrary[LanguageTag] =
     Arbitrary {
       for {
         lt <- genLanguageTagNoQuality
@@ -400,7 +400,7 @@ private[discipline] trait ArbitraryInstances { this: ArbitraryInstancesBinCompat
       } yield lt.copy(q = q)
     }
 
-  implicit val http4sTestingArbitraryForAcceptLanguage: Arbitrary[`Accept-Language`] =
+  implicit lazy val http4sTestingArbitraryForAcceptLanguage: Arbitrary[`Accept-Language`] =
     Arbitrary {
       for {
         // make a set first so we don't have contradictory q-values
@@ -610,7 +610,7 @@ private[discipline] trait ArbitraryInstances { this: ArbitraryInstancesBinCompat
       )
     }
 
-  implicit val http4sTestingArbitraryForTransferEncoding: Arbitrary[`Transfer-Encoding`] =
+  implicit lazy val http4sTestingArbitraryForTransferEncoding: Arbitrary[`Transfer-Encoding`] =
     Arbitrary {
       for {
         codings <- getArbitrary[NonEmptyList[TransferCoding]]
@@ -672,11 +672,11 @@ private[discipline] trait ArbitraryInstances { this: ArbitraryInstancesBinCompat
     List('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F')
   )
 
-  val genPctEncoded: Gen[String] =
+  lazy val genPctEncoded: Gen[String] =
     const("%") |+| genHexDigit.map(_.toString) |+| genHexDigit.map(_.toString)
-  val genUnreserved: Gen[Char] =
+  lazy val genUnreserved: Gen[Char] =
     oneOf(alphaChar, numChar, const('-'), const('.'), const('_'), const('~'))
-  val genSubDelims: Gen[Char] = oneOf(List('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '='))
+  lazy val genSubDelims: Gen[Char] = oneOf(List('!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '='))
 
   implicit private def http4sTestingSemigroupForGen[T: Semigroup]: Semigroup[Gen[T]] =
     new Semigroup[Gen[T]] {
@@ -776,7 +776,7 @@ private[discipline] trait ArbitraryInstances { this: ArbitraryInstancesBinCompat
   implicit val http4sTestingCogenForTransferCoding: Cogen[TransferCoding] =
     Cogen[String].contramap(_.coding.toLowerCase(Locale.ROOT))
 
-  implicit val http4sTestingAbitraryForPath: Arbitrary[Uri.Path] = Arbitrary {
+  implicit lazy val http4sTestingAbitraryForPath: Arbitrary[Uri.Path] = Arbitrary {
     val genSegmentNzNc =
       nonEmptyListOf(oneOf(genUnreserved, genPctEncoded, genSubDelims, const("@"))).map(_.mkString)
     val genPChar = oneOf(genUnreserved, genPctEncoded, genSubDelims, const(":"), const("@"))
@@ -797,7 +797,7 @@ private[discipline] trait ArbitraryInstances { this: ArbitraryInstancesBinCompat
     Cogen[String].contramap(_.renderString)
 
   /** https://datatracker.ietf.org/doc/html/rfc3986 */
-  implicit val http4sTestingArbitraryForUri: Arbitrary[Uri] = Arbitrary {
+  implicit lazy val http4sTestingArbitraryForUri: Arbitrary[Uri] = Arbitrary {
     val genPChar = oneOf(genUnreserved, genPctEncoded, genSubDelims, const(":"), const("@"))
     val genScheme = oneOf(Uri.Scheme.http, Uri.Scheme.https)
 
@@ -829,7 +829,7 @@ private[discipline] trait ArbitraryInstances { this: ArbitraryInstancesBinCompat
       parsedUri == Right(uri)
     }
 
-  implicit val http4sTestingArbitraryForLink: Arbitrary[LinkValue] = Arbitrary {
+  implicit lazy val http4sTestingArbitraryForLink: Arbitrary[LinkValue] = Arbitrary {
     for {
       uri <- http4sTestingArbitraryForUri.arbitrary
     } yield LinkValue(uri)
@@ -1031,7 +1031,7 @@ private[discipline] trait ArbitraryInstancesBinCompat0 extends ArbitraryInstance
   implicit val http4sTestingCogenForQuery: Cogen[Query] =
     Cogen[Vector[(String, Option[String])]].contramap(_.toVector)
 
-  implicit val http4sTestingArbitraryForRegName: Arbitrary[Uri.RegName] =
+  implicit lazy val http4sTestingArbitraryForRegName: Arbitrary[Uri.RegName] =
     Arbitrary(
       listOf(oneOf(genUnreserved, genPctEncoded, genSubDelims)).map(rn => Uri.RegName(rn.mkString))
     )
@@ -1051,7 +1051,7 @@ private[discipline] trait ArbitraryInstancesBinCompat0 extends ArbitraryInstance
       .tuple3[Option[Uri.UserInfo], Uri.Host, Option[Int]]
       .contramap(a => (a.userInfo, a.host, a.port))
 
-  implicit val http4sTestingArbitraryForRequestPrelude: Arbitrary[RequestPrelude] =
+  implicit lazy val http4sTestingArbitraryForRequestPrelude: Arbitrary[RequestPrelude] =
     Arbitrary(
       for {
         headers <- Arbitrary.arbitrary[Headers]
@@ -1066,7 +1066,7 @@ private[discipline] trait ArbitraryInstancesBinCompat0 extends ArbitraryInstance
       (value.headers, value.httpVersion, value.method, value.uri)
     )
 
-  implicit val http4sTestingArbitraryForResponsePrelude: Arbitrary[ResponsePrelude] =
+  implicit lazy val http4sTestingArbitraryForResponsePrelude: Arbitrary[ResponsePrelude] =
     Arbitrary(
       for {
         headers <- Arbitrary.arbitrary[Headers]
