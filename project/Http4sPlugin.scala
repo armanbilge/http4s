@@ -10,6 +10,7 @@ import explicitdeps.ExplicitDepsPlugin.autoImport.unusedCompileDependenciesFilte
 import org.portablescala.sbtplatformdeps.PlatformDepsPlugin.autoImport._
 import sbt.Keys._
 import sbt._
+import org.typelevel.sbt.TypelevelKernelPlugin.autoImport._
 import org.typelevel.sbt.gha.GenerativeKeys._
 import org.typelevel.sbt.gha.JavaSpec
 
@@ -41,6 +42,9 @@ object Http4sPlugin extends AutoPlugin {
   ) ++ sbtghactionsSettings
 
   override lazy val projectSettings: Seq[Setting[_]] = Seq(
+    scalacOptions ++= {
+      if (tlIsScala3.value) Seq("-Ysafe-init") else Seq.empty
+    },
     headerSources / excludeFilter := HiddenFileFilter,
     doctestTestFramework := DoctestTestFramework.Munit,
   )
