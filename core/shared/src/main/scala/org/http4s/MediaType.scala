@@ -105,8 +105,14 @@ object MediaRange {
 
   /** Parse a MediaRange
     */
-  def parse(s: String): ParseResult[MediaRange] =
-    ParseResult.fromParser(fullParser, "media range")(s)
+  def parse(s: String)(implicit mimeDB: MimeDB): ParseResult[MediaRange] =
+    parseImpl(s, mimeDB)
+
+  private[http4s] def parse(s: String): ParseResult[MediaRange] =
+    parseImpl(s, MimeDB.default)
+
+  private def parseImpl(s: String, mimeDB: MimeDB): ParseResult[MediaRange] =
+    ParseResult.fromParser(fullParser(mimeDB), "media range")(s)
 
   private[http4s] val mediaTypeExtensionParser: Parser[(String, String)] = {
     import Parser.char
@@ -121,9 +127,11 @@ object MediaRange {
     }
   }
 
-  private[http4s] val parser: Parser[MediaRange] = mediaRangeParser(getMediaRange)
+  private[http4s] def parser(implicit mimeDB: MimeDB): Parser[MediaRange] = mediaRangeParser(
+    getMediaRange
+  )
 
-  private[http4s] val fullParser: Parser[MediaRange] = {
+  private[http4s] def fullParser(implicit mimeDB: MimeDB): Parser[MediaRange] = {
     val extensions = MediaRange.mediaTypeExtensionParser.rep0
 
     (parser ~ extensions).map { case (mr, exts) =>
@@ -162,11 +170,13 @@ object MediaRange {
       }
   }
 
-  private[http4s] def getMediaRange(mainType: String, subType: String): MediaRange =
+  private[http4s] def getMediaRange(mainType: String, subType: String)(implicit
+      mimeDB: MimeDB
+  ): MediaRange =
     if (subType === "*")
       MediaRange.standard.getOrElse(mainType.toLowerCase, new MediaRange(mainType))
     else
-      MediaType.all.getOrElse(
+      mimeDB.all.getOrElse(
         (mainType.toLowerCase, subType.toLowerCase),
         new MediaType(mainType.toLowerCase, subType.toLowerCase),
       )
@@ -183,10 +193,12 @@ object MediaRange {
       def f(a: MediaRange) = (a.mainType, orderedSubtype(a), a.extensions.toVector.sortBy(_._1))
       Order[(String, String, Vector[(String, String)])].compare(f(x), f(y))
     }
-  implicit val http4sHttpCodecForMediaRange: HttpCodec[MediaRange] =
+  private[http4s] val http4sHttpCodecForMediaRange: HttpCodec[MediaRange] =
+    http4sHttpCodecForMediaRange(MimeDB.default)
+  implicit def http4sHttpCodecForMediaRange(implicit mimeDB: MimeDB): HttpCodec[MediaRange] =
     new HttpCodec[MediaRange] {
       override def parse(s: String): ParseResult[MediaRange] =
-        MediaRange.parse(s)
+        MediaRange.parseImpl(s, mimeDB)
 
       override def render(writer: Writer, mr: MediaRange): writer.type =
         mr match {
@@ -252,7 +264,7 @@ sealed class MediaType(
     s"MediaType($mainType/$subType${MediaRange.extensionsToString(this)})"
 }
 
-object MediaType extends MimeDB {
+object MediaType extends DefaultMimeDB {
   def forExtension(ext: String): Option[MediaType] = extensionMap.get(ext.toLowerCase)
 
   def multipartType(subType: String, boundary: Option[String] = None): MediaType = {
@@ -263,6 +275,7 @@ object MediaType extends MimeDB {
   // Curiously text/event-stream isn't included in MimeDB
   lazy val `text/event-stream` = new MediaType("text", "event-stream")
 
+  @deprecated("Use an implicit MimeDB instead", "0.23.11")
   lazy val all: Map[(String, String), MediaType] =
     (`text/event-stream` :: allMediaTypes)
       .map(m => (m.mainType.toLowerCase, m.subType.toLowerCase) -> m)
@@ -271,7 +284,9 @@ object MediaType extends MimeDB {
   val extensionMap: Map[String, MediaType] =
     allMediaTypes.flatMap(m => m.fileExtensions.map(_ -> m)).toMap
 
-  val parser: Parser[MediaType] = {
+  private[http4s] val parser: Parser[MediaType] = parser(MimeDB.default)
+
+  def parser(implicit mimeDB: MimeDB): Parser[MediaType] = {
     val mediaType = MediaRange.mediaRangeParser(getMediaType)
     val extensions = MediaRange.mediaTypeExtensionParser.rep0
 
@@ -285,8 +300,14 @@ object MediaType extends MimeDB {
 
   /** Parse a MediaType
     */
-  def parse(s: String): ParseResult[MediaType] =
-    ParseResult.fromParser(parser, "media type")(s)
+  def parse(s: String)(implicit mimeDB: MimeDB): ParseResult[MediaType] =
+    parse(s, mimeDB)
+
+  private[http4s] def parse(s: String): ParseResult[MediaType] =
+    parse(s, MimeDB.default)
+
+  private def parse(s: String, mimeDB: MimeDB): ParseResult[MediaType] =
+    ParseResult.fromParser(parser(mimeDB), "media type")(s)
 
   /** Parse a MediaType
     *
@@ -296,8 +317,12 @@ object MediaType extends MimeDB {
   def unsafeParse(s: String): MediaType =
     parse(s).fold(throw _, identity)
 
-  private[http4s] def getMediaType(mainType: String, subType: String): MediaType =
-    MediaType.all.getOrElse(
+  private[http4s] def unsafeParse(s: String): MediaType
+
+  private[http4s] def getMediaType(mainType: String, subType: String)(implicit
+      mimeDB: MimeDB
+  ): MediaType =
+    mimeDB.all.getOrElse(
       (mainType.toLowerCase, subType.toLowerCase),
       new MediaType(mainType.toLowerCase, subType.toLowerCase),
     )
