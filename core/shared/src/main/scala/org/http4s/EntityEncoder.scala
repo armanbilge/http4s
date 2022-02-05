@@ -58,19 +58,38 @@ trait EntityEncoder[F[_], A] { self =>
       override def headers: Headers = self.headers
     }
 
+  private[http4s] def contentType: Option[`Content-Type`] =
+    contentType(MimeDB.default)
+
   /** Get the [[org.http4s.headers.`Content-Type`]] of the body encoded by this [[EntityEncoder]],
     * if defined the headers
     */
-  def contentType: Option[`Content-Type`] = headers.get[`Content-Type`]
+  def contentType(implicit mimeDB: MimeDB): Option[`Content-Type`] = {
+    implicit val header = `Content-Type`.headerInstance(mimeDB)
+    headers.get[`Content-Type`]
+  }
+
+  private[http4s] def charset: Option[Charset] = charset(MimeDB.default)
 
   /** Get the [[Charset]] of the body encoded by this [[EntityEncoder]], if defined the headers */
-  def charset: Option[Charset] = headers.get[`Content-Type`].flatMap(_.charset)
+  def charset(implicit mimeDB: MimeDB): Option[Charset] = {
+    implicit val header = `Content-Type`.headerInstance(mimeDB)
+    headers.get[`Content-Type`].flatMap(_.charset)
+  }
 
   /** Generate a new EntityEncoder that will contain the `Content-Type` header */
-  def withContentType(tpe: `Content-Type`): EntityEncoder[F, A] =
+  def withContentType(tpe: `Content-Type`)(implicit mimeDB: MimeDB): EntityEncoder[F, A] =
+    withContentTypeImpl(tpe, mimeDB)
+
+  private[http4s] def withContentType(tpe: `Content-Type`): EntityEncoder[F, A] = withContentTypeImpl(tpe, MimeDB.default)
+
+  private def withContentTypeImpl(tpe: `Content-Type`, mimeDB: MimeDB): EntityEncoder[F, A] =
     new EntityEncoder[F, A] {
       override def toEntity(a: A): Entity[F] = self.toEntity(a)
-      override val headers: Headers = self.headers.put(tpe)
+      override val headers: Headers = {
+        implicit val header = `Content-Type`.headerInstance(mimeDB)
+        self.headers.put(tpe)
+      }
     }
 }
 

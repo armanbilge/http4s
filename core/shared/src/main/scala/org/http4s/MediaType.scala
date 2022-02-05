@@ -56,7 +56,14 @@ sealed class MediaRange private[http4s] (
   def isText: Boolean = mainType === "text"
   def isVideo: Boolean = mainType === "video"
 
-  def withQValue(q: QValue): MediaRangeAndQValue = MediaRangeAndQValue(this, q)
+  private[http4s] def withQValue(q: QValue): MediaRangeAndQValue =
+    withQValueImpl(q, MimeDB.default)
+  
+  def withQValue(q: QValue)(implicit mimeDB: MimeDB): MediaRangeAndQValue = 
+    withQValueImpl(q, mimeDB)
+
+  private[http4s] def withQValueImpl(q: QValue, mimeDB: MimeDB): MediaRangeAndQValue =
+    MediaRangeAndQValue(this, q)(mimeDB)
 
   def withExtensions(ext: Map[String, String]): MediaRange = new MediaRange(mainType, ext)
 
@@ -193,7 +200,7 @@ object MediaRange {
       def f(a: MediaRange) = (a.mainType, orderedSubtype(a), a.extensions.toVector.sortBy(_._1))
       Order[(String, String, Vector[(String, String)])].compare(f(x), f(y))
     }
-  private[http4s] val http4sHttpCodecForMediaRange: HttpCodec[MediaRange] =
+  private[http4s] def http4sHttpCodecForMediaRange: HttpCodec[MediaRange] =
     http4sHttpCodecForMediaRange(MimeDB.default)
   implicit def http4sHttpCodecForMediaRange(implicit mimeDB: MimeDB): HttpCodec[MediaRange] =
     new HttpCodec[MediaRange] {
@@ -202,7 +209,7 @@ object MediaRange {
 
       override def render(writer: Writer, mr: MediaRange): writer.type =
         mr match {
-          case mt: MediaType => MediaType.http4sHttpCodecForMediaType.render(writer, mt)
+          case mt: MediaType => MediaType.http4sHttpCodecForMediaType(mimeDB).render(writer, mt)
           case _ =>
             writer << mr.mainType << "/*"
             renderExtensions(writer, mr)
@@ -301,12 +308,12 @@ object MediaType extends DefaultMimeDB {
   /** Parse a MediaType
     */
   def parse(s: String)(implicit mimeDB: MimeDB): ParseResult[MediaType] =
-    parse(s, mimeDB)
+    parseImpl(s, mimeDB)
 
   private[http4s] def parse(s: String): ParseResult[MediaType] =
-    parse(s, MimeDB.default)
+    parseImpl(s, MimeDB.default)
 
-  private def parse(s: String, mimeDB: MimeDB): ParseResult[MediaType] =
+  private[http4s] def parseImpl(s: String, mimeDB: MimeDB): ParseResult[MediaType] =
     ParseResult.fromParser(parser(mimeDB), "media type")(s)
 
   /** Parse a MediaType
@@ -314,10 +321,14 @@ object MediaType extends DefaultMimeDB {
     * For totality, call [[parse]]. For compile-time
     * verification of literals, call [[mediaType]].
     */
-  def unsafeParse(s: String): MediaType =
-    parse(s).fold(throw _, identity)
+  def unsafeParse(s: String)(implicit mimeDB: MimeDB): MediaType =
+    unsafeParseImpl(s, mimeDB)
 
-  private[http4s] def unsafeParse(s: String): MediaType
+  private[http4s] def unsafeParse(s: String): MediaType =
+    unsafeParseImpl(s, MimeDB.default)
+
+  private def unsafeParseImpl(s: String, mimeDB: MimeDB): MediaType =
+    parseImpl(s, mimeDB).fold(throw _, identity)
 
   private[http4s] def getMediaType(mainType: String, subType: String)(implicit
       mimeDB: MimeDB
@@ -331,10 +342,12 @@ object MediaType extends DefaultMimeDB {
     Eq.fromUniversalEquals
   implicit val http4sShowForMediaType: Show[MediaType] =
     Show.show(s => s"${s.mainType}/${s.subType}${MediaRange.extensionsToString(s)}")
-  implicit val http4sHttpCodecForMediaType: HttpCodec[MediaType] =
+  private[http4s] def http4sHttpCodecForMediaType: HttpCodec[MediaType] =
+    http4sHttpCodecForMediaType(MimeDB.default)
+  implicit def http4sHttpCodecForMediaType(implicit mimeDB: MimeDB): HttpCodec[MediaType] =
     new HttpCodec[MediaType] {
       override def parse(s: String): ParseResult[MediaType] =
-        MediaType.parse(s)
+        MediaType.parseImpl(s, mimeDB)
 
       override def render(writer: Writer, mt: MediaType): writer.type = {
         writer << mt.mainType << '/' << mt.subType

@@ -25,18 +25,29 @@ import org.typelevel.ci._
 object `Accept-Post` {
   def apply(values: MediaType*): `Accept-Post` = apply(values.toList)
 
-  def parse(s: String): ParseResult[`Accept-Post`] =
-    ParseResult.fromParser(parser, "Invalid Accept-Post header")(s)
+  def parse(s: String)(implicit mimeDB: MimeDB): ParseResult[`Accept-Post`] =
+    parseImpl(s, mimeDB)
 
-  private[http4s] val parser: Parser0[`Accept-Post`] =
-    Rfc7230.headerRep(MediaType.parser).map(`Accept-Post`(_))
+  private[http4s] def parse(s: String): ParseResult[`Accept-Post`] =
+    parseImpl(s, MimeDB.default)
 
-  implicit val headerInstance: Header[`Accept-Post`, Header.Recurring] =
+  private def parseImpl(s: String, mimeDB: MimeDB): ParseResult[`Accept-Post`] =
+    ParseResult.fromParser(parser(mimeDB), "Invalid Accept-Post header")(s)
+
+  private[http4s] def parser(implicit mimeDB: MimeDB): Parser0[`Accept-Post`] =
+    Rfc7230.headerRep(MediaType.parser(mimeDB)).map(`Accept-Post`(_))
+
+  private[http4s] def headerInstance: Header[`Accept-Post`, Header.Recurring] =
+    headerInstance(MimeDB.default)
+
+  implicit def headerInstance(implicit mimeDB: MimeDB): Header[`Accept-Post`, Header.Recurring] = {
+    implicit val renderer = MediaType.http4sHttpCodecForMediaType(mimeDB)
     Header.createRendered(
       ci"Accept-Post",
       _.values,
-      parse,
+      parseImpl(_, mimeDB),
     )
+  }
 
   implicit val headerSemigroupInstance: cats.Monoid[`Accept-Post`] =
     cats.Monoid.instance(`Accept-Post`(Nil), (one, two) => `Accept-Post`(one.values ++ two.values))

@@ -26,18 +26,29 @@ object `Accept-Patch` {
   def apply(head: MediaType, tail: MediaType*): `Accept-Patch` =
     apply(NonEmptyList(head, tail.toList))
 
-  def parse(s: String): ParseResult[`Accept-Patch`] =
-    ParseResult.fromParser(parser, "Invalid Accept-Patch header")(s)
+  def parse(s: String)(implicit mimeDB: MimeDB): ParseResult[`Accept-Patch`] =
+    parseImpl(s, mimeDB)
 
-  private[http4s] val parser =
-    Rfc7230.headerRep1(MediaType.parser).map(`Accept-Patch`(_))
+  private[http4s] def parse(s: String): ParseResult[`Accept-Patch`] =
+    parseImpl(s, MimeDB.default)
 
-  implicit val headerInstance: Header[`Accept-Patch`, Header.Recurring] =
+  private def parseImpl(s: String, mimeDB: MimeDB): ParseResult[`Accept-Patch`] =
+    ParseResult.fromParser(parser(mimeDB), "Invalid Accept-Patch header")(s)
+
+  private[http4s] def parser(implicit mimeDB: MimeDB) =
+    Rfc7230.headerRep1(MediaType.parser(mimeDB)).map(`Accept-Patch`(_))
+
+  private[http4s] def headerInstance: Header[`Accept-Patch`, Header.Recurring] =
+    headerInstance(MimeDB.default)
+
+  implicit def headerInstance(implicit mimeDB: MimeDB): Header[`Accept-Patch`, Header.Recurring] = {
+    implicit val renderer = MediaType.http4sHttpCodecForMediaType(mimeDB)
     Header.createRendered(
       ci"Accept-Patch",
       _.values,
-      parse,
+      parseImpl(_, mimeDB),
     )
+  }
 
   implicit val headerSemigroupInstance: cats.Semigroup[`Accept-Patch`] =
     (a, b) => `Accept-Patch`(a.values.concatNel(b.values))

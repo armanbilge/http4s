@@ -27,10 +27,16 @@ object `Content-Type` {
     apply(mediaType, Some(charset))
   def apply(mediaType: MediaType): `Content-Type` = apply(mediaType, None)
 
-  def parse(s: String): ParseResult[`Content-Type`] =
-    ParseResult.fromParser(parser, "Invalid Content-Type header")(s)
+  def parse(s: String)(implicit mimeDB: MimeDB): ParseResult[`Content-Type`] =
+    parseImpl(s, mimeDB)
 
-  private[http4s] val parser: Parser[`Content-Type`] =
+  private[http4s] def parse(s: String): ParseResult[`Content-Type`] =
+    parseImpl(s, MimeDB.default)
+
+  private def parseImpl(s: String, mimeDB: MimeDB): ParseResult[`Content-Type`] =
+    ParseResult.fromParser(parser(mimeDB), "Invalid Content-Type header")(s)
+
+  private[http4s] def parser(implicit mimeDB: MimeDB): Parser[`Content-Type`] =
     (MediaRange.parser ~ MediaRange.mediaTypeExtensionParser.rep0).flatMap {
       case (range: MediaRange, exts: Seq[(String, String)]) =>
         val mediaTypeParser = range match {
@@ -51,7 +57,11 @@ object `Content-Type` {
         }
     }
 
-  implicit val headerInstance: Header[`Content-Type`, Header.Single] =
+  private[http4s] def headerInstance: Header[`Content-Type`, Header.Single] =
+    headerInstance(MimeDB.default)
+
+  implicit def headerInstance(implicit mimeDB: MimeDB): Header[`Content-Type`, Header.Single] = {
+    implicit val renderer = MediaType.http4sHttpCodecForMediaType(mimeDB)
     Header.createRendered(
       ci"Content-Type",
       h =>
@@ -59,11 +69,12 @@ object `Content-Type` {
           def render(writer: Writer): writer.type =
             h.charset match {
               case Some(cs) => writer << h.mediaType << "; charset=" << cs
-              case _ => MediaRange.http4sHttpCodecForMediaRange.render(writer, h.mediaType)
+              case _ => MediaRange.http4sHttpCodecForMediaRange(mimeDB).render(writer, h.mediaType)
             }
         },
-      parse,
+      parseImpl(_, mimeDB),
     )
+  }
 
 }
 

@@ -38,7 +38,7 @@ object MediaTypePlaform {
     "0.22.2",
   )
   def deprecatedLiteralImpl(s: String): MediaType =
-    MediaType.parse(s).fold(throw _, identity)
+    MediaType.parseImpl(s, MimeDB.default).fold(throw _, identity)
 
   private[MediaTypePlaform] class Macros(val c: whitebox.Context) {
     import c.universe._
@@ -47,7 +47,7 @@ object MediaTypePlaform {
       s.tree match {
         case Literal(Constant(s: String)) =>
           MediaType
-            .parse(s)
+            .parseImpl(s, MimeDB.default)
             .fold(
               e => c.abort(c.enclosingPosition, e.details),
               _ => q"_root_.org.http4s.MediaTypePlaform.deprecatedLiteralImpl($s)",

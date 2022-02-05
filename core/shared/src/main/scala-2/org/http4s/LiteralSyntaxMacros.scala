@@ -53,7 +53,7 @@ object LiteralSyntaxMacros {
   object mediaType extends Literally[MediaType] {
     def validate(c: Context)(s: String): Either[String, c.Expr[MediaType]] = {
       import c.universe._
-      MediaType.parse(s) match {
+      MediaType.parseImpl(s, MimeDB.default) match {
         case Right(_) => Right(c.Expr(q"org.http4s.MediaType.unsafeParse($s)"))
         case Left(pf) => Left(s"invalid MediaType: ${pf.details}")
       }
