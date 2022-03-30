@@ -243,5 +243,5 @@ object EntityEncoder {
   implicit def serverSentEventEncoder[F[_]]: EntityEncoder[F, EventStream[F]] =
     entityBodyEncoder[F]
       .contramap[EventStream[F]](_.through(ServerSentEvent.encoder))
-      .withContentType(`Content-Type`(MediaType.`text/event-stream`))
+      .withContentType(`Content-Type`(MediaType.text.`event-stream`))
 }

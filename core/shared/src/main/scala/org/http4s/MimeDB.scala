@@ -7196,6 +7196,7 @@ private[http4s] trait MimeDB {
     def `ecmascript`: MediaType = new MediaType("text", "ecmascript", Compressible, NotBinary)
     def `encaprtp`: MediaType = new MediaType("text", "encaprtp", Compressible, NotBinary)
     def `enriched`: MediaType = new MediaType("text", "enriched", Compressible, NotBinary)
+    def `event-stream`: MediaType = new MediaType("text", "event-stream", Uncompressible, NotBinary)
     def `fhirpath`: MediaType = new MediaType("text", "fhirpath", Compressible, NotBinary)
     def `flexfec`: MediaType = new MediaType("text", "flexfec", Compressible, NotBinary)
     def `fwdred`: MediaType = new MediaType("text", "fwdred", Compressible, NotBinary)
@@ -7415,6 +7416,7 @@ private[http4s] trait MimeDB {
       `ecmascript`,
       `encaprtp`,
       `enriched`,
+      `event-stream`,
       `fhirpath`,
       `flexfec`,
       `fwdred`,

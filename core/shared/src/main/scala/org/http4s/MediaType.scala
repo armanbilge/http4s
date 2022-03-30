@@ -261,10 +261,11 @@ object MediaType extends MimeDB {
   }
 
   // Curiously text/event-stream isn't included in MimeDB
-  lazy val `text/event-stream` = new MediaType("text", "event-stream")
+  @deprecated("Use text.`event-stream`", "0.23.x")
+  def `text/event-stream` = text.`event-stream`
 
   lazy val all: Map[(String, String), MediaType] =
-    (`text/event-stream` :: allMediaTypes)
+    allMediaTypes
       .map(m => (m.mainType.toLowerCase, m.subType.toLowerCase) -> m)
       .toMap
 
