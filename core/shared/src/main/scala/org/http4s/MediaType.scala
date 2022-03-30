@@ -264,12 +264,14 @@ object MediaType extends MimeDB {
   @deprecated("Use text.`event-stream`", "0.23.x")
   def `text/event-stream` = text.`event-stream`
 
-  lazy val all: Map[(String, String), MediaType] =
+  @deprecated("TODO", "0.23.x")
+  def all: Map[(String, String), MediaType] =
     allMediaTypes
       .map(m => (m.mainType.toLowerCase, m.subType.toLowerCase) -> m)
       .toMap
 
-  val extensionMap: Map[String, MediaType] =
+  @deprecated("TODO", "0.23.x")
+  def extensionMap: Map[String, MediaType] =
     allMediaTypes.flatMap(m => m.fileExtensions.map(_ -> m)).toMap
 
   val parser: Parser[MediaType] = {
