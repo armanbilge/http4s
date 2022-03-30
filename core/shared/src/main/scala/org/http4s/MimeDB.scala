@@ -18,6 +18,7 @@
 package org.http4s
 
 private[http4s] trait MimeDB {
+  @deprecated("TODO", "0.23.x")
   def allMediaTypes: List[MediaType] =
     Nil ++ x_shader.all ++ x_conference.all ++ video.all ++ text.all ++ multipart.all ++ model.all ++ message.all ++ image.all ++ font.all ++ chemical.all ++ audio.all ++ application.all
   val Compressible: Boolean = true
@@ -4150,13 +4151,13 @@ private[http4s] trait MimeDB {
           Compressible,
           NotBinary,
         )
-      def `vnd.openxmlformats-officedocument.spreadsheetml.pivotcachedefinition+xml`
-          : MediaType = new MediaType(
-        "application",
-        "vnd.openxmlformats-officedocument.spreadsheetml.pivotcachedefinition+xml",
-        Compressible,
-        NotBinary,
-      )
+      def `vnd.openxmlformats-officedocument.spreadsheetml.pivotcachedefinition+xml`: MediaType =
+        new MediaType(
+          "application",
+          "vnd.openxmlformats-officedocument.spreadsheetml.pivotcachedefinition+xml",
+          Compressible,
+          NotBinary,
+        )
       def `vnd.openxmlformats-officedocument.spreadsheetml.pivotcacherecords+xml`: MediaType =
         new MediaType(
           "application",
@@ -4263,13 +4264,13 @@ private[http4s] trait MimeDB {
           Compressible,
           NotBinary,
         )
-      def `vnd.openxmlformats-officedocument.spreadsheetml.volatiledependencies+xml`
-          : MediaType = new MediaType(
-        "application",
-        "vnd.openxmlformats-officedocument.spreadsheetml.volatiledependencies+xml",
-        Compressible,
-        NotBinary,
-      )
+      def `vnd.openxmlformats-officedocument.spreadsheetml.volatiledependencies+xml`: MediaType =
+        new MediaType(
+          "application",
+          "vnd.openxmlformats-officedocument.spreadsheetml.volatiledependencies+xml",
+          Compressible,
+          NotBinary,
+        )
       def `vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml`: MediaType =
         new MediaType(
           "application",
@@ -4310,13 +4311,13 @@ private[http4s] trait MimeDB {
           Binary,
           List("docx"),
         )
-      def `vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml`
-          : MediaType = new MediaType(
-        "application",
-        "vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml",
-        Compressible,
-        NotBinary,
-      )
+      def `vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml`: MediaType =
+        new MediaType(
+          "application",
+          "vnd.openxmlformats-officedocument.wordprocessingml.document.glossary+xml",
+          Compressible,
+          NotBinary,
+        )
       def `vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml`: MediaType =
         new MediaType(
           "application",
@@ -6209,6 +6210,7 @@ private[http4s] trait MimeDB {
       with application_parts.application_1
       with application_parts.application_2
       with application_parts.application_3 {
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = Nil ++ part_0 ++ part_1 ++ part_2 ++ part_3
   }
   object audio {
@@ -6468,6 +6470,7 @@ private[http4s] trait MimeDB {
     def `x-tta`: MediaType = new MediaType("audio", "x-tta", Compressible, Binary)
     def `x-wav`: MediaType = new MediaType("audio", "x-wav", Compressible, Binary, List("wav"))
     def `xm`: MediaType = new MediaType("audio", "xm", Compressible, Binary, List("xm"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(
       `1d-interleaved-parityfec`,
       `32kadpcm`,
@@ -6669,6 +6672,7 @@ private[http4s] trait MimeDB {
     def `x-pdb`: MediaType = new MediaType("chemical", "x-pdb", Compressible, NotBinary)
     def `x-xyz`: MediaType =
       new MediaType("chemical", "x-xyz", Compressible, NotBinary, List("xyz"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] =
       List(`x-cdx`, `x-cif`, `x-cmdf`, `x-cml`, `x-csml`, `x-pdb`, `x-xyz`)
   }
@@ -6682,6 +6686,7 @@ private[http4s] trait MimeDB {
       new MediaType("font", "woff", Compressible, NotBinary, List("woff"))
     def `woff2`: MediaType =
       new MediaType("font", "woff2", Compressible, NotBinary, List("woff2"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(`collection`, `otf`, `sfnt`, `ttf`, `woff`, `woff2`)
   }
   object image {
@@ -6852,6 +6857,7 @@ private[http4s] trait MimeDB {
       new MediaType("image", "x-xpixmap", Compressible, Binary, List("xpm"))
     def `x-xwindowdump`: MediaType =
       new MediaType("image", "x-xwindowdump", Compressible, Binary, List("xwd"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(
       `aces`,
       `apng`,
@@ -6998,6 +7004,7 @@ private[http4s] trait MimeDB {
       new MediaType("message", "vnd.si.simp", Compressible, NotBinary)
     def `vnd.wfa.wsc`: MediaType =
       new MediaType("message", "vnd.wfa.wsc", Compressible, NotBinary, List("wsc"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(
       `cpim`,
       `delivery-status`,
@@ -7081,6 +7088,7 @@ private[http4s] trait MimeDB {
       new MediaType("model", "x3d+xml", Compressible, NotBinary, List("x3d", "x3dz"))
     def `x3d-vrml`: MediaType =
       new MediaType("model", "x3d-vrml", Compressible, NotBinary, List("x3dv"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(
       `3mf`,
       `e57`,
@@ -7144,6 +7152,7 @@ private[http4s] trait MimeDB {
       new MediaType("multipart", "voice-message", Compressible, NotBinary)
     def `x-mixed-replace`: MediaType =
       new MediaType("multipart", "x-mixed-replace", Compressible, NotBinary)
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(
       `alternative`,
       `appledouble`,
@@ -7387,6 +7396,7 @@ private[http4s] trait MimeDB {
       new MediaType("text", "xml-external-parsed-entity", Compressible, NotBinary)
     def `yaml`: MediaType =
       new MediaType("text", "yaml", Compressible, NotBinary, List("yaml", "yml"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(
       `1d-interleaved-parityfec`,
       `cache-manifest`,
@@ -7679,6 +7689,7 @@ private[http4s] trait MimeDB {
     def `x-sgi-movie`: MediaType =
       new MediaType("video", "x-sgi-movie", Compressible, Binary, List("movie"))
     def `x-smv`: MediaType = new MediaType("video", "x-smv", Compressible, Binary, List("smv"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(
       `1d-interleaved-parityfec`,
       `3gpp`,
@@ -7787,12 +7798,14 @@ private[http4s] trait MimeDB {
   object x_conference {
     def `x-cooltalk`: MediaType =
       new MediaType("x-conference", "x-cooltalk", Compressible, NotBinary, List("ice"))
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(`x-cooltalk`)
   }
   object x_shader {
     def `x-fragment`: MediaType =
       new MediaType("x-shader", "x-fragment", Compressible, NotBinary)
     def `x-vertex`: MediaType = new MediaType("x-shader", "x-vertex", Compressible, NotBinary)
+    @deprecated("TODO", "0.23.x")
     def all: List[MediaType] = List(`x-fragment`, `x-vertex`)
   }
 }
