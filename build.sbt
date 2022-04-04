@@ -23,6 +23,7 @@ ThisBuild / scalafixAll / skip := tlIsScala3.value
 ThisBuild / ScalafixConfig / skip := tlIsScala3.value
 ThisBuild / Test / scalafixConfig := Some(file(".scalafix.test.conf"))
 
+ThisBuild / githubWorkflowBuildPreamble += WorkflowStep.Tmate
 ThisBuild / githubWorkflowBuild ++= Seq(
   WorkflowStep.Sbt(
     List("${{ matrix.ci }}", "scalafixAll --check"),
