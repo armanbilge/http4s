@@ -36,7 +36,7 @@ private[http4s] trait ClientRequest extends js.Object with Writable {
 
   protected[nodejs] def getHeader(name: String): js.UndefOr[js.Array[String]] = js.native
 
-  protected[nodejs] def once[E](eventName: String, listener: js.Function1[E, Unit]): ClientRequest =
+  override def once[E](eventName: String, listener: js.Function1[E, Unit]): this.type =
     js.native
 
   protected[nodejs] def removeListener(
