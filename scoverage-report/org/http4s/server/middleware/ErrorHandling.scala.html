@@ -1,0 +1,794 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/ErrorHandling.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server
+</span>18 <span style=''>package middleware
+</span>19 <span style=''>
+</span>20 <span style=''>import cats._
+</span>21 <span style=''>import cats.data.Kleisli
+</span>22 <span style=''>import cats.syntax.all._
+</span>23 <span style=''>import org.http4s._
+</span>24 <span style=''>import org.http4s.headers._
+</span>25 <span style=''>import org.typelevel.ci._
+</span>26 <span style=''>
+</span>27 <span style=''>object ErrorHandling {
+</span>28 <span style=''>  def apply[F[_], G[_]](
+</span>29 <span style=''>      k: Kleisli[F, Request[G], Response[G]]
+</span>30 <span style=''>  )(implicit F: MonadThrow[F]): Kleisli[F, Request[G], Response[G]] =
+</span>31 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>32 <span style=''></span><span style='background: #AEF1AE'>      val pf: PartialFunction[Throwable, F[Response[G]]] =
+</span>33 <span style=''></span><span style='background: #AEF1AE'>        inDefaultServiceErrorHandler[F, G](F)(req)
+</span>34 <span style=''></span><span style='background: #AEF1AE'>      k.run(req).handleErrorWith { e =&gt;
+</span>35 <span style=''></span><span style='background: #AEF1AE'>        pf.lift(e) match {
+</span>36 <span style=''></span><span style='background: #AEF1AE'>          case Some(resp) =&gt; resp
+</span>37 <span style=''></span><span style='background: #AEF1AE'>          case None =&gt; F.raiseError(e)
+</span>38 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>39 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>40 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>41 <span style=''>
+</span>42 <span style=''>  def httpRoutes[F[_]: MonadThrow](httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>43 <span style=''>    </span><span style='background: #AEF1AE'>apply(httpRoutes)</span><span style=''>
+</span>44 <span style=''>
+</span>45 <span style=''>  def httpApp[F[_]: MonadThrow](httpApp: HttpApp[F]): HttpApp[F] =
+</span>46 <span style=''>    </span><span style='background: #AEF1AE'>apply(httpApp)</span><span style=''>
+</span>47 <span style=''>
+</span>48 <span style=''>  object Custom {
+</span>49 <span style=''>    def recoverWith[F[_]: MonadThrow, G[_], A](
+</span>50 <span style=''>        http: Kleisli[F, A, Response[G]]
+</span>51 <span style=''>    )(pf: PartialFunction[Throwable, F[Response[G]]]): Kleisli[F, A, Response[G]] =
+</span>52 <span style=''>      </span><span style='background: #F0ADAD'>Kleisli { (a: A) =&gt;
+</span>53 <span style=''></span><span style='background: #F0ADAD'>        http.run(a).recoverWith(pf)
+</span>54 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>55 <span style=''>  }
+</span>56 <span style=''>
+</span>57 <span style=''>  object Recover {
+</span>58 <span style=''>
+</span>59 <span style=''>    def total[F[_]: MonadThrow, G[_], A](
+</span>60 <span style=''>        http: Kleisli[F, Request[G], Response[G]]
+</span>61 <span style=''>    ): Kleisli[F, Request[G], Response[G]] =
+</span>62 <span style=''>      </span><span style='background: #F0ADAD'>Kleisli { (a: Request[G]) =&gt;
+</span>63 <span style=''></span><span style='background: #F0ADAD'>        http.run(a).handleError(totalRecover(a.httpVersion))
+</span>64 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>    def messageFailure[F[_]: MonadThrow, G[_], A](
+</span>67 <span style=''>        http: Kleisli[F, Request[G], Response[G]]
+</span>68 <span style=''>    ): Kleisli[F, Request[G], Response[G]] =
+</span>69 <span style=''>      </span><span style='background: #F0ADAD'>Kleisli { (a: Request[G]) =&gt;
+</span>70 <span style=''></span><span style='background: #F0ADAD'>        http.run(a).recover(messageFailureRecover(a.httpVersion))
+</span>71 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>72 <span style=''>
+</span>73 <span style=''>    def messageFailureRecover[G[_]](
+</span>74 <span style=''>        httpVersion: HttpVersion
+</span>75 <span style=''>    ): PartialFunction[Throwable, Response[G]] = { case m: MessageFailure =&gt;
+</span>76 <span style=''>      </span><span style='background: #F0ADAD'>m.toHttpResponse[G](httpVersion)</span><span style=''>
+</span>77 <span style=''>    }
+</span>78 <span style=''>
+</span>79 <span style=''>    def totalRecover[G[_]](
+</span>80 <span style=''>        httpVersion: HttpVersion
+</span>81 <span style=''>    ): Throwable =&gt; Response[G] = {
+</span>82 <span style=''>      case m: MessageFailure =&gt; </span><span style='background: #F0ADAD'>m.toHttpResponse[G](httpVersion)</span><span style=''>
+</span>83 <span style=''>      case _ =&gt;
+</span>84 <span style=''>        </span><span style='background: #F0ADAD'>Response(
+</span>85 <span style=''></span><span style='background: #F0ADAD'>          Status.InternalServerError,
+</span>86 <span style=''></span><span style='background: #F0ADAD'>          httpVersion,
+</span>87 <span style=''></span><span style='background: #F0ADAD'>          Headers(
+</span>88 <span style=''></span><span style='background: #F0ADAD'>            Connection(ci&quot;close&quot;),
+</span>89 <span style=''></span><span style='background: #F0ADAD'>            `Content-Length`.zero,
+</span>90 <span style=''></span><span style='background: #F0ADAD'>          ),
+</span>91 <span style=''></span><span style='background: #F0ADAD'>        )</span><span style=''>
+</span>92 <span style=''>    }
+</span>93 <span style=''>
+</span>94 <span style=''>  }
+</span>95 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          31
+        </td>
+        <td>
+          8728
+        </td>
+        <td>
+          947
+          -
+          1237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.errorhandlingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; {
+  val pf: PartialFunction[Throwable,F[org.http4s.Response[G]]] = server.this.`package`.inDefaultServiceErrorHandler[F, G](F).apply(req);
+  cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](k.run.apply(req))(F).handleErrorWith(((e: Throwable) =&gt; pf.lift.apply(e) match {
+    case (value: F[org.http4s.Response[G]]): Some[F[org.http4s.Response[G]]]((resp @ _)) =&gt; resp
+    case scala.None =&gt; F.raiseError[org.http4s.Response[G]](e)
+  }))(F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          7537
+        </td>
+        <td>
+          1031
+          -
+          1073
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.errorhandlingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          server.this.`package`.inDefaultServiceErrorHandler[F, G](F).apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          9214
+        </td>
+        <td>
+          1080
+          -
+          1231
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.handleErrorWith
+        </td>
+        <td>
+          org.http4s.server.middleware.errorhandlingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](k.run.apply(req))(F).handleErrorWith(((e: Throwable) =&gt; pf.lift.apply(e) match {
+  case (value: F[org.http4s.Response[G]]): Some[F[org.http4s.Response[G]]]((resp @ _)) =&gt; resp
+  case scala.None =&gt; F.raiseError[org.http4s.Response[G]](e)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          9497
+        </td>
+        <td>
+          1322
+          -
+          1339
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ErrorHandling.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.errorhandlingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ErrorHandling.this.apply[[β$0$]cats.data.OptionT[F,β$0$], [_]F[_]](httpRoutes)(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$1))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          7705
+        </td>
+        <td>
+          1327
+          -
+          1327
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.errorhandlingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          8451
+        </td>
+        <td>
+          1412
+          -
+          1426
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ErrorHandling.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.errorhandlingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ErrorHandling.this.apply[[_]F[_], [_]F[_]](httpApp)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          9660
+        </td>
+        <td>
+          1625
+          -
+          1688
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[F, A, org.http4s.Response[G]](((a: A) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](http.run.apply(a))(evidence$3).recoverWith(pf)(evidence$3)))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7812
+        </td>
+        <td>
+          1653
+          -
+          1680
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recoverWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](http.run.apply(a))(evidence$3).recoverWith(pf)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7487
+        </td>
+        <td>
+          1857
+          -
+          1954
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((a: org.http4s.Request[G]) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](http.run.apply(a))(evidence$4).handleError(Recover.this.totalRecover[[_]G[_]](a.httpVersion))(evidence$4)))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          8544
+        </td>
+        <td>
+          1894
+          -
+          1946
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.handleError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](http.run.apply(a))(evidence$4).handleError(Recover.this.totalRecover[[_]G[_]](a.httpVersion))(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          8737
+        </td>
+        <td>
+          2108
+          -
+          2210
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((a: org.http4s.Request[G]) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](http.run.apply(a))(evidence$5).recover(Recover.this.messageFailureRecover[[_]G[_]](a.httpVersion))(evidence$5)))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          9270
+        </td>
+        <td>
+          2145
+          -
+          2202
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recover
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](http.run.apply(a))(evidence$5).recover(Recover.this.messageFailureRecover[[_]G[_]](a.httpVersion))(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9450
+        </td>
+        <td>
+          2331
+          -
+          2331
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.ErrorHandling.Recover.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7575
+        </td>
+        <td>
+          2365
+          -
+          2397
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.MessageFailure.toHttpResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          m.toHttpResponse[G](httpVersion)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          8459
+        </td>
+        <td>
+          2534
+          -
+          2566
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.MessageFailure.toHttpResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          m.toHttpResponse[G](httpVersion)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          7296
+        </td>
+        <td>
+          2591
+          -
+          2591
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          8501
+        </td>
+        <td>
+          2591
+          -
+          2773
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Response.apply[[_]G[_]](org.http4s.Status.InternalServerError, httpVersion, org.http4s.Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;close&quot;)).ci()))(headers.this.Connection.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)), org.http4s.Response.apply$default$4[Nothing], org.http4s.Response.apply$default$5[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          9734
+        </td>
+        <td>
+          2591
+          -
+          2591
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          7286
+        </td>
+        <td>
+          2611
+          -
+          2637
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.InternalServerError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Status.InternalServerError
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          8441
+        </td>
+        <td>
+          2672
+          -
+          2762
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;close&quot;)).ci()))(headers.this.Connection.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          7437
+        </td>
+        <td>
+          2703
+          -
+          2703
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Connection.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          9278
+        </td>
+        <td>
+          2693
+          -
+          2714
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;close&quot;)).ci()))(headers.this.Connection.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          9667
+        </td>
+        <td>
+          2704
+          -
+          2713
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;close&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          8497
+        </td>
+        <td>
+          2693
+          -
+          2714
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Connection.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Connection.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;close&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          9414
+        </td>
+        <td>
+          2728
+          -
+          2749
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          8691
+        </td>
+        <td>
+          2728
+          -
+          2749
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          7581
+        </td>
+        <td>
+          2745
+          -
+          2745
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

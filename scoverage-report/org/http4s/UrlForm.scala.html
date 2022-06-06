@@ -1,0 +1,2674 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/UrlForm.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Eq
+</span>20 <span style=''>import cats.Monoid
+</span>21 <span style=''>import cats.data.Chain
+</span>22 <span style=''>import cats.effect.Concurrent
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import org.http4s.Charset.`UTF-8`
+</span>25 <span style=''>import org.http4s.headers._
+</span>26 <span style=''>import org.http4s.internal.CollectionCompat
+</span>27 <span style=''>import org.http4s.parser._
+</span>28 <span style=''>
+</span>29 <span style=''>import scala.io.Codec
+</span>30 <span style=''>
+</span>31 <span style=''>class UrlForm private (val values: Map[String, Chain[String]]) extends AnyVal {
+</span>32 <span style=''>  override def toString: String = </span><span style='background: #F0ADAD'>values.toString()</span><span style=''>
+</span>33 <span style=''>
+</span>34 <span style=''>  def get(key: String): Chain[String] =
+</span>35 <span style=''>    </span><span style='background: #AEF1AE'>this.getOrElse(key, Chain.empty[String])</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  def getOrElse(key: String, default: =&gt; Chain[String]): Chain[String] =
+</span>38 <span style=''>    </span><span style='background: #AEF1AE'>values.getOrElse(key, default)</span><span style=''>
+</span>39 <span style=''>
+</span>40 <span style=''>  def getFirst(key: String): Option[String] =
+</span>41 <span style=''>    </span><span style='background: #AEF1AE'>values.get(key).flatMap(_.uncons).map { case (s, _) =&gt; s }</span><span style=''>
+</span>42 <span style=''>
+</span>43 <span style=''>  def getFirstOrElse(key: String, default: =&gt; String): String =
+</span>44 <span style=''>    </span><span style='background: #AEF1AE'>this.getFirst(key).getOrElse(default)</span><span style=''>
+</span>45 <span style=''>
+</span>46 <span style=''>  def +(kv: (String, String)): UrlForm = {
+</span>47 <span style=''>    val newValues = </span><span style='background: #AEF1AE'>values.get(kv._1).fold(Chain(kv._2))(_ :+ kv._2)</span><span style=''>
+</span>48 <span style=''>    </span><span style='background: #AEF1AE'>UrlForm(values.updated(kv._1, newValues))</span><span style=''>
+</span>49 <span style=''>  }
+</span>50 <span style=''>
+</span>51 <span style=''>  /** @param key name of the field
+</span>52 <span style=''>    * @param value value of the field
+</span>53 <span style=''>    * @param ev evidence of the existence of `QueryParamEncoder[T]`
+</span>54 <span style=''>    * @return `UrlForm` updated with `key` and `value` pair if key does not exist in `values`. Otherwise `value` will be added to the existing entry.
+</span>55 <span style=''>    */
+</span>56 <span style=''>  def updateFormField[T](key: String, value: T)(implicit ev: QueryParamEncoder[T]): UrlForm =
+</span>57 <span style=''>    </span><span style='background: #AEF1AE'>this + (key -&gt; ev.encode(value).value)</span><span style=''>
+</span>58 <span style=''>
+</span>59 <span style=''>  /** @param key name of the field
+</span>60 <span style=''>    * @param value optional value of the field
+</span>61 <span style=''>    * @param ev evidence of the existence of `QueryParamEncoder[T]`
+</span>62 <span style=''>    * @return `UrlForm` updated as it is updated with `updateFormField(key, v)` if `value` is `Some(v)`, otherwise it is unaltered
+</span>63 <span style=''>    */
+</span>64 <span style=''>  def updateFormField[T](key: String, value: Option[T])(implicit
+</span>65 <span style=''>      ev: QueryParamEncoder[T]
+</span>66 <span style=''>  ): UrlForm =
+</span>67 <span style=''>    </span><span style='background: #AEF1AE'>value.fold(this)(updateFormField(key, _))</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>  /** @param key name of the field
+</span>70 <span style=''>    * @param vals a Chain of values for the field
+</span>71 <span style=''>    * @param ev evidence of the existence of `QueryParamEncoder[T]`
+</span>72 <span style=''>    * @return `UrlForm` updated with `key` and `vals` if key does not exist in `values`, otherwise `vals` will be appended to the existing entry. If `vals` is empty, `UrlForm` will remain as is
+</span>73 <span style=''>    */
+</span>74 <span style=''>  def updateFormFields[T](key: String, vals: Chain[T])(implicit ev: QueryParamEncoder[T]): UrlForm =
+</span>75 <span style=''>    </span><span style='background: #AEF1AE'>vals.foldLeft(this)(_.updateFormField(key, _)(ev))</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>  /* same as `updateFormField(key, value)` */
+</span>78 <span style=''>  def +?[T: QueryParamEncoder](key: String, value: T): UrlForm =
+</span>79 <span style=''>    </span><span style='background: #AEF1AE'>updateFormField(key, value)</span><span style=''>
+</span>80 <span style=''>
+</span>81 <span style=''>  /* same as `updateParamEncoder`(key, value) */
+</span>82 <span style=''>  def +?[T: QueryParamEncoder](key: String, value: Option[T]): UrlForm =
+</span>83 <span style=''>    </span><span style='background: #AEF1AE'>updateFormField(key, value)</span><span style=''>
+</span>84 <span style=''>
+</span>85 <span style=''>  /* same as `updatedParamEncoders`(key, vals) */
+</span>86 <span style=''>  def ++?[T: QueryParamEncoder](key: String, vals: Chain[T]): UrlForm =
+</span>87 <span style=''>    </span><span style='background: #AEF1AE'>updateFormFields(key, vals)</span><span style=''>
+</span>88 <span style=''>}
+</span>89 <span style=''>
+</span>90 <span style=''>object UrlForm {
+</span>91 <span style=''>  val empty: UrlForm = </span><span style='background: #AEF1AE'>new UrlForm(Map.empty)</span><span style=''>
+</span>92 <span style=''>
+</span>93 <span style=''>  def apply(values: Map[String, Chain[String]]): UrlForm =
+</span>94 <span style=''>    // value &quot;&quot; -&gt; Chain() is just noise and it is not maintain during encoding round trip
+</span>95 <span style=''>    if (</span><span style='background: #AEF1AE'>values.get(&quot;&quot;).fold(false)(_.isEmpty)</span><span style=''>) </span><span style='background: #F0ADAD'>new UrlForm(values - &quot;&quot;)</span><span style=''>
+</span>96 <span style=''>    else </span><span style='background: #AEF1AE'>new UrlForm(values)</span><span style=''>
+</span>97 <span style=''>
+</span>98 <span style=''>  def apply(values: (String, String)*): UrlForm =
+</span>99 <span style=''>    </span><span style='background: #AEF1AE'>values.foldLeft(empty)(_ + _)</span><span style=''>
+</span>100 <span style=''>
+</span>101 <span style=''>  def fromChain(values: Chain[(String, String)]): UrlForm =
+</span>102 <span style=''>    </span><span style='background: #AEF1AE'>apply(values.toList: _*)</span><span style=''>
+</span>103 <span style=''>
+</span>104 <span style=''>  implicit def entityEncoder[F[_]](implicit charset: Charset = `UTF-8`): EntityEncoder[F, UrlForm] =
+</span>105 <span style=''>    </span><span style='background: #AEF1AE'>EntityEncoder
+</span>106 <span style=''></span><span style='background: #AEF1AE'>      .stringEncoder[F]
+</span>107 <span style=''></span><span style='background: #AEF1AE'>      .contramap[UrlForm](encodeString(charset))
+</span>108 <span style=''></span><span style='background: #AEF1AE'>      .withContentType(`Content-Type`(MediaType.application.`x-www-form-urlencoded`, charset))</span><span style=''>
+</span>109 <span style=''>
+</span>110 <span style=''>  implicit def entityDecoder[F[_]](implicit
+</span>111 <span style=''>      F: Concurrent[F],
+</span>112 <span style=''>      defaultCharset: Charset = `UTF-8`,
+</span>113 <span style=''>  ): EntityDecoder[F, UrlForm] =
+</span>114 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaType.application.`x-www-form-urlencoded`) { m =&gt;
+</span>115 <span style=''></span><span style='background: #AEF1AE'>      DecodeResult(
+</span>116 <span style=''></span><span style='background: #AEF1AE'>        EntityDecoder
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          .decodeText(m)
+</span>118 <span style=''></span><span style='background: #AEF1AE'>          .map(decodeString(m.charset.getOrElse(defaultCharset)))
+</span>119 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>120 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>121 <span style=''>
+</span>122 <span style=''>  implicit val eqInstance: Eq[UrlForm] = </span><span style='background: #AEF1AE'>Eq.instance { (x: UrlForm, y: UrlForm) =&gt;
+</span>123 <span style=''></span><span style='background: #AEF1AE'>    x.values === y.values
+</span>124 <span style=''></span><span style='background: #AEF1AE'>  }</span><span style=''>
+</span>125 <span style=''>
+</span>126 <span style=''>  implicit val monoidInstance: Monoid[UrlForm] = </span><span style='background: #AEF1AE'>new</span><span style=''> Monoid[UrlForm] {
+</span>127 <span style=''>    override def empty: UrlForm = </span><span style='background: #AEF1AE'>UrlForm.empty</span><span style=''>
+</span>128 <span style=''>
+</span>129 <span style=''>    override def combine(x: UrlForm, y: UrlForm): UrlForm =
+</span>130 <span style=''>      </span><span style='background: #AEF1AE'>UrlForm(x.values |+| y.values)</span><span style=''>
+</span>131 <span style=''>  }
+</span>132 <span style=''>
+</span>133 <span style=''>  /** Attempt to decode the `String` to a [[UrlForm]] */
+</span>134 <span style=''>  def decodeString(
+</span>135 <span style=''>      charset: Charset
+</span>136 <span style=''>  )(urlForm: String): Either[MalformedMessageBodyFailure, UrlForm] =
+</span>137 <span style=''>    </span><span style='background: #AEF1AE'>QueryParser
+</span>138 <span style=''></span><span style='background: #AEF1AE'>      .parseQueryString(urlForm.replace(&quot;+&quot;, &quot;%20&quot;), new Codec(charset.nioCharset))
+</span>139 <span style=''></span><span style='background: #AEF1AE'>      .map(q =&gt; UrlForm(CollectionCompat.mapValues(q.multiParams)(Chain.fromSeq)))
+</span>140 <span style=''></span><span style='background: #AEF1AE'>      .leftMap { parseFailure =&gt;
+</span>141 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>MalformedMessageBodyFailure(parseFailure.message, None)</span><span style='background: #AEF1AE'>
+</span>142 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>143 <span style=''>
+</span>144 <span style=''>  /** Encode the [[UrlForm]] into a `String` using the provided `Charset` */
+</span>145 <span style=''>  def encodeString(charset: Charset)(urlForm: UrlForm): String = {
+</span>146 <span style=''>    def encode(s: String): String =
+</span>147 <span style=''>      </span><span style='background: #AEF1AE'>Uri.encode(s, charset.nioCharset, spaceIsPlus = true, toSkip = Uri.Unreserved)</span><span style=''>
+</span>148 <span style=''>
+</span>149 <span style=''>    val sb = </span><span style='background: #AEF1AE'>new StringBuilder(urlForm.values.size * 20)</span><span style=''>
+</span>150 <span style=''>    </span><span style='background: #AEF1AE'>urlForm.values.foreach { case (k, vs) =&gt;
+</span>151 <span style=''></span><span style='background: #AEF1AE'>      if (sb.nonEmpty) sb.append('&amp;')
+</span>152 <span style=''></span><span style='background: #AEF1AE'>      val encodedKey = encode(k)
+</span>153 <span style=''></span><span style='background: #AEF1AE'>      if (vs.isEmpty) sb.append(encodedKey)
+</span>154 <span style=''></span><span style='background: #AEF1AE'>      else {
+</span>155 <span style=''></span><span style='background: #AEF1AE'>        var first = true
+</span>156 <span style=''></span><span style='background: #AEF1AE'>        vs.map { v =&gt;
+</span>157 <span style=''></span><span style='background: #AEF1AE'>          if (!first) sb.append('&amp;')
+</span>158 <span style=''></span><span style='background: #AEF1AE'>          else first = false
+</span>159 <span style=''></span><span style='background: #AEF1AE'>          sb.append(encodedKey)
+</span>160 <span style=''></span><span style='background: #AEF1AE'>            .append('=')
+</span>161 <span style=''></span><span style='background: #AEF1AE'>            .append(encode(v))
+</span>162 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>163 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>164 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>165 <span style=''>    </span><span style='background: #AEF1AE'>sb.result()</span><span style=''>
+</span>166 <span style=''>  }
+</span>167 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          18833
+        </td>
+        <td>
+          998
+          -
+          1015
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.Map.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          UrlForm.this.values.toString()
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          14913
+        </td>
+        <td>
+          1081
+          -
+          1100
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.Chain.empty
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Chain.empty[String]
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          21860
+        </td>
+        <td>
+          1061
+          -
+          1101
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.getOrElse
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          this.getOrElse(key, cats.data.Chain.empty[String])
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          19957
+        </td>
+        <td>
+          1180
+          -
+          1210
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.getOrElse
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.values.getOrElse[cats.data.Chain[String]](key, default)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          22015
+        </td>
+        <td>
+          1262
+          -
+          1320
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.values.get(key).flatMap[(String, cats.data.Chain[String])](((x$1: cats.data.Chain[String]) =&gt; x$1.uncons)).map[String](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((s @ _), _) =&gt; s
+}))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          15836
+        </td>
+        <td>
+          1286
+          -
+          1294
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.uncons
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.uncons
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          18266
+        </td>
+        <td>
+          1390
+          -
+          1427
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          this.getFirst(key).getOrElse[String](default)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          23159
+        </td>
+        <td>
+          1521
+          -
+          1526
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          kv._2
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          19040
+        </td>
+        <td>
+          1515
+          -
+          1527
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.apply
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Chain.apply[String](kv._2)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          19862
+        </td>
+        <td>
+          1492
+          -
+          1540
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.values.get(kv._1).fold[cats.data.Chain[String]](cats.data.Chain.apply[String](kv._2))(((x$2: cats.data.Chain[String]) =&gt; x$2.:+[String](kv._2)))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          21877
+        </td>
+        <td>
+          1529
+          -
+          1539
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.:+
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.:+[String](kv._2)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          16628
+        </td>
+        <td>
+          1503
+          -
+          1508
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          kv._1
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          15258
+        </td>
+        <td>
+          1534
+          -
+          1539
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          kv._2
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          18227
+        </td>
+        <td>
+          1545
+          -
+          1586
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.apply
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.apply(UrlForm.this.values.updated[cats.data.Chain[String]](kv._1, newValues))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          22345
+        </td>
+        <td>
+          1553
+          -
+          1585
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.updated
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.values.updated[cats.data.Chain[String]](kv._1, newValues)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          15853
+        </td>
+        <td>
+          1568
+          -
+          1573
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          kv._1
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          14799
+        </td>
+        <td>
+          2003
+          -
+          2025
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QueryParameterValue.value
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          ev.encode(value).value
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          19057
+        </td>
+        <td>
+          1988
+          -
+          2026
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.+
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          this.+(scala.Predef.ArrowAssoc[String](key).-&gt;[String](ev.encode(value).value))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          22806
+        </td>
+        <td>
+          1996
+          -
+          2025
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](key).-&gt;[String](ev.encode(value).value)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          21438
+        </td>
+        <td>
+          2431
+          -
+          2472
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          value.fold[org.http4s.UrlForm](this)(((x$3: T) =&gt; UrlForm.this.updateFormField[T](key, x$3)(ev)))
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          15280
+        </td>
+        <td>
+          2448
+          -
+          2471
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.UrlForm.updateFormField
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.updateFormField[T](key, x$3)(ev)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          15741
+        </td>
+        <td>
+          2933
+          -
+          2983
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.foldLeft
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          vals.foldLeft[org.http4s.UrlForm](this)(((x$4: org.http4s.UrlForm, x$5: T) =&gt; x$4.updateFormField[T](key, x$5)(ev)))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          19876
+        </td>
+        <td>
+          2953
+          -
+          2982
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.updateFormField
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.updateFormField[T](key, x$5)(ev)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          22224
+        </td>
+        <td>
+          3100
+          -
+          3127
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.UrlForm.updateFormField
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.updateFormField[T](key, value)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          18239
+        </td>
+        <td>
+          3255
+          -
+          3282
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.UrlForm.updateFormField
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.updateFormField[T](key, value)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          14374
+        </td>
+        <td>
+          3410
+          -
+          3437
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.UrlForm.updateFormFields
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.updateFormFields[T](key, vals)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          19069
+        </td>
+        <td>
+          3481
+          -
+          3503
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new UrlForm(scala.Predef.Map.empty[String, Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          22824
+        </td>
+        <td>
+          3493
+          -
+          3502
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Map.empty
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Map.empty[String, Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          21457
+        </td>
+        <td>
+          3683
+          -
+          3688
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite,munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          15760
+        </td>
+        <td>
+          3663
+          -
+          3700
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite,munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          values.get(&quot;&quot;).fold[Boolean](false)(((x$6: cats.data.Chain[String]) =&gt; x$6.isEmpty))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          18146
+        </td>
+        <td>
+          3702
+          -
+          3726
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new UrlForm(values.-(&quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          22237
+        </td>
+        <td>
+          3714
+          -
+          3725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          values.-(&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          14392
+        </td>
+        <td>
+          3702
+          -
+          3726
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.UrlForm.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new UrlForm(values.-(&quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          14909
+        </td>
+        <td>
+          3674
+          -
+          3676
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite,munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          17992
+        </td>
+        <td>
+          3690
+          -
+          3699
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          18968
+        </td>
+        <td>
+          3736
+          -
+          3755
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.UrlForm.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite,munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new UrlForm(values)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          23156
+        </td>
+        <td>
+          3736
+          -
+          3755
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite,munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new UrlForm(values)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          21343
+        </td>
+        <td>
+          3834
+          -
+          3839
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.+
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$7.+(x$8)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          18011
+        </td>
+        <td>
+          3811
+          -
+          3840
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foldLeft
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          values.foldLeft[org.http4s.UrlForm](UrlForm.this.empty)(((x$7: org.http4s.UrlForm, x$8: (String, String)) =&gt; x$7.+(x$8)))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          14920
+        </td>
+        <td>
+          3827
+          -
+          3832
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UrlForm.empty
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.empty
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          16089
+        </td>
+        <td>
+          3912
+          -
+          3925
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.toList
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          values.toList
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          22531
+        </td>
+        <td>
+          3906
+          -
+          3930
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.apply
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.apply((values.toList: _*))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          18158
+        </td>
+        <td>
+          4101
+          -
+          4122
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.encodeString
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.this.encodeString(charset)(urlForm)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          23048
+        </td>
+        <td>
+          4037
+          -
+          4218
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.withContentType
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder[F](charset).contramap[org.http4s.UrlForm](((urlForm: org.http4s.UrlForm) =&gt; UrlForm.this.encodeString(charset)(urlForm))).withContentType(org.http4s.headers.Content-Type.apply(MediaType.application.x-www-form-urlencoded, charset))
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          14678
+        </td>
+        <td>
+          4147
+          -
+          4217
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.apply
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Type.apply(MediaType.application.x-www-form-urlencoded, charset)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          19313
+        </td>
+        <td>
+          4366
+          -
+          4589
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], org.http4s.UrlForm](MediaType.application.x-www-form-urlencoded)(((m: org.http4s.Media[[_]F[_]]) =&gt; DecodeResult.apply[F, org.http4s.UrlForm](cats.syntax.`package`.all.toFunctorOps[F, String](EntityDecoder.decodeText[[_]F[_]](m)(F, defaultCharset))(F).map[Either[org.http4s.DecodeFailure,org.http4s.UrlForm]]({
+  &lt;synthetic&gt; val eta$0$1: org.http4s.Charset = m.charset.getOrElse[org.http4s.Charset](defaultCharset);
+  ((urlForm: String) =&gt; UrlForm.this.decodeString(eta$0$1)(urlForm))
+}))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          21214
+        </td>
+        <td>
+          4632
+          -
+          4703
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.kernel.Eq.instance
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.`package`.Eq.instance[org.http4s.UrlForm](((x: org.http4s.UrlForm, y: org.http4s.UrlForm) =&gt; cats.syntax.`package`.all.catsSyntaxEq[Map[String,cats.data.Chain[String]]](x.values)(kernel.this.Eq.catsKernelHashForMap[String, cats.data.Chain[String]](kernel.this.Eq.catsKernelInstancesForString, data.this.Chain.catsDataHashForChain[String](kernel.this.Eq.catsKernelInstancesForString))).===(y.values)))
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          18027
+        </td>
+        <td>
+          4680
+          -
+          4680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Eq.catsKernelInstancesForString
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelInstancesForString
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          14695
+        </td>
+        <td>
+          4678
+          -
+          4699
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EqOps.===
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEq[Map[String,cats.data.Chain[String]]](x.values)(kernel.this.Eq.catsKernelHashForMap[String, cats.data.Chain[String]](kernel.this.Eq.catsKernelInstancesForString, data.this.Chain.catsDataHashForChain[String](kernel.this.Eq.catsKernelInstancesForString))).===(y.values)
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          15465
+        </td>
+        <td>
+          4678
+          -
+          4686
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UrlForm.values
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          x.values
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          18704
+        </td>
+        <td>
+          4691
+          -
+          4699
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UrlForm.values
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          y.values
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          15970
+        </td>
+        <td>
+          4680
+          -
+          4680
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.ChainInstances2.catsDataHashForChain
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Chain.catsDataHashForChain[String](kernel.this.Eq.catsKernelInstancesForString)
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          21356
+        </td>
+        <td>
+          4680
+          -
+          4680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Eq.catsKernelInstancesForString
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelInstancesForString
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          22220
+        </td>
+        <td>
+          4680
+          -
+          4680
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.HashInstances.catsKernelHashForMap
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelHashForMap[String, cats.data.Chain[String]](kernel.this.Eq.catsKernelInstancesForString, data.this.Chain.catsDataHashForChain[String](kernel.this.Eq.catsKernelInstancesForString))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          14709
+        </td>
+        <td>
+          4754
+          -
+          4757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          18945
+        </td>
+        <td>
+          4810
+          -
+          4823
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UrlForm.empty
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.empty
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          18386
+        </td>
+        <td>
+          4891
+          -
+          4921
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.apply(cats.syntax.`package`.all.catsSyntaxSemigroup[Map[String,cats.data.Chain[String]]](x.values)(kernel.this.Semigroup.catsKernelMonoidForMap[String, cats.data.Chain[String]](data.this.Chain.catsDataMonoidForChain[String])).|+|(y.values))
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          21894
+        </td>
+        <td>
+          4901
+          -
+          4901
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.ChainInstances.catsDataMonoidForChain
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Chain.catsDataMonoidForChain[String]
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          15987
+        </td>
+        <td>
+          4912
+          -
+          4920
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UrlForm.values
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          y.values
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          22114
+        </td>
+        <td>
+          4899
+          -
+          4920
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[Map[String,cats.data.Chain[String]]](x.values)(kernel.this.Semigroup.catsKernelMonoidForMap[String, cats.data.Chain[String]](data.this.Chain.catsDataMonoidForChain[String])).|+|(y.values)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          15137
+        </td>
+        <td>
+          4899
+          -
+          4907
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UrlForm.values
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.values
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          17914
+        </td>
+        <td>
+          4901
+          -
+          4901
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.MonoidInstances.catsKernelMonoidForMap
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Semigroup.catsKernelMonoidForMap[String, cats.data.Chain[String]](data.this.Chain.catsDataMonoidForChain[String])
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          18960
+        </td>
+        <td>
+          5175
+          -
+          5193
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Charset.nioCharset
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          charset.nioCharset
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          21098
+        </td>
+        <td>
+          5136
+          -
+          5163
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.replace
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          urlForm.replace(&quot;+&quot;, &quot;%20&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          15024
+        </td>
+        <td>
+          5165
+          -
+          5194
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.io.Codec.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new scala.io.Codec(charset.nioCharset)
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          22130
+        </td>
+        <td>
+          5100
+          -
+          5278
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.map
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.parser.QueryParser.parseQueryString(urlForm.replace(&quot;+&quot;, &quot;%20&quot;), new scala.io.Codec(charset.nioCharset)).map[org.http4s.UrlForm](((q: org.http4s.Query) =&gt; UrlForm.apply(org.http4s.internal.CollectionCompat.mapValues[String, Seq[String], cats.data.Chain[String]](q.multiParams)(((s: Seq[String]) =&gt; cats.data.Chain.fromSeq[String](s))))))
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          17934
+        </td>
+        <td>
+          5220
+          -
+          5276
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.CollectionCompat.mapValues
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.CollectionCompat.mapValues[String, Seq[String], cats.data.Chain[String]](q.multiParams)(((s: Seq[String]) =&gt; cats.data.Chain.fromSeq[String](s)))
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          15627
+        </td>
+        <td>
+          5212
+          -
+          5277
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.apply(org.http4s.internal.CollectionCompat.mapValues[String, Seq[String], cats.data.Chain[String]](q.multiParams)(((s: Seq[String]) =&gt; cats.data.Chain.fromSeq[String](s))))
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          21336
+        </td>
+        <td>
+          5262
+          -
+          5275
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.fromSeq
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Chain.fromSeq[String](s)
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          18850
+        </td>
+        <td>
+          5100
+          -
+          5383
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherOps.leftMap
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.UrlForm](org.http4s.parser.QueryParser.parseQueryString(urlForm.replace(&quot;+&quot;, &quot;%20&quot;), new scala.io.Codec(charset.nioCharset)).map[org.http4s.UrlForm](((q: org.http4s.Query) =&gt; UrlForm.apply(org.http4s.internal.CollectionCompat.mapValues[String, Seq[String], cats.data.Chain[String]](q.multiParams)(((s: Seq[String]) =&gt; cats.data.Chain.fromSeq[String](s))))))).leftMap[org.http4s.MalformedMessageBodyFailure](((parseFailure: org.http4s.ParseFailure) =&gt; MalformedMessageBodyFailure.apply(parseFailure.message, scala.None)))
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          14252
+        </td>
+        <td>
+          5370
+          -
+          5374
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          21115
+        </td>
+        <td>
+          5320
+          -
+          5375
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.MalformedMessageBodyFailure.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          MalformedMessageBodyFailure.apply(parseFailure.message, scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          18407
+        </td>
+        <td>
+          5348
+          -
+          5368
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ParseFailure.message
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          parseFailure.message
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          21349
+        </td>
+        <td>
+          5619
+          -
+          5623
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          15038
+        </td>
+        <td>
+          5585
+          -
+          5603
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Charset.nioCharset
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          charset.nioCharset
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          13782
+        </td>
+        <td>
+          5571
+          -
+          5649
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.encode
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.encode(s, charset.nioCharset, true, Uri.Unreserved)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          17499
+        </td>
+        <td>
+          5634
+          -
+          5648
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Unreserved
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.Unreserved
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          22031
+        </td>
+        <td>
+          5682
+          -
+          5706
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.*
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          urlForm.values.size.*(20)
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          18696
+        </td>
+        <td>
+          5664
+          -
+          5707
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new scala.`package`.StringBuilder(urlForm.values.size.*(20))
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          17227
+        </td>
+        <td>
+          5712
+          -
+          6105
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foreach
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          urlForm.values.foreach[Object](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (vs @ _)) =&gt; {
+    if (sb.nonEmpty)
+      sb.append('&amp;')
+    else
+      ();
+    val encodedKey: String = encode(k);
+    if (vs.isEmpty)
+      sb.append(encodedKey)
+    else
+      {
+        var first: Boolean = true;
+        vs.map[StringBuilder](((v: String) =&gt; {
+          if (first.unary_!)
+            sb.append('&amp;')
+          else
+            first = false;
+          sb.append(encodedKey).append('=').append(encode(v))
+        }))
+      }
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          21890
+        </td>
+        <td>
+          5759
+          -
+          5759
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          21076
+        </td>
+        <td>
+          5776
+          -
+          5790
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append('&amp;')
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          14269
+        </td>
+        <td>
+          5763
+          -
+          5774
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.nonEmpty
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          18865
+        </td>
+        <td>
+          5776
+          -
+          5790
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append('&amp;')
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          15052
+        </td>
+        <td>
+          5759
+          -
+          5759
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          17516
+        </td>
+        <td>
+          5814
+          -
+          5823
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.encode
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          encode(k)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          18709
+        </td>
+        <td>
+          5846
+          -
+          5867
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append(encodedKey)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          22047
+        </td>
+        <td>
+          5846
+          -
+          5867
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append(encodedKey)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          13978
+        </td>
+        <td>
+          5834
+          -
+          5844
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.isEmpty
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          vs.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          20988
+        </td>
+        <td>
+          5879
+          -
+          6099
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  var first: Boolean = true;
+  vs.map[StringBuilder](((v: String) =&gt; {
+    if (first.unary_!)
+      sb.append('&amp;')
+    else
+      first = false;
+    sb.append(encodedKey).append('=').append(encode(v))
+  }))
+}
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          14815
+        </td>
+        <td>
+          5901
+          -
+          5905
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          14827
+        </td>
+        <td>
+          5914
+          -
+          6091
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.map
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          vs.map[StringBuilder](((v: String) =&gt; {
+  if (first.unary_!)
+    sb.append('&amp;')
+  else
+    first = false;
+  sb.append(encodedKey).append('=').append(encode(v))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          21093
+        </td>
+        <td>
+          5942
+          -
+          5948
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          first.unary_!
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          17211
+        </td>
+        <td>
+          5950
+          -
+          5964
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append('&amp;')
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          15339
+        </td>
+        <td>
+          5950
+          -
+          5964
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append('&amp;')
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          17806
+        </td>
+        <td>
+          5980
+          -
+          5993
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          first = false
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          21900
+        </td>
+        <td>
+          5988
+          -
+          5993
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          13996
+        </td>
+        <td>
+          6046
+          -
+          6049
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          22393
+        </td>
+        <td>
+          6071
+          -
+          6080
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.UrlForm.encode
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          encode(v)
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          18590
+        </td>
+        <td>
+          6004
+          -
+          6081
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append(encodedKey).append('=').append(encode(v))
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          15034
+        </td>
+        <td>
+          6110
+          -
+          6121
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.result
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.result()
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

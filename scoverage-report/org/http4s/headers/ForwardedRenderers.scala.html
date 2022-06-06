@@ -1,0 +1,1382 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/ForwardedRenderers.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.headers
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Eval
+</span>20 <span style=''>import cats.syntax.flatMap._
+</span>21 <span style=''>import org.http4s.Uri
+</span>22 <span style=''>import org.http4s.internal.parsing.Rfc7230
+</span>23 <span style=''>import org.http4s.util.Renderer
+</span>24 <span style=''>import org.http4s.util.Writer
+</span>25 <span style=''>
+</span>26 <span style=''>import java.nio.charset.StandardCharsets
+</span>27 <span style=''>
+</span>28 <span style=''>/** Renderers for the [[Forwarded]] header models.
+</span>29 <span style=''>  */
+</span>30 <span style=''>private[http4s] trait ForwardedRenderers {
+</span>31 <span style=''>  import Forwarded._
+</span>32 <span style=''>
+</span>33 <span style=''>  implicit val http4sForwardedNodeNameRenderer: Renderer[Node.Name] =
+</span>34 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Node.Name] {
+</span>35 <span style=''>      override def render(writer: Writer, nodeName: Node.Name): writer.type =
+</span>36 <span style=''>        nodeName match {
+</span>37 <span style=''>          case Node.Name.Ipv4(ipv4addr) =&gt; </span><span style='background: #AEF1AE'>writer &lt;&lt; ipv4addr.toUriString</span><span style=''>
+</span>38 <span style=''>          case Node.Name.Ipv6(ipv6addr) =&gt; </span><span style='background: #AEF1AE'>writer &lt;&lt; ipv6addr.toUriString</span><span style=''>
+</span>39 <span style=''>          case Node.Name.Unknown =&gt; </span><span style='background: #AEF1AE'>writer &lt;&lt; &quot;unknown&quot;</span><span style=''>
+</span>40 <span style=''>          case Node.Obfuscated(str) =&gt; </span><span style='background: #AEF1AE'>writer &lt;&lt; str</span><span style=''>
+</span>41 <span style=''>        }
+</span>42 <span style=''>    }
+</span>43 <span style=''>
+</span>44 <span style=''>  implicit val http4sForwardedNodePortRenderer: Renderer[Node.Port] = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Node.Port] {
+</span>45 <span style=''>    override def render(writer: Writer, nodePort: Node.Port): writer.type =
+</span>46 <span style=''>      nodePort match {
+</span>47 <span style=''>        case Node.Port.Numeric(num) =&gt; </span><span style='background: #AEF1AE'>writer &lt;&lt; num</span><span style=''>
+</span>48 <span style=''>        case Node.Obfuscated(str) =&gt; </span><span style='background: #AEF1AE'>writer &lt;&lt; str</span><span style=''>
+</span>49 <span style=''>      }
+</span>50 <span style=''>  }
+</span>51 <span style=''>
+</span>52 <span style=''>  implicit val http4sForwardedNodeRenderer: Renderer[Node] = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Node] {
+</span>53 <span style=''>    override def render(writer: Writer, node: Node): writer.type = {
+</span>54 <span style=''>      </span><span style='background: #AEF1AE'>writer &lt;&lt; node.nodeName</span><span style=''>
+</span>55 <span style=''>      </span><span style='background: #AEF1AE'>node.nodePort.fold[writer.type](writer)(writer &lt;&lt; ':' &lt;&lt; _)</span><span style=''>
+</span>56 <span style=''>    }
+</span>57 <span style=''>  }
+</span>58 <span style=''>
+</span>59 <span style=''>  implicit val http4sForwardedHostRenderer: Renderer[Host] = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Host] {
+</span>60 <span style=''>    // See in `Rfc3986Parser`: `RegName` -&gt; `SubDelims`
+</span>61 <span style=''>    private val RegNameChars = </span><span style='background: #AEF1AE'>Uri.Unreserved ++ &quot;!$&amp;'()*+,;=&quot;</span><span style=''>
+</span>62 <span style=''>
+</span>63 <span style=''>    override def render(writer: Writer, host: Host): writer.type = {
+</span>64 <span style=''>      </span><span style='background: #AEF1AE'>host.host</span><span style=''> match {
+</span>65 <span style=''>        case Uri.RegName(name) =&gt;
+</span>66 <span style=''>          // TODO: A workaround for #1651, remove when the former issue gets fixed.
+</span>67 <span style=''>          </span><span style='background: #AEF1AE'>writer &lt;&lt; Uri.encode(name.toString, StandardCharsets.ISO_8859_1, toSkip = RegNameChars)</span><span style=''>
+</span>68 <span style=''>        case other =&gt;
+</span>69 <span style=''>          </span><span style='background: #AEF1AE'>writer &lt;&lt; other</span><span style=''>
+</span>70 <span style=''>      }
+</span>71 <span style=''>      </span><span style='background: #AEF1AE'>host.port.fold[writer.type](writer)(writer &lt;&lt; ':' &lt;&lt; _)</span><span style=''>
+</span>72 <span style=''>    }
+</span>73 <span style=''>  }
+</span>74 <span style=''>
+</span>75 <span style=''>  protected def renderElement(writer: Writer, elem: Element): writer.type = {
+</span>76 <span style=''>
+</span>77 <span style=''>    def renderParamEval[A: Renderer](name: String, maybeValue: Option[A]) =
+</span>78 <span style=''>      </span><span style='background: #AEF1AE'>maybeValue.map { value =&gt;
+</span>79 <span style=''></span><span style='background: #AEF1AE'>        // Do not write it immediately since we're going to interleave existing parameters with ';'
+</span>80 <span style=''></span><span style='background: #AEF1AE'>        Eval.always[writer.type] { // NOTE: not clear why the explicit type is necessary here
+</span>81 <span style=''></span><span style='background: #AEF1AE'>          writer &lt;&lt; name &lt;&lt; '='
+</span>82 <span style=''></span><span style='background: #AEF1AE'>
+</span>83 <span style=''></span><span style='background: #AEF1AE'>          val rendered = Renderer.renderString(value)
+</span>84 <span style=''></span><span style='background: #AEF1AE'>          if (Rfc7230.token.parseAll(rendered).isRight)
+</span>85 <span style=''></span><span style='background: #AEF1AE'>            writer &lt;&lt; rendered
+</span>86 <span style=''></span><span style='background: #AEF1AE'>          else
+</span>87 <span style=''></span><span style='background: #AEF1AE'>            writer &lt;&lt;# rendered // quote non-token values
+</span>88 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>89 <span style=''></span><span style='background: #AEF1AE'>      }.toList</span><span style=''>
+</span>90 <span style=''>
+</span>91 <span style=''>    </span><span style='background: #AEF1AE'>{
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      import elem._
+</span>93 <span style=''></span><span style='background: #AEF1AE'>      renderParamEval(&quot;by&quot;, maybeBy) :::
+</span>94 <span style=''></span><span style='background: #AEF1AE'>        renderParamEval(&quot;for&quot;, maybeFor) :::
+</span>95 <span style=''></span><span style='background: #AEF1AE'>        renderParamEval(&quot;host&quot;, maybeHost) :::
+</span>96 <span style=''></span><span style='background: #AEF1AE'>        renderParamEval(&quot;proto&quot;, maybeProto)
+</span>97 <span style=''></span><span style='background: #AEF1AE'>    }.reduceLeft { (leftParamEval, rightParamEval) =&gt;
+</span>98 <span style=''></span><span style='background: #AEF1AE'>      // Interleave every couple of parameters with ';'
+</span>99 <span style=''></span><span style='background: #AEF1AE'>      leftParamEval &gt;&gt; Eval.always(writer &lt;&lt; ';') &gt;&gt; rightParamEval
+</span>100 <span style=''></span><span style='background: #AEF1AE'>    }.value</span><span style=''> // all actual rendering happens here
+</span>101 <span style=''>  }
+</span>102 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          14358
+        </td>
+        <td>
+          1034
+          -
+          1037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.ForwardedRenderers.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          21302
+        </td>
+        <td>
+          1206
+          -
+          1236
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(ipv4addr.toUriString)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          15117
+        </td>
+        <td>
+          1216
+          -
+          1236
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          com.comcast.ip4s.Ipv4Address.toUriString
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          ipv4addr.toUriString
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          17591
+        </td>
+        <td>
+          1290
+          -
+          1310
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          com.comcast.ip4s.Ipv6Address.toUriString
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          ipv6addr.toUriString
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          13852
+        </td>
+        <td>
+          1280
+          -
+          1310
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(ipv6addr.toUriString)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          22096
+        </td>
+        <td>
+          1347
+          -
+          1366
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;unknown&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          18122
+        </td>
+        <td>
+          1406
+          -
+          1419
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(str)
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          15003
+        </td>
+        <td>
+          1507
+          -
+          1510
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.ForwardedRenderers.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          20806
+        </td>
+        <td>
+          1671
+          -
+          1684
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(num)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          17067
+        </td>
+        <td>
+          1722
+          -
+          1735
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(str)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          17298
+        </td>
+        <td>
+          1810
+          -
+          1813
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.ForwardedRenderers.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          17610
+        </td>
+        <td>
+          1913
+          -
+          1913
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.ForwardedRenderers.http4sForwardedNodeNameRenderer
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          ForwardedRenderers.this.http4sForwardedNodeNameRenderer
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          21318
+        </td>
+        <td>
+          1916
+          -
+          1929
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.nodeName
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          node.nodeName
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          14068
+        </td>
+        <td>
+          1906
+          -
+          1929
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;[org.http4s.headers.Forwarded.Node.Name](node.nodeName)(ForwardedRenderers.this.http4sForwardedNodeNameRenderer)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          22111
+        </td>
+        <td>
+          1986
+          -
+          1989
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          ':'
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          21168
+        </td>
+        <td>
+          1936
+          -
+          1995
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          node.nodePort.fold[writer.type](writer)(((x$1: org.http4s.headers.Forwarded.Node.Port) =&gt; writer.&lt;&lt;(':').&lt;&lt;[org.http4s.headers.Forwarded.Node.Port](x$1)(ForwardedRenderers.this.http4sForwardedNodePortRenderer)))
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          14233
+        </td>
+        <td>
+          1976
+          -
+          1994
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(':').&lt;&lt;[org.http4s.headers.Forwarded.Node.Port](x$1)(ForwardedRenderers.this.http4sForwardedNodePortRenderer)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          18136
+        </td>
+        <td>
+          1990
+          -
+          1990
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.ForwardedRenderers.http4sForwardedNodePortRenderer
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          ForwardedRenderers.this.http4sForwardedNodePortRenderer
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          13956
+        </td>
+        <td>
+          2068
+          -
+          2071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.ForwardedRenderers.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          15021
+        </td>
+        <td>
+          2176
+          -
+          2207
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.CharPredicate.++
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Unreserved.++(&quot;!$&amp;\'()*+,;=&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          21330
+        </td>
+        <td>
+          2284
+          -
+          2293
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.host
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          host.host
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          17470
+        </td>
+        <td>
+          2451
+          -
+          2464
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          name.toString
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          14246
+        </td>
+        <td>
+          2440
+          -
+          2517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.encode
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.encode(x$1, x$2, x$4, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          14087
+        </td>
+        <td>
+          2466
+          -
+          2493
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.ISO_8859_1
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.charset.StandardCharsets.ISO_8859_1
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          18671
+        </td>
+        <td>
+          2444
+          -
+          2444
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.encode$default$3
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.encode$default$3
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          21060
+        </td>
+        <td>
+          2430
+          -
+          2517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;({
+  &lt;artifact&gt; val x$1: String = name.toString;
+  &lt;artifact&gt; val x$2: java.nio.charset.Charset = java.nio.charset.StandardCharsets.ISO_8859_1;
+  &lt;artifact&gt; val x$3: org.http4s.internal.CharPredicate = $anon.this.RegNameChars;
+  &lt;artifact&gt; val x$4: Boolean = org.http4s.Uri.encode$default$3;
+  org.http4s.Uri.encode(x$1, x$2, x$4, x$3)
+})
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          22316
+        </td>
+        <td>
+          2504
+          -
+          2516
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.ForwardedRenderers.$anon.RegNameChars
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          $anon.this.RegNameChars
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          17318
+        </td>
+        <td>
+          2557
+          -
+          2557
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.Uri.Host]
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          15114
+        </td>
+        <td>
+          2550
+          -
+          2565
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;[org.http4s.Uri.Host](other)(util.this.Renderable.renderableInst[org.http4s.Uri.Host])
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          21872
+        </td>
+        <td>
+          2616
+          -
+          2634
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(':').&lt;&lt;(x$2)
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          17893
+        </td>
+        <td>
+          2580
+          -
+          2635
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          host.port.fold[writer.type](writer)(((x$2: Int) =&gt; writer.&lt;&lt;(':').&lt;&lt;(x$2)))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          17784
+        </td>
+        <td>
+          2942
+          -
+          3284
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Eval.always
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Eval.always[writer.type]({
+  writer.&lt;&lt;(name).&lt;&lt;('=');
+  val rendered: String = org.http4s.util.Renderer.renderString[A](value)(evidence$1);
+  if (org.http4s.internal.parsing.Rfc7230.token.parseAll(rendered).isRight)
+    writer.&lt;&lt;(rendered)
+  else
+    writer.&lt;&lt;#(rendered)
+})
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          20544
+        </td>
+        <td>
+          3038
+          -
+          3059
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(name).&lt;&lt;('=')
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          18360
+        </td>
+        <td>
+          3086
+          -
+          3114
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Renderer.renderString
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.util.Renderer.renderString[A](value)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          14793
+        </td>
+        <td>
+          3129
+          -
+          3169
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.isRight
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.parseAll(rendered).isRight
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          21073
+        </td>
+        <td>
+          3183
+          -
+          3201
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(rendered)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          17184
+        </td>
+        <td>
+          3183
+          -
+          3201
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(rendered)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          21588
+        </td>
+        <td>
+          3229
+          -
+          3248
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;#
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;#(rendered)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          14999
+        </td>
+        <td>
+          3229
+          -
+          3248
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;#
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;#(rendered)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          13973
+        </td>
+        <td>
+          2808
+          -
+          3299
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.toList
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          maybeValue.map[cats.Eval[writer.type]](((value: A) =&gt; cats.Eval.always[writer.type]({
+  writer.&lt;&lt;(name).&lt;&lt;('=');
+  val rendered: String = org.http4s.util.Renderer.renderString[A](value)(evidence$1);
+  if (org.http4s.internal.parsing.Rfc7230.token.parseAll(rendered).isRight)
+    writer.&lt;&lt;(rendered)
+  else
+    writer.&lt;&lt;#(rendered)
+}))).toList
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          20276
+        </td>
+        <td>
+          3364
+          -
+          3504
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.:::
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$2: List[cats.Eval[writer.type]] = renderParamEval[org.http4s.headers.Forwarded.Node](&quot;for&quot;, elem.maybeFor)(ForwardedRenderers.this.http4sForwardedNodeRenderer);
+  {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: List[cats.Eval[writer.type]] = renderParamEval[org.http4s.headers.Forwarded.Host](&quot;host&quot;, elem.maybeHost)(ForwardedRenderers.this.http4sForwardedHostRenderer);
+  renderParamEval[org.http4s.headers.Forwarded.Proto](&quot;proto&quot;, elem.maybeProto)(Uri.this.Scheme.http4sInstancesForScheme).:::[cats.Eval[writer.type]](rassoc$1)
+}.:::[cats.Eval[writer.type]](rassoc$2)
+}.:::[cats.Eval[writer.type]](rassoc$3)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          21451
+        </td>
+        <td>
+          3635
+          -
+          3635
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.EvalInstances.catsBimonadForEval
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Eval.catsBimonadForEval
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          17467
+        </td>
+        <td>
+          3665
+          -
+          3665
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.EvalInstances.catsBimonadForEval
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Eval.catsBimonadForEval
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          17203
+        </td>
+        <td>
+          3635
+          -
+          3635
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.EvalInstances.catsBimonadForEval
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Eval.catsBimonadForEval
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          18237
+        </td>
+        <td>
+          3621
+          -
+          3621
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.EvalInstances.catsBimonadForEval
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Eval.catsBimonadForEval
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          13189
+        </td>
+        <td>
+          3621
+          -
+          3664
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.flatMap.catsSyntaxFlatMapOps[cats.Eval, writer.type](leftParamEval)(cats.this.Eval.catsBimonadForEval).&gt;&gt;[org.http4s.util.Writer](cats.Eval.always[org.http4s.util.Writer](writer.&lt;&lt;(';')))(cats.this.Eval.catsBimonadForEval)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          13990
+        </td>
+        <td>
+          3621
+          -
+          3682
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.flatMap.catsSyntaxFlatMapOps[cats.Eval, org.http4s.util.Writer](cats.syntax.`package`.flatMap.catsSyntaxFlatMapOps[cats.Eval, writer.type](leftParamEval)(cats.this.Eval.catsBimonadForEval).&gt;&gt;[org.http4s.util.Writer](cats.Eval.always[org.http4s.util.Writer](writer.&lt;&lt;(';')))(cats.this.Eval.catsBimonadForEval))(cats.this.Eval.catsBimonadForEval).&gt;&gt;[writer.type](rightParamEval)(cats.this.Eval.catsBimonadForEval)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          20973
+        </td>
+        <td>
+          3638
+          -
+          3664
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Eval.always
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Eval.always[org.http4s.util.Writer](writer.&lt;&lt;(';'))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          14229
+        </td>
+        <td>
+          3650
+          -
+          3663
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(';')
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          20161
+        </td>
+        <td>
+          3305
+          -
+          3694
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Eval.value
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  import elem._;
+  {
+    final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$3: List[cats.Eval[writer.type]] = renderParamEval[org.http4s.headers.Forwarded.Node](&quot;by&quot;, elem.maybeBy)(ForwardedRenderers.this.http4sForwardedNodeRenderer);
+    {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$2: List[cats.Eval[writer.type]] = renderParamEval[org.http4s.headers.Forwarded.Node](&quot;for&quot;, elem.maybeFor)(ForwardedRenderers.this.http4sForwardedNodeRenderer);
+  {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: List[cats.Eval[writer.type]] = renderParamEval[org.http4s.headers.Forwarded.Host](&quot;host&quot;, elem.maybeHost)(ForwardedRenderers.this.http4sForwardedHostRenderer);
+  renderParamEval[org.http4s.headers.Forwarded.Proto](&quot;proto&quot;, elem.maybeProto)(Uri.this.Scheme.http4sInstancesForScheme).:::[cats.Eval[writer.type]](rassoc$1)
+}.:::[cats.Eval[writer.type]](rassoc$2)
+}.:::[cats.Eval[writer.type]](rassoc$3)
+  }
+}.reduceLeft[cats.Eval[writer.type]](((leftParamEval: cats.Eval[writer.type], rightParamEval: cats.Eval[writer.type]) =&gt; cats.syntax.`package`.flatMap.catsSyntaxFlatMapOps[cats.Eval, org.http4s.util.Writer](cats.syntax.`package`.flatMap.catsSyntaxFlatMapOps[cats.Eval, writer.type](leftParamEval)(cats.this.Eval.catsBimonadForEval).&gt;&gt;[org.http4s.util.Writer](cats.Eval.always[org.http4s.util.Writer](writer.&lt;&lt;(';')))(cats.this.Eval.catsBimonadForEval))(cats.this.Eval.catsBimonadForEval).&gt;&gt;[writer.type](rightParamEval)(cats.this.Eval.catsBimonadForEval))).value
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

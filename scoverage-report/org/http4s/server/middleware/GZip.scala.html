@@ -1,0 +1,986 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/GZip.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.Functor
+</span>22 <span style=''>import cats.data.Kleisli
+</span>23 <span style=''>import cats.effect.Sync
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>import fs2.compression._
+</span>26 <span style=''>import org.http4s.headers._
+</span>27 <span style=''>import org.log4s.getLogger
+</span>28 <span style=''>
+</span>29 <span style=''>object GZip {
+</span>30 <span style=''>  private[this] val logger = getLogger
+</span>31 <span style=''>
+</span>32 <span style=''>  // TODO: It could be possible to look for F.pure type bodies, and change the Content-Length header after
+</span>33 <span style=''>  // TODO      zipping and buffering all the input. Just a thought.
+</span>34 <span style=''>  def apply[F[_]: Functor, G[_]: Sync](
+</span>35 <span style=''>      http: Http[F, G],
+</span>36 <span style=''>      bufferSize: Int = 32 * 1024,
+</span>37 <span style=''>      level: DeflateParams.Level = DeflateParams.Level.DEFAULT,
+</span>38 <span style=''>      isZippable: Response[G] =&gt; Boolean = defaultIsZippable[G](_: Response[G]),
+</span>39 <span style=''>  ): Http[F, G] =
+</span>40 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { (req: Request[G]) =&gt;
+</span>41 <span style=''></span><span style='background: #AEF1AE'>      req.headers.get[`Accept-Encoding`] match {
+</span>42 <span style=''></span><span style='background: #AEF1AE'>        case Some(acceptEncoding) if satisfiedByGzip(acceptEncoding) =&gt;
+</span>43 <span style=''></span><span style='background: #AEF1AE'>          http(req).map(zipOrPass(_, bufferSize, level, isZippable))
+</span>44 <span style=''></span><span style='background: #AEF1AE'>        case _ =&gt; </span><span style='background: #F0ADAD'>http(req)</span><span style='background: #AEF1AE'>
+</span>45 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>46 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>47 <span style=''>
+</span>48 <span style=''>  def defaultIsZippable[F[_]](resp: Response[F]): Boolean = {
+</span>49 <span style=''>    val contentType = </span><span style='background: #AEF1AE'>resp.headers.get[`Content-Type`]</span><span style=''>
+</span>50 <span style=''>    </span><span style='background: #AEF1AE'>!resp.headers.contains[`Content-Encoding`] &amp;&amp;
+</span>51 <span style=''></span><span style='background: #AEF1AE'>    resp.status.isEntityAllowed &amp;&amp;
+</span>52 <span style=''></span><span style='background: #AEF1AE'>    (contentType.isEmpty || contentType.get.mediaType.compressible ||
+</span>53 <span style=''></span><span style='background: #AEF1AE'>      (contentType.get.mediaType eq MediaType.application.`octet-stream`))</span><span style=''>
+</span>54 <span style=''>  }
+</span>55 <span style=''>
+</span>56 <span style=''>  private def satisfiedByGzip(acceptEncoding: `Accept-Encoding`) =
+</span>57 <span style=''>    </span><span style='background: #AEF1AE'>acceptEncoding.satisfiedBy(ContentCoding.gzip) || </span><span style='background: #F0ADAD'>acceptEncoding.satisfiedBy(
+</span>58 <span style=''></span><span style='background: #F0ADAD'>      ContentCoding.`x-gzip`
+</span>59 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>60 <span style=''>
+</span>61 <span style=''>  private def zipOrPass[F[_]: Sync](
+</span>62 <span style=''>      response: Response[F],
+</span>63 <span style=''>      bufferSize: Int,
+</span>64 <span style=''>      level: DeflateParams.Level,
+</span>65 <span style=''>      isZippable: Response[F] =&gt; Boolean,
+</span>66 <span style=''>  ): Response[F] =
+</span>67 <span style=''>    response match {
+</span>68 <span style=''>      case resp if </span><span style='background: #AEF1AE'>isZippable(resp)</span><span style=''> =&gt; </span><span style='background: #AEF1AE'>zipResponse(bufferSize, level, resp)</span><span style=''>
+</span>69 <span style=''>      case resp =&gt; resp // Don't touch it, Content-Encoding already set
+</span>70 <span style=''>    }
+</span>71 <span style=''>
+</span>72 <span style=''>  private def zipResponse[F[_]: Sync](
+</span>73 <span style=''>      bufferSize: Int,
+</span>74 <span style=''>      level: DeflateParams.Level,
+</span>75 <span style=''>      resp: Response[F],
+</span>76 <span style=''>  ): Response[F] = {
+</span>77 <span style=''>    val compressPipe =
+</span>78 <span style=''>      </span><span style='background: #AEF1AE'>Compression[F].gzip(
+</span>79 <span style=''></span><span style='background: #AEF1AE'>        fileName = None,
+</span>80 <span style=''></span><span style='background: #AEF1AE'>        modificationTime = None,
+</span>81 <span style=''></span><span style='background: #AEF1AE'>        comment = None,
+</span>82 <span style=''></span><span style='background: #AEF1AE'>        DeflateParams(
+</span>83 <span style=''></span><span style='background: #AEF1AE'>          bufferSize = bufferSize,
+</span>84 <span style=''></span><span style='background: #AEF1AE'>          level = level,
+</span>85 <span style=''></span><span style='background: #AEF1AE'>          header = ZLibParams.Header.GZIP,
+</span>86 <span style=''></span><span style='background: #AEF1AE'>        ),
+</span>87 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>88 <span style=''>    logger.trace(&quot;GZip middleware encoding content&quot;)
+</span>89 <span style=''>    </span><span style='background: #AEF1AE'>resp
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      .removeHeader[`Content-Length`]
+</span>91 <span style=''></span><span style='background: #AEF1AE'>      .putHeaders(`Content-Encoding`(ContentCoding.gzip))
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      .pipeBodyThrough(compressPipe)</span><span style=''>
+</span>93 <span style=''>  }
+</span>94 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          7558
+        </td>
+        <td>
+          1319
+          -
+          1581
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; req.headers.get[org.http4s.headers.Accept-Encoding](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Accept-Encoding](headers.this.Accept-Encoding.headerSemigroupInstance, headers.this.Accept-Encoding.headerInstance)) match {
+  case (value: org.http4s.headers.Accept-Encoding): Some[org.http4s.headers.Accept-Encoding]((acceptEncoding @ _)) if GZip.this.satisfiedByGzip(acceptEncoding) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[G]](http.apply(req))(evidence$1).map[org.http4s.Response[[_]G[_]]](((x$2: org.http4s.Response[G]) =&gt; GZip.this.zipOrPass[[_]G[_]](x$2, bufferSize, level, isZippable)(evidence$2)))
+  case _ =&gt; http.apply(req)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          9426
+        </td>
+        <td>
+          1371
+          -
+          1371
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Accept-Encoding.headerInstance
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Accept-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          7760
+        </td>
+        <td>
+          1356
+          -
+          1390
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Accept-Encoding](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Accept-Encoding](headers.this.Accept-Encoding.headerSemigroupInstance, headers.this.Accept-Encoding.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          7738
+        </td>
+        <td>
+          1371
+          -
+          1371
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Accept-Encoding.headerSemigroupInstance
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Accept-Encoding.headerSemigroupInstance
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          8335
+        </td>
+        <td>
+          1371
+          -
+          1371
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.recurringHeadersWithMerge
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Accept-Encoding](headers.this.Accept-Encoding.headerSemigroupInstance, headers.this.Accept-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          9558
+        </td>
+        <td>
+          1436
+          -
+          1467
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.GZip.satisfiedByGzip
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GZip.this.satisfiedByGzip(acceptEncoding)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          7418
+        </td>
+        <td>
+          1495
+          -
+          1538
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.GZip.zipOrPass
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          GZip.this.zipOrPass[[_]G[_]](x$2, bufferSize, level, isZippable)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          9251
+        </td>
+        <td>
+          1481
+          -
+          1539
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[G]](http.apply(req))(evidence$1).map[org.http4s.Response[[_]G[_]]](((x$2: org.http4s.Response[G]) =&gt; GZip.this.zipOrPass[[_]G[_]](x$2, bufferSize, level, isZippable)(evidence$2)))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          8518
+        </td>
+        <td>
+          1481
+          -
+          1490
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          8670
+        </td>
+        <td>
+          1558
+          -
+          1567
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          9431
+        </td>
+        <td>
+          1683
+          -
+          1683
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          7762
+        </td>
+        <td>
+          1667
+          -
+          1699
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers.get[org.http4s.headers.Content-Type](Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          8407
+        </td>
+        <td>
+          1683
+          -
+          1683
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          9720
+        </td>
+        <td>
+          1726
+          -
+          1726
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Encoding.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7562
+        </td>
+        <td>
+          1704
+          -
+          1929
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers.contains[org.http4s.headers.Content-Encoding](headers.this.Content-Encoding.headerInstance).unary_!.&amp;&amp;(resp.status.isEntityAllowed).&amp;&amp;(contentType.isEmpty.||(contentType.get.mediaType.compressible).||(contentType.get.mediaType.eq(MediaType.application.octet-stream)))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8469
+        </td>
+        <td>
+          1754
+          -
+          1781
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.isEntityAllowed
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.status.isEntityAllowed
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          8672
+        </td>
+        <td>
+          1790
+          -
+          1928
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          contentType.isEmpty.||(contentType.get.mediaType.compressible).||(contentType.get.mediaType.eq(MediaType.application.octet-stream))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          7500
+        </td>
+        <td>
+          1813
+          -
+          1851
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.MediaType.compressible
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          contentType.get.mediaType.compressible
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9336
+        </td>
+        <td>
+          1862
+          -
+          1927
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.eq
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          contentType.get.mediaType.eq(MediaType.application.octet-stream)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          9724
+        </td>
+        <td>
+          2006
+          -
+          2118
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          acceptEncoding.satisfiedBy(ContentCoding.gzip).||(acceptEncoding.satisfiedBy(ContentCoding.x-gzip))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          7348
+        </td>
+        <td>
+          2056
+          -
+          2118
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Accept-Encoding.satisfiedBy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          acceptEncoding.satisfiedBy(ContentCoding.x-gzip)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          9384
+        </td>
+        <td>
+          2033
+          -
+          2051
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.gzip
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.gzip
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          8414
+        </td>
+        <td>
+          2090
+          -
+          2112
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.x-gzip
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ContentCoding.x-gzip
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          8474
+        </td>
+        <td>
+          2344
+          -
+          2360
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          isZippable.apply(resp)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          7463
+        </td>
+        <td>
+          2364
+          -
+          2400
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.GZip.zipResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          GZip.this.zipResponse[[_]F[_]](bufferSize, level, resp)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9341
+        </td>
+        <td>
+          2662
+          -
+          2662
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.compression.CompressionCompanionPlatform.forSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compression.this.Compression.forSync[[_]F[_]](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7465
+        </td>
+        <td>
+          2651
+          -
+          2898
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.compression.CompressionPlatform.gzip
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.compression.Compression.apply[F](compression.this.Compression.forSync[[_]F[_]](evidence$4)).gzip(scala.None, scala.None, scala.None, {
+  &lt;artifact&gt; val x$1: Int = bufferSize;
+  &lt;artifact&gt; val x$2: fs2.compression.DeflateParams.Level = level;
+  &lt;artifact&gt; val x$3: fs2.compression.ZLibParams.Header.GZIP.type = fs2.compression.ZLibParams.Header.GZIP;
+  &lt;artifact&gt; val x$4: fs2.compression.DeflateParams.Strategy = fs2.compression.DeflateParams.apply$default$4;
+  &lt;artifact&gt; val x$5: fs2.compression.DeflateParams.FlushMode = fs2.compression.DeflateParams.apply$default$5;
+  fs2.compression.DeflateParams.apply(x$1, x$3, x$2, x$4, x$5)
+})
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          8700
+        </td>
+        <td>
+          2691
+          -
+          2695
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          7720
+        </td>
+        <td>
+          2724
+          -
+          2728
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          9482
+        </td>
+        <td>
+          2748
+          -
+          2752
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          9632
+        </td>
+        <td>
+          2762
+          -
+          2762
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.compression.DeflateParams.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.compression.DeflateParams.apply$default$5
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          8623
+        </td>
+        <td>
+          2762
+          -
+          2889
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.compression.DeflateParams.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.compression.DeflateParams.apply(x$1, x$3, x$2, x$4, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          7351
+        </td>
+        <td>
+          2762
+          -
+          2762
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.compression.DeflateParams.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.compression.DeflateParams.apply$default$4
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          8368
+        </td>
+        <td>
+          2856
+          -
+          2878
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.compression.ZLibParams.Header.GZIP
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.compression.ZLibParams.Header.GZIP
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          9294
+        </td>
+        <td>
+          2956
+          -
+          3093
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.pipeBodyThrough
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.removeHeader[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance).putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Encoding](org.http4s.headers.Content-Encoding.apply(ContentCoding.gzip))(headers.this.Content-Encoding.headerInstance)).pipeBodyThrough(compressPipe)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

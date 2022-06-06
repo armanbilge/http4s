@@ -1,0 +1,4323 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/QueryParam.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Contravariant
+</span>20 <span style=''>import cats.Functor
+</span>21 <span style=''>import cats.Hash
+</span>22 <span style=''>import cats.MonoidK
+</span>23 <span style=''>import cats.Order
+</span>24 <span style=''>import cats.Show
+</span>25 <span style=''>import cats.data.Validated
+</span>26 <span style=''>import cats.data.ValidatedNel
+</span>27 <span style=''>import cats.syntax.all._
+</span>28 <span style=''>
+</span>29 <span style=''>import java.time._
+</span>30 <span style=''>import java.time.format.DateTimeFormatter
+</span>31 <span style=''>import java.time.temporal.TemporalAccessor
+</span>32 <span style=''>
+</span>33 <span style=''>final case class QueryParameterKey(value: String) extends AnyVal
+</span>34 <span style=''>
+</span>35 <span style=''>object QueryParameterKey {
+</span>36 <span style=''>  implicit lazy val showInstance: Show[QueryParameterKey] =
+</span>37 <span style=''>    Show.show(_.value)
+</span>38 <span style=''>
+</span>39 <span style=''>  implicit lazy val orderInstance: Order[QueryParameterKey] =
+</span>40 <span style=''>    Order.by(_.value)
+</span>41 <span style=''>
+</span>42 <span style=''>  implicit lazy val hashInstance: Hash[QueryParameterKey] =
+</span>43 <span style=''>    Hash.by(_.value)
+</span>44 <span style=''>}
+</span>45 <span style=''>
+</span>46 <span style=''>final case class QueryParameterValue(value: String) extends AnyVal
+</span>47 <span style=''>
+</span>48 <span style=''>object QueryParameterValue {
+</span>49 <span style=''>  implicit lazy val showInstance: Show[QueryParameterValue] =
+</span>50 <span style=''>    Show.show(_.value)
+</span>51 <span style=''>
+</span>52 <span style=''>  implicit lazy val orderInstance: Order[QueryParameterValue] =
+</span>53 <span style=''>    Order.by(_.value)
+</span>54 <span style=''>
+</span>55 <span style=''>  implicit lazy val hashInstance: Hash[QueryParameterValue] =
+</span>56 <span style=''>    Hash.by(_.value)
+</span>57 <span style=''>}
+</span>58 <span style=''>
+</span>59 <span style=''>/** type class defining the key of a query parameter
+</span>60 <span style=''>  * Usually used in conjunction with [[QueryParamEncoder]] and [[QueryParamDecoder]]
+</span>61 <span style=''>  *
+</span>62 <span style=''>  * Any [[QueryParam]] instance is also a valid [[QueryParamKeyLike]] instance
+</span>63 <span style=''>  * where the same key is used for all values.
+</span>64 <span style=''>  */
+</span>65 <span style=''>trait QueryParam[T] extends QueryParamKeyLike[T] {
+</span>66 <span style=''>  def key: QueryParameterKey
+</span>67 <span style=''>  override final def getKey(t: T): QueryParameterKey = </span><span style='background: #AEF1AE'>key</span><span style=''>
+</span>68 <span style=''>}
+</span>69 <span style=''>
+</span>70 <span style=''>object QueryParam {
+</span>71 <span style=''>
+</span>72 <span style=''>  /** summon an implicit [[QueryParam]] */
+</span>73 <span style=''>  def apply[T](implicit ev: QueryParam[T]): QueryParam[T] = ev
+</span>74 <span style=''>
+</span>75 <span style=''>  def fromKey[T](k: String): QueryParam[T] =
+</span>76 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParam[T] {
+</span>77 <span style=''>      def key: QueryParameterKey = </span><span style='background: #AEF1AE'>QueryParameterKey(k)</span><span style=''>
+</span>78 <span style=''>    }
+</span>79 <span style=''>}
+</span>80 <span style=''>
+</span>81 <span style=''>trait QueryParamKeyLike[T] {
+</span>82 <span style=''>  def getKey(t: T): QueryParameterKey
+</span>83 <span style=''>}
+</span>84 <span style=''>
+</span>85 <span style=''>object QueryParamKeyLike {
+</span>86 <span style=''>  def apply[T](implicit ev: QueryParamKeyLike[T]): QueryParamKeyLike[T] = ev
+</span>87 <span style=''>
+</span>88 <span style=''>  implicit val stringKey: QueryParamKeyLike[String] = </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamKeyLike[String] {
+</span>89 <span style=''>    override def getKey(t: String): QueryParameterKey = </span><span style='background: #AEF1AE'>QueryParameterKey(t)</span><span style=''>
+</span>90 <span style=''>  }
+</span>91 <span style=''>}
+</span>92 <span style=''>
+</span>93 <span style=''>trait QueryParamCodec[T] extends QueryParamEncoder[T] with QueryParamDecoder[T]
+</span>94 <span style=''>object QueryParamCodec {
+</span>95 <span style=''>  def apply[A](implicit instance: QueryParamCodec[A]): QueryParamCodec[A] = instance
+</span>96 <span style=''>
+</span>97 <span style=''>  def from[A](decodeA: QueryParamDecoder[A], encodeA: QueryParamEncoder[A]): QueryParamCodec[A] =
+</span>98 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamCodec[A] {
+</span>99 <span style=''>      override def encode(value: A): QueryParameterValue = </span><span style='background: #AEF1AE'>encodeA.encode(value)</span><span style=''>
+</span>100 <span style=''>      override def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, A] =
+</span>101 <span style=''>        </span><span style='background: #AEF1AE'>decodeA.decode(value)</span><span style=''>
+</span>102 <span style=''>    }
+</span>103 <span style=''>
+</span>104 <span style=''>  def instantQueryParamCodec(formatter: DateTimeFormatter): QueryParamCodec[Instant] =
+</span>105 <span style=''>    </span><span style='background: #AEF1AE'>instant(formatter)</span><span style=''>
+</span>106 <span style=''>
+</span>107 <span style=''>  def localDateQueryParamCodec(formatter: DateTimeFormatter): QueryParamCodec[LocalDate] =
+</span>108 <span style=''>    </span><span style='background: #F0ADAD'>localDate(formatter)</span><span style=''>
+</span>109 <span style=''>
+</span>110 <span style=''>  def zonedDateTimeQueryParamCodec(formatter: DateTimeFormatter): QueryParamCodec[ZonedDateTime] =
+</span>111 <span style=''>    </span><span style='background: #AEF1AE'>zonedDateTime(formatter)</span><span style=''>
+</span>112 <span style=''>
+</span>113 <span style=''>  def instant(formatter: DateTimeFormatter): QueryParamCodec[Instant] =
+</span>114 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(QueryParamDecoder.instant(formatter), QueryParamEncoder.instant(formatter))</span><span style=''>
+</span>115 <span style=''>
+</span>116 <span style=''>  def localDate(formatter: DateTimeFormatter): QueryParamCodec[LocalDate] =
+</span>117 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>118 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.localDate(formatter),
+</span>119 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.localDate(formatter),
+</span>120 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>121 <span style=''>
+</span>122 <span style=''>  def localTime(formatter: DateTimeFormatter): QueryParamCodec[LocalTime] =
+</span>123 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>124 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.localTime(formatter),
+</span>125 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.localTime(formatter),
+</span>126 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>127 <span style=''>
+</span>128 <span style=''>  def localDateTime(formatter: DateTimeFormatter): QueryParamCodec[LocalDateTime] =
+</span>129 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>130 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.localDateTime(formatter),
+</span>131 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.localDateTime(formatter),
+</span>132 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>133 <span style=''>
+</span>134 <span style=''>  def dayOfWeek(formatter: DateTimeFormatter): QueryParamCodec[DayOfWeek] =
+</span>135 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>136 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.dayOfWeek(formatter),
+</span>137 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.dayOfWeek(formatter),
+</span>138 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>139 <span style=''>
+</span>140 <span style=''>  def month(formatter: DateTimeFormatter): QueryParamCodec[Month] =
+</span>141 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(QueryParamDecoder.month(formatter), QueryParamEncoder.month(formatter))</span><span style=''>
+</span>142 <span style=''>
+</span>143 <span style=''>  def monthDay(formatter: DateTimeFormatter): QueryParamCodec[MonthDay] =
+</span>144 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>145 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.monthDay(formatter),
+</span>146 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.monthDay(formatter),
+</span>147 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>148 <span style=''>
+</span>149 <span style=''>  def year(formatter: DateTimeFormatter): QueryParamCodec[Year] =
+</span>150 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(QueryParamDecoder.year(formatter), QueryParamEncoder.year(formatter))</span><span style=''>
+</span>151 <span style=''>
+</span>152 <span style=''>  def yearMonth(formatter: DateTimeFormatter): QueryParamCodec[YearMonth] =
+</span>153 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>154 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.yearMonth(formatter),
+</span>155 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.yearMonth(formatter),
+</span>156 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>157 <span style=''>
+</span>158 <span style=''>  def zoneOffset(formatter: DateTimeFormatter): QueryParamCodec[ZoneOffset] =
+</span>159 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>160 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.zoneOffset(formatter),
+</span>161 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.zoneOffset(formatter),
+</span>162 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>163 <span style=''>
+</span>164 <span style=''>  def zonedDateTime(formatter: DateTimeFormatter): QueryParamCodec[ZonedDateTime] =
+</span>165 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>166 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.zonedDateTime(formatter),
+</span>167 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.zonedDateTime(formatter),
+</span>168 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>169 <span style=''>
+</span>170 <span style=''>  def offsetTime(formatter: DateTimeFormatter): QueryParamCodec[OffsetTime] =
+</span>171 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>172 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.offsetTime(formatter),
+</span>173 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.offsetTime(formatter),
+</span>174 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>175 <span style=''>
+</span>176 <span style=''>  def offsetDateTime(formatter: DateTimeFormatter): QueryParamCodec[OffsetDateTime] =
+</span>177 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamCodec.from(
+</span>178 <span style=''></span><span style='background: #AEF1AE'>      QueryParamDecoder.offsetDateTime(formatter),
+</span>179 <span style=''></span><span style='background: #AEF1AE'>      QueryParamEncoder.offsetDateTime(formatter),
+</span>180 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>181 <span style=''>
+</span>182 <span style=''>  lazy val zoneId: QueryParamCodec[ZoneId] =
+</span>183 <span style=''>    QueryParamCodec.from(QueryParamDecoder.zoneId, QueryParamEncoder.zoneId)
+</span>184 <span style=''>
+</span>185 <span style=''>  lazy val period: QueryParamCodec[Period] =
+</span>186 <span style=''>    QueryParamCodec.from(QueryParamDecoder.period, QueryParamEncoder.period)
+</span>187 <span style=''>}
+</span>188 <span style=''>
+</span>189 <span style=''>/** Type class defining how to encode a `T` as a [[QueryParameterValue]]s
+</span>190 <span style=''>  * @see QueryParamCodecLaws
+</span>191 <span style=''>  */
+</span>192 <span style=''>trait QueryParamEncoder[T] { outer =&gt;
+</span>193 <span style=''>  def encode(value: T): QueryParameterValue
+</span>194 <span style=''>
+</span>195 <span style=''>  /** QueryParamEncoder is a contravariant functor. */
+</span>196 <span style=''>  def contramap[U](f: U =&gt; T): QueryParamEncoder[U] =
+</span>197 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamEncoder[U] {
+</span>198 <span style=''>      override def encode(value: U): QueryParameterValue =
+</span>199 <span style=''>        </span><span style='background: #AEF1AE'>outer.encode(f(value))</span><span style=''>
+</span>200 <span style=''>    }
+</span>201 <span style=''>}
+</span>202 <span style=''>
+</span>203 <span style=''>object QueryParamEncoder {
+</span>204 <span style=''>
+</span>205 <span style=''>  /** summon an implicit [[QueryParamEncoder]] */
+</span>206 <span style=''>  def apply[T](implicit ev: QueryParamEncoder[T]): QueryParamEncoder[T] = ev
+</span>207 <span style=''>
+</span>208 <span style=''>  def fromCodec[T](implicit ev: QueryParamCodec[T]): QueryParamEncoder[T] = ev
+</span>209 <span style=''>
+</span>210 <span style=''>  /** QueryParamEncoder is a contravariant functor. */
+</span>211 <span style=''>  implicit val ContravariantQueryParamEncoder: Contravariant[QueryParamEncoder] =
+</span>212 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Contravariant[QueryParamEncoder] {
+</span>213 <span style=''>      override def contramap[A, B](fa: QueryParamEncoder[A])(f: B =&gt; A): QueryParamEncoder[B] =
+</span>214 <span style=''>        </span><span style='background: #AEF1AE'>fa.contramap(f)</span><span style=''>
+</span>215 <span style=''>    }
+</span>216 <span style=''>
+</span>217 <span style=''>  def fromShow[T](implicit
+</span>218 <span style=''>      sh: Show[T]
+</span>219 <span style=''>  ): QueryParamEncoder[T] =
+</span>220 <span style=''>    </span><span style='background: #AEF1AE'>stringQueryParamEncoder.contramap(sh.show)</span><span style=''>
+</span>221 <span style=''>
+</span>222 <span style=''>  implicit lazy val booleanQueryParamEncoder: QueryParamEncoder[Boolean] = fromShow[Boolean]
+</span>223 <span style=''>  implicit lazy val doubleQueryParamEncoder: QueryParamEncoder[Double] = fromShow[Double]
+</span>224 <span style=''>  implicit lazy val floatQueryParamEncoder: QueryParamEncoder[Float] = fromShow[Float]
+</span>225 <span style=''>  implicit lazy val shortQueryParamEncoder: QueryParamEncoder[Short] = fromShow[Short]
+</span>226 <span style=''>  implicit lazy val intQueryParamEncoder: QueryParamEncoder[Int] = fromShow[Int]
+</span>227 <span style=''>  implicit lazy val longQueryParamEncoder: QueryParamEncoder[Long] = fromShow[Long]
+</span>228 <span style=''>
+</span>229 <span style=''>  implicit lazy val stringQueryParamEncoder: QueryParamEncoder[String] =
+</span>230 <span style=''>    new QueryParamEncoder[String] {
+</span>231 <span style=''>      override def encode(value: String): QueryParameterValue =
+</span>232 <span style=''>        QueryParameterValue(value)
+</span>233 <span style=''>    }
+</span>234 <span style=''>
+</span>235 <span style=''>  implicit lazy val uriQueryParamEncoder: QueryParamEncoder[Uri] =
+</span>236 <span style=''>    QueryParamEncoder[String].contramap(_.renderString)
+</span>237 <span style=''>
+</span>238 <span style=''>  def instantQueryParamEncoder(formatter: DateTimeFormatter): QueryParamEncoder[Instant] =
+</span>239 <span style=''>    </span><span style='background: #F0ADAD'>instant(formatter)</span><span style=''>
+</span>240 <span style=''>
+</span>241 <span style=''>  def localDateQueryParamEncoder(formatter: DateTimeFormatter): QueryParamEncoder[LocalDate] =
+</span>242 <span style=''>    </span><span style='background: #F0ADAD'>localDate(formatter)</span><span style=''>
+</span>243 <span style=''>
+</span>244 <span style=''>  def zonedDateTimeQueryParamEncoder(
+</span>245 <span style=''>      formatter: DateTimeFormatter
+</span>246 <span style=''>  ): QueryParamEncoder[ZonedDateTime] =
+</span>247 <span style=''>    </span><span style='background: #F0ADAD'>zonedDateTime(formatter)</span><span style=''>
+</span>248 <span style=''>
+</span>249 <span style=''>  def instant(formatter: DateTimeFormatter): QueryParamEncoder[Instant] =
+</span>250 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>251 <span style=''>
+</span>252 <span style=''>  def localDate(formatter: DateTimeFormatter): QueryParamEncoder[LocalDate] =
+</span>253 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>254 <span style=''>
+</span>255 <span style=''>  def localTime(formatter: DateTimeFormatter): QueryParamEncoder[LocalTime] =
+</span>256 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>257 <span style=''>
+</span>258 <span style=''>  def localDateTime(formatter: DateTimeFormatter): QueryParamEncoder[LocalDateTime] =
+</span>259 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>260 <span style=''>
+</span>261 <span style=''>  def dayOfWeek(formatter: DateTimeFormatter): QueryParamEncoder[DayOfWeek] =
+</span>262 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>263 <span style=''>
+</span>264 <span style=''>  def month(formatter: DateTimeFormatter): QueryParamEncoder[Month] =
+</span>265 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>266 <span style=''>
+</span>267 <span style=''>  def monthDay(formatter: DateTimeFormatter): QueryParamEncoder[MonthDay] =
+</span>268 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>269 <span style=''>
+</span>270 <span style=''>  def year(formatter: DateTimeFormatter): QueryParamEncoder[Year] =
+</span>271 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>272 <span style=''>
+</span>273 <span style=''>  def yearMonth(formatter: DateTimeFormatter): QueryParamEncoder[YearMonth] =
+</span>274 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>275 <span style=''>
+</span>276 <span style=''>  def zoneOffset(formatter: DateTimeFormatter): QueryParamEncoder[ZoneOffset] =
+</span>277 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>278 <span style=''>
+</span>279 <span style=''>  def zonedDateTime(formatter: DateTimeFormatter): QueryParamEncoder[ZonedDateTime] =
+</span>280 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>281 <span style=''>
+</span>282 <span style=''>  def offsetTime(formatter: DateTimeFormatter): QueryParamEncoder[OffsetTime] =
+</span>283 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>284 <span style=''>
+</span>285 <span style=''>  def offsetDateTime(formatter: DateTimeFormatter): QueryParamEncoder[OffsetDateTime] =
+</span>286 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamEncoder(formatter)</span><span style=''>
+</span>287 <span style=''>
+</span>288 <span style=''>  private def javaTimeQueryParamEncoder[T &lt;: TemporalAccessor](
+</span>289 <span style=''>      formatter: DateTimeFormatter
+</span>290 <span style=''>  ): QueryParamEncoder[T] =
+</span>291 <span style=''>    </span><span style='background: #AEF1AE'>QueryParamEncoder[String].contramap[T](formatter.format)</span><span style=''>
+</span>292 <span style=''>
+</span>293 <span style=''>  implicit lazy val zoneId: QueryParamEncoder[ZoneId] = QueryParamEncoder[String].contramap(_.getId)
+</span>294 <span style=''>
+</span>295 <span style=''>  implicit lazy val period: QueryParamEncoder[Period] =
+</span>296 <span style=''>    QueryParamEncoder[String].contramap(_.toString)
+</span>297 <span style=''>}
+</span>298 <span style=''>
+</span>299 <span style=''>/** Type class defining how to decode a [[QueryParameterValue]] into a `T`
+</span>300 <span style=''>  * @see QueryParamCodecLaws
+</span>301 <span style=''>  */
+</span>302 <span style=''>trait QueryParamDecoder[T] { outer =&gt;
+</span>303 <span style=''>  def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, T]
+</span>304 <span style=''>
+</span>305 <span style=''>  /** QueryParamDecoder is a covariant functor. */
+</span>306 <span style=''>  def map[U](f: T =&gt; U): QueryParamDecoder[U] =
+</span>307 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamDecoder[U] {
+</span>308 <span style=''>      override def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, U] =
+</span>309 <span style=''>        </span><span style='background: #AEF1AE'>outer.decode(value).map(f)</span><span style=''>
+</span>310 <span style=''>    }
+</span>311 <span style=''>
+</span>312 <span style=''>  /** Use another decoder if this one fails. */
+</span>313 <span style=''>  def orElse[U &gt;: T](qpd: QueryParamDecoder[U]): QueryParamDecoder[U] =
+</span>314 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamDecoder[U] {
+</span>315 <span style=''>      override def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, U] =
+</span>316 <span style=''>        </span><span style='background: #AEF1AE'>outer.decode(value).orElse(qpd.decode(value))</span><span style=''>
+</span>317 <span style=''>    }
+</span>318 <span style=''>
+</span>319 <span style=''>  /** Validate the currently parsed value a function to Either[ParseFailure, *]. */
+</span>320 <span style=''>  def emap[U](f: T =&gt; Either[ParseFailure, U]): QueryParamDecoder[U] =
+</span>321 <span style=''>    </span><span style='background: #AEF1AE'>emapValidatedNel(f.andThen(_.toValidatedNel))</span><span style=''>
+</span>322 <span style=''>
+</span>323 <span style=''>  /** Validate the currently parsed value using a function to ValidatedNel[ParseFailure, *]. */
+</span>324 <span style=''>  def emapValidatedNel[U](f: T =&gt; ValidatedNel[ParseFailure, U]): QueryParamDecoder[U] =
+</span>325 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamDecoder[U] {
+</span>326 <span style=''>      override def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, U] =
+</span>327 <span style=''>        </span><span style='background: #AEF1AE'>outer.decode(value).andThen(f)</span><span style=''>
+</span>328 <span style=''>    }
+</span>329 <span style=''>}
+</span>330 <span style=''>
+</span>331 <span style=''>object QueryParamDecoder {
+</span>332 <span style=''>
+</span>333 <span style=''>  /** summon an implicit [[QueryParamDecoder]] */
+</span>334 <span style=''>  def apply[T](implicit ev: QueryParamDecoder[T]): QueryParamDecoder[T] = ev
+</span>335 <span style=''>
+</span>336 <span style=''>  def fromCodec[T](implicit ev: QueryParamCodec[T]): QueryParamDecoder[T] = ev
+</span>337 <span style=''>
+</span>338 <span style=''>  def fromUnsafeCast[T](cast: QueryParameterValue =&gt; T)(typeName: String): QueryParamDecoder[T] =
+</span>339 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamDecoder[T] {
+</span>340 <span style=''>      def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, T] =
+</span>341 <span style=''>        </span><span style='background: #AEF1AE'>Validated
+</span>342 <span style=''></span><span style='background: #AEF1AE'>          .catchNonFatal(cast(value))
+</span>343 <span style=''></span><span style='background: #AEF1AE'>          .leftMap(t =&gt; ParseFailure(s&quot;Query decoding $typeName failed&quot;, t.getMessage))
+</span>344 <span style=''></span><span style='background: #AEF1AE'>          .toValidatedNel</span><span style=''>
+</span>345 <span style=''>    }
+</span>346 <span style=''>
+</span>347 <span style=''>  /** QueryParamDecoder is a covariant functor. */
+</span>348 <span style=''>  implicit val FunctorQueryParamDecoder: Functor[QueryParamDecoder] =
+</span>349 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Functor[QueryParamDecoder] {
+</span>350 <span style=''>      override def map[A, B](fa: QueryParamDecoder[A])(f: A =&gt; B): QueryParamDecoder[B] =
+</span>351 <span style=''>        </span><span style='background: #AEF1AE'>fa.map(f)</span><span style=''>
+</span>352 <span style=''>    }
+</span>353 <span style=''>
+</span>354 <span style=''>  /** QueryParamDecoder is a MonoidK. */
+</span>355 <span style=''>  implicit val PlusEmptyQueryParamDecoder: MonoidK[QueryParamDecoder] =
+</span>356 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> MonoidK[QueryParamDecoder] {
+</span>357 <span style=''>      def empty[A]: QueryParamDecoder[A] =
+</span>358 <span style=''>        </span><span style='background: #AEF1AE'>fail[A](&quot;Decoding failed.&quot;, &quot;Empty decoder (always fails).&quot;)</span><span style=''>
+</span>359 <span style=''>      def combineK[A](a: QueryParamDecoder[A], b: QueryParamDecoder[A]): QueryParamDecoder[A] =
+</span>360 <span style=''>        </span><span style='background: #AEF1AE'>a.orElse(b)</span><span style=''>
+</span>361 <span style=''>    }
+</span>362 <span style=''>
+</span>363 <span style=''>  /** A decoder that always succeeds. */
+</span>364 <span style=''>  def success[A](a: A): QueryParamDecoder[A] =
+</span>365 <span style=''>    </span><span style='background: #AEF1AE'>fromUnsafeCast[A](_ =&gt; a)(&quot;Success&quot;)</span><span style=''>
+</span>366 <span style=''>
+</span>367 <span style=''>  /** A decoder that always fails. */
+</span>368 <span style=''>  def fail[A](sanitized: String, detail: String): QueryParamDecoder[A] =
+</span>369 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamDecoder[A] {
+</span>370 <span style=''>      override def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, A] =
+</span>371 <span style=''>        </span><span style='background: #AEF1AE'>ParseFailure(sanitized, detail).invalidNel</span><span style=''>
+</span>372 <span style=''>    }
+</span>373 <span style=''>
+</span>374 <span style=''>  implicit lazy val unitQueryParamDecoder: QueryParamDecoder[Unit] =
+</span>375 <span style=''>    success(())
+</span>376 <span style=''>  implicit lazy val booleanQueryParamDecoder: QueryParamDecoder[Boolean] =
+</span>377 <span style=''>    fromUnsafeCast[Boolean](_.value.toBoolean)(&quot;Boolean&quot;)
+</span>378 <span style=''>  implicit lazy val doubleQueryParamDecoder: QueryParamDecoder[Double] =
+</span>379 <span style=''>    fromUnsafeCast[Double](_.value.toDouble)(&quot;Double&quot;)
+</span>380 <span style=''>  implicit lazy val floatQueryParamDecoder: QueryParamDecoder[Float] =
+</span>381 <span style=''>    fromUnsafeCast[Float](_.value.toFloat)(&quot;Float&quot;)
+</span>382 <span style=''>  implicit lazy val shortQueryParamDecoder: QueryParamDecoder[Short] =
+</span>383 <span style=''>    fromUnsafeCast[Short](_.value.toShort)(&quot;Short&quot;)
+</span>384 <span style=''>  implicit lazy val intQueryParamDecoder: QueryParamDecoder[Int] =
+</span>385 <span style=''>    fromUnsafeCast[Int](_.value.toInt)(&quot;Int&quot;)
+</span>386 <span style=''>  implicit lazy val longQueryParamDecoder: QueryParamDecoder[Long] =
+</span>387 <span style=''>    fromUnsafeCast[Long](_.value.toLong)(&quot;Long&quot;)
+</span>388 <span style=''>
+</span>389 <span style=''>  implicit lazy val charQueryParamDecoder: QueryParamDecoder[Char] = new QueryParamDecoder[Char] {
+</span>390 <span style=''>    def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, Char] =
+</span>391 <span style=''>      if (value.value.size == 1) value.value.head.validNel
+</span>392 <span style=''>      else
+</span>393 <span style=''>        ParseFailure(
+</span>394 <span style=''>          &quot;Failed to parse Char query parameter&quot;,
+</span>395 <span style=''>          s&quot;Could not parse ${value.value} as a Char&quot;,
+</span>396 <span style=''>        ).invalidNel
+</span>397 <span style=''>  }
+</span>398 <span style=''>
+</span>399 <span style=''>  implicit lazy val stringQueryParamDecoder: QueryParamDecoder[String] =
+</span>400 <span style=''>    new QueryParamDecoder[String] {
+</span>401 <span style=''>      def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, String] =
+</span>402 <span style=''>        value.value.validNel
+</span>403 <span style=''>    }
+</span>404 <span style=''>
+</span>405 <span style=''>  implicit val uriQueryParamDecoder: QueryParamDecoder[Uri] =
+</span>406 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> QueryParamDecoder[Uri] {
+</span>407 <span style=''>      def decode(value: QueryParameterValue): ValidatedNel[ParseFailure, Uri] =
+</span>408 <span style=''>        </span><span style='background: #F0ADAD'>Uri.fromString(value.value).toValidatedNel</span><span style=''>
+</span>409 <span style=''>    }
+</span>410 <span style=''>
+</span>411 <span style=''>  def instantQueryParamDecoder(formatter: DateTimeFormatter): QueryParamDecoder[Instant] =
+</span>412 <span style=''>    </span><span style='background: #F0ADAD'>instant(formatter)</span><span style=''>
+</span>413 <span style=''>
+</span>414 <span style=''>  def localDateQueryParamDecoder(formatter: DateTimeFormatter): QueryParamDecoder[LocalDate] =
+</span>415 <span style=''>    </span><span style='background: #F0ADAD'>localDate(formatter)</span><span style=''>
+</span>416 <span style=''>
+</span>417 <span style=''>  def zonedDateTimeQueryParamDecoder(
+</span>418 <span style=''>      formatter: DateTimeFormatter
+</span>419 <span style=''>  ): QueryParamDecoder[ZonedDateTime] =
+</span>420 <span style=''>    </span><span style='background: #F0ADAD'>zonedDateTime(formatter)</span><span style=''>
+</span>421 <span style=''>
+</span>422 <span style=''>  def instant(formatter: DateTimeFormatter): QueryParamDecoder[Instant] =
+</span>423 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, Instant.from, &quot;Instant&quot;)</span><span style=''>
+</span>424 <span style=''>
+</span>425 <span style=''>  def localDate(formatter: DateTimeFormatter): QueryParamDecoder[LocalDate] =
+</span>426 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, LocalDate.from, &quot;LocalDate&quot;)</span><span style=''>
+</span>427 <span style=''>
+</span>428 <span style=''>  def localTime(formatter: DateTimeFormatter): QueryParamDecoder[LocalTime] =
+</span>429 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, LocalTime.from, &quot;LocalTime&quot;)</span><span style=''>
+</span>430 <span style=''>
+</span>431 <span style=''>  def localDateTime(formatter: DateTimeFormatter): QueryParamDecoder[LocalDateTime] =
+</span>432 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, LocalDateTime.from, &quot;LocalDateTime&quot;)</span><span style=''>
+</span>433 <span style=''>
+</span>434 <span style=''>  def dayOfWeek(formatter: DateTimeFormatter): QueryParamDecoder[DayOfWeek] =
+</span>435 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, DayOfWeek.from, &quot;DayOfWeek&quot;)</span><span style=''>
+</span>436 <span style=''>
+</span>437 <span style=''>  def month(formatter: DateTimeFormatter): QueryParamDecoder[Month] =
+</span>438 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, Month.from, &quot;Month&quot;)</span><span style=''>
+</span>439 <span style=''>
+</span>440 <span style=''>  def monthDay(formatter: DateTimeFormatter): QueryParamDecoder[MonthDay] =
+</span>441 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, MonthDay.from, &quot;MonthDay&quot;)</span><span style=''>
+</span>442 <span style=''>
+</span>443 <span style=''>  def year(formatter: DateTimeFormatter): QueryParamDecoder[Year] =
+</span>444 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, Year.from, &quot;Year&quot;)</span><span style=''>
+</span>445 <span style=''>
+</span>446 <span style=''>  def yearMonth(formatter: DateTimeFormatter): QueryParamDecoder[YearMonth] =
+</span>447 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, YearMonth.from, &quot;YearMonth&quot;)</span><span style=''>
+</span>448 <span style=''>
+</span>449 <span style=''>  def zoneOffset(formatter: DateTimeFormatter): QueryParamDecoder[ZoneOffset] =
+</span>450 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, ZoneOffset.from, &quot;ZoneOffset&quot;)</span><span style=''>
+</span>451 <span style=''>
+</span>452 <span style=''>  def zonedDateTime(formatter: DateTimeFormatter): QueryParamDecoder[ZonedDateTime] =
+</span>453 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, ZonedDateTime.from, &quot;ZonedDateTime&quot;)</span><span style=''>
+</span>454 <span style=''>
+</span>455 <span style=''>  def offsetTime(formatter: DateTimeFormatter): QueryParamDecoder[OffsetTime] =
+</span>456 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, OffsetTime.from, &quot;OffsetTime&quot;)</span><span style=''>
+</span>457 <span style=''>
+</span>458 <span style=''>  def offsetDateTime(formatter: DateTimeFormatter): QueryParamDecoder[OffsetDateTime] =
+</span>459 <span style=''>    </span><span style='background: #AEF1AE'>javaTimeQueryParamDecoder(formatter, OffsetDateTime.from, &quot;OffsetDateTime&quot;)</span><span style=''>
+</span>460 <span style=''>
+</span>461 <span style=''>  private def javaTimeQueryParamDecoder[T](
+</span>462 <span style=''>      formatter: DateTimeFormatter,
+</span>463 <span style=''>      fromTemporalAccessor: TemporalAccessor =&gt; T,
+</span>464 <span style=''>      displayName: String,
+</span>465 <span style=''>  ): QueryParamDecoder[T] =
+</span>466 <span style=''>    (value: QueryParameterValue) =&gt;
+</span>467 <span style=''>      </span><span style='background: #AEF1AE'>Validated
+</span>468 <span style=''></span><span style='background: #AEF1AE'>        .catchNonFatal(fromTemporalAccessor(formatter.parse(value.value)))
+</span>469 <span style=''></span><span style='background: #AEF1AE'>        .leftMap(e =&gt;
+</span>470 <span style=''></span><span style='background: #AEF1AE'>          ParseFailure(s&quot;Failed to decode value ${value.value} as $displayName&quot;, e.getMessage)
+</span>471 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>472 <span style=''></span><span style='background: #AEF1AE'>        .toValidatedNel</span><span style=''>
+</span>473 <span style=''>
+</span>474 <span style=''>  implicit lazy val zoneId: QueryParamDecoder[ZoneId] =
+</span>475 <span style=''>    javaTimeQueryParamDecoderFromString(ZoneId.of, &quot;ZoneId&quot;)
+</span>476 <span style=''>
+</span>477 <span style=''>  implicit lazy val period: QueryParamDecoder[Period] =
+</span>478 <span style=''>    javaTimeQueryParamDecoderFromString(Period.parse, &quot;Period&quot;)
+</span>479 <span style=''>
+</span>480 <span style=''>  private def javaTimeQueryParamDecoderFromString[T](
+</span>481 <span style=''>      parse: String =&gt; T,
+</span>482 <span style=''>      displayName: String,
+</span>483 <span style=''>  ): QueryParamDecoder[T] = </span><span style='background: #AEF1AE'>QueryParamDecoder[String].emap(s =&gt;
+</span>484 <span style=''></span><span style='background: #AEF1AE'>    Either
+</span>485 <span style=''></span><span style='background: #AEF1AE'>      .catchNonFatal(parse(s))
+</span>486 <span style=''></span><span style='background: #AEF1AE'>      .leftMap(e =&gt; </span><span style='background: #F0ADAD'>ParseFailure(s&quot;Failed to decode value $s as $displayName&quot;, e.getMessage)</span><span style='background: #AEF1AE'>)
+</span>487 <span style=''></span><span style='background: #AEF1AE'>  )</span><span style=''>
+</span>488 <span style=''>
+</span>489 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          19791
+        </td>
+        <td>
+          2031
+          -
+          2034
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QueryParam.key
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParam.this.key
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          13958
+        </td>
+        <td>
+          2215
+          -
+          2218
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParam.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          17495
+        </td>
+        <td>
+          2270
+          -
+          2290
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParameterKey.apply
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParameterKey.apply(k)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          16169
+        </td>
+        <td>
+          2529
+          -
+          2532
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamKeyLike.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.server.contextroutersuite,org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          20545
+        </td>
+        <td>
+          2617
+          -
+          2637
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParameterKey.apply
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.server.contextroutersuite,org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParameterKey.apply(t)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          17186
+        </td>
+        <td>
+          2938
+          -
+          2941
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          22989
+        </td>
+        <td>
+          3022
+          -
+          3043
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.encode
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          encodeA.encode(value)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          20712
+        </td>
+        <td>
+          3139
+          -
+          3160
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.decode
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          decodeA.decode(value)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          13469
+        </td>
+        <td>
+          3259
+          -
+          3277
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.instant
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.this.instant(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          19805
+        </td>
+        <td>
+          3374
+          -
+          3394
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.localDate
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QueryParamCodec.this.localDate(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          17747
+        </td>
+        <td>
+          3499
+          -
+          3523
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.zonedDateTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.this.zonedDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          20562
+        </td>
+        <td>
+          3660
+          -
+          3696
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.instant
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.instant(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          16435
+        </td>
+        <td>
+          3601
+          -
+          3697
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.Instant](QueryParamDecoder.instant(formatter), QueryParamEncoder.instant(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          13976
+        </td>
+        <td>
+          3622
+          -
+          3658
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.instant
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.instant(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          17207
+        </td>
+        <td>
+          3779
+          -
+          3898
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.LocalDate](QueryParamDecoder.localDate(formatter), QueryParamEncoder.localDate(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          23005
+        </td>
+        <td>
+          3807
+          -
+          3845
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.localDate
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.localDate(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          20664
+        </td>
+        <td>
+          3853
+          -
+          3891
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.localDate
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.localDate(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          15925
+        </td>
+        <td>
+          3980
+          -
+          4099
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.LocalTime](QueryParamDecoder.localTime(formatter), QueryParamEncoder.localTime(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          13485
+        </td>
+        <td>
+          4008
+          -
+          4046
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.localTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.localTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          19687
+        </td>
+        <td>
+          4054
+          -
+          4092
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.localTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.localTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          16455
+        </td>
+        <td>
+          4189
+          -
+          4316
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.LocalDateTime](QueryParamDecoder.localDateTime(formatter), QueryParamEncoder.localDateTime(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          13578
+        </td>
+        <td>
+          4217
+          -
+          4259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.localDateTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.localDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          20437
+        </td>
+        <td>
+          4267
+          -
+          4309
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.localDateTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.localDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          16943
+        </td>
+        <td>
+          4398
+          -
+          4517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.DayOfWeek](QueryParamDecoder.dayOfWeek(formatter), QueryParamEncoder.dayOfWeek(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          22894
+        </td>
+        <td>
+          4426
+          -
+          4464
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.dayOfWeek
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.dayOfWeek(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          20684
+        </td>
+        <td>
+          4472
+          -
+          4510
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.dayOfWeek
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.dayOfWeek(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          13062
+        </td>
+        <td>
+          4612
+          -
+          4646
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.month
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.month(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          15534
+        </td>
+        <td>
+          4591
+          -
+          4683
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.Month](QueryParamDecoder.month(formatter), QueryParamEncoder.month(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          19708
+        </td>
+        <td>
+          4648
+          -
+          4682
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.month
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.month(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          16327
+        </td>
+        <td>
+          4763
+          -
+          4880
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.MonthDay](QueryParamDecoder.monthDay(formatter), QueryParamEncoder.monthDay(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          13599
+        </td>
+        <td>
+          4791
+          -
+          4828
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.monthDay
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.monthDay(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          20146
+        </td>
+        <td>
+          4836
+          -
+          4873
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.monthDay
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.monthDay(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          16830
+        </td>
+        <td>
+          4952
+          -
+          5042
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.Year](QueryParamDecoder.year(formatter), QueryParamEncoder.year(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          22912
+        </td>
+        <td>
+          4973
+          -
+          5006
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.year
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.year(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          18769
+        </td>
+        <td>
+          5008
+          -
+          5041
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.year
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.year(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          15560
+        </td>
+        <td>
+          5124
+          -
+          5243
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.YearMonth](QueryParamDecoder.yearMonth(formatter), QueryParamEncoder.yearMonth(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          13462
+        </td>
+        <td>
+          5152
+          -
+          5190
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.yearMonth
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.yearMonth(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          19577
+        </td>
+        <td>
+          5198
+          -
+          5236
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.yearMonth
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.yearMonth(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          16701
+        </td>
+        <td>
+          5327
+          -
+          5448
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.ZoneOffset](QueryParamDecoder.zoneOffset(formatter), QueryParamEncoder.zoneOffset(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          13620
+        </td>
+        <td>
+          5355
+          -
+          5394
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.zoneOffset
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.zoneOffset(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          20412
+        </td>
+        <td>
+          5402
+          -
+          5441
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.zoneOffset
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.zoneOffset(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          16847
+        </td>
+        <td>
+          5538
+          -
+          5665
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.ZonedDateTime](QueryParamDecoder.zonedDateTime(formatter), QueryParamEncoder.zonedDateTime(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          22785
+        </td>
+        <td>
+          5566
+          -
+          5608
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.zonedDateTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.zonedDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          18791
+        </td>
+        <td>
+          5616
+          -
+          5658
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.zonedDateTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.zonedDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          15581
+        </td>
+        <td>
+          5749
+          -
+          5870
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.OffsetTime](QueryParamDecoder.offsetTime(formatter), QueryParamEncoder.offsetTime(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          172
+        </td>
+        <td>
+          13338
+        </td>
+        <td>
+          5777
+          -
+          5816
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.offsetTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.offsetTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          19923
+        </td>
+        <td>
+          5824
+          -
+          5863
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.offsetTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.offsetTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          16593
+        </td>
+        <td>
+          5962
+          -
+          6091
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamCodec.from
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamCodec.from[java.time.OffsetDateTime](QueryParamDecoder.offsetDateTime(formatter), QueryParamEncoder.offsetDateTime(formatter))
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          14131
+        </td>
+        <td>
+          5990
+          -
+          6033
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.offsetDateTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.offsetDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          20429
+        </td>
+        <td>
+          6041
+          -
+          6084
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.offsetDateTime
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.offsetDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          17082
+        </td>
+        <td>
+          6645
+          -
+          6648
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          22889
+        </td>
+        <td>
+          6752
+          -
+          6760
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(value)
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          18812
+        </td>
+        <td>
+          6739
+          -
+          6761
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.encode
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.encode(f.apply(value))
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          19827
+        </td>
+        <td>
+          7148
+          -
+          7151
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          13359
+        </td>
+        <td>
+          7291
+          -
+          7306
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.contramap
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          fa.contramap[B](f)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          15819
+        </td>
+        <td>
+          7425
+          -
+          7432
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Show.ContravariantShow.show
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          sh.show(t)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          22000
+        </td>
+        <td>
+          7391
+          -
+          7433
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.contramap
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.stringQueryParamEncoder.contramap[T](((t: T) =&gt; sh.show(t)))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          20301
+        </td>
+        <td>
+          8392
+          -
+          8410
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.instant
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QueryParamEncoder.this.instant(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          16608
+        </td>
+        <td>
+          8511
+          -
+          8531
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.localDate
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QueryParamEncoder.this.localDate(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          247
+        </td>
+        <td>
+          22906
+        </td>
+        <td>
+          8650
+          -
+          8674
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.zonedDateTime
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QueryParamEncoder.this.zonedDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          19024
+        </td>
+        <td>
+          8754
+          -
+          8790
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.Instant](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          17096
+        </td>
+        <td>
+          8874
+          -
+          8910
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.LocalDate](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          13217
+        </td>
+        <td>
+          8994
+          -
+          9030
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.LocalTime](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          19575
+        </td>
+        <td>
+          9122
+          -
+          9158
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.LocalDateTime](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          15835
+        </td>
+        <td>
+          9242
+          -
+          9278
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.DayOfWeek](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          21957
+        </td>
+        <td>
+          9354
+          -
+          9390
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.Month](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          268
+        </td>
+        <td>
+          20317
+        </td>
+        <td>
+          9472
+          -
+          9508
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.MonthDay](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          16626
+        </td>
+        <td>
+          9582
+          -
+          9618
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.Year](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          274
+        </td>
+        <td>
+          22782
+        </td>
+        <td>
+          9702
+          -
+          9738
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.YearMonth](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          277
+        </td>
+        <td>
+          19038
+        </td>
+        <td>
+          9824
+          -
+          9860
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.ZoneOffset](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          17336
+        </td>
+        <td>
+          9952
+          -
+          9988
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.ZonedDateTime](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          13234
+        </td>
+        <td>
+          10074
+          -
+          10110
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.OffsetTime](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          286
+        </td>
+        <td>
+          19593
+        </td>
+        <td>
+          10204
+          -
+          10240
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.javaTimeQueryParamEncoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.this.javaTimeQueryParamEncoder[java.time.OffsetDateTime](formatter)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          15718
+        </td>
+        <td>
+          10412
+          -
+          10428
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.format.DateTimeFormatter.format
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          formatter.format(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          21976
+        </td>
+        <td>
+          10373
+          -
+          10429
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamEncoder.contramap
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamEncoder.apply[String](QueryParamEncoder.this.stringQueryParamEncoder).contramap[T](((x$1: java.time.temporal.TemporalAccessor) =&gt; formatter.format(x$1)))
+        </td>
+      </tr><tr>
+        <td>
+          307
+        </td>
+        <td>
+          16217
+        </td>
+        <td>
+          10967
+          -
+          10970
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          20563
+        </td>
+        <td>
+          11089
+          -
+          11115
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.map
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.decode(value).map[U](f)
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          14893
+        </td>
+        <td>
+          11247
+          -
+          11250
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          22803
+        </td>
+        <td>
+          11396
+          -
+          11413
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.decode
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          qpd.decode(value)
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          19288
+        </td>
+        <td>
+          11369
+          -
+          11414
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.orElse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.decode(value).orElse[cats.data.NonEmptyList[org.http4s.ParseFailure], U](qpd.decode(value))
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          15739
+        </td>
+        <td>
+          11581
+          -
+          11626
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.emapValidatedNel
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.emapValidatedNel[U](f.andThen[cats.data.ValidatedNel[org.http4s.ParseFailure,U]](((x$10: Either[org.http4s.ParseFailure,U]) =&gt; cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, U](x$10).toValidatedNel[org.http4s.ParseFailure])))
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          19455
+        </td>
+        <td>
+          11598
+          -
+          11625
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.andThen
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.andThen[cats.data.ValidatedNel[org.http4s.ParseFailure,U]](((x$10: Either[org.http4s.ParseFailure,U]) =&gt; cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, U](x$10).toValidatedNel[org.http4s.ParseFailure]))
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          12956
+        </td>
+        <td>
+          11608
+          -
+          11624
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.EitherOps.toValidatedNel
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, U](x$10).toValidatedNel[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          325
+        </td>
+        <td>
+          20580
+        </td>
+        <td>
+          11817
+          -
+          11820
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          22485
+        </td>
+        <td>
+          11939
+          -
+          11969
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.andThen
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.decode(value).andThen[cats.data.NonEmptyList[org.http4s.ParseFailure], U](f)
+        </td>
+      </tr><tr>
+        <td>
+          339
+        </td>
+        <td>
+          13208
+        </td>
+        <td>
+          12317
+          -
+          12320
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.formdatadecoderdoctest,org.http4s.queryparamcodecsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          342
+        </td>
+        <td>
+          16600
+        </td>
+        <td>
+          12465
+          -
+          12476
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderdoctest,munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cast.apply(value)
+        </td>
+      </tr><tr>
+        <td>
+          343
+        </td>
+        <td>
+          19309
+        </td>
+        <td>
+          12502
+          -
+          12564
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.apply((&quot;Query decoding &quot;.+(typeName).+(&quot; failed&quot;): String), t.getMessage())
+        </td>
+      </tr><tr>
+        <td>
+          343
+        </td>
+        <td>
+          22666
+        </td>
+        <td>
+          12551
+          -
+          12563
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getMessage
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          t.getMessage()
+        </td>
+      </tr><tr>
+        <td>
+          344
+        </td>
+        <td>
+          15418
+        </td>
+        <td>
+          12430
+          -
+          12591
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.Validated.toValidatedNel
+        </td>
+        <td>
+          org.http4s.formdatadecoderdoctest,munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Validated.catchNonFatal[T](cast.apply(value)).leftMap[org.http4s.ParseFailure](((t: Throwable) =&gt; ParseFailure.apply((&quot;Query decoding &quot;.+(typeName).+(&quot; failed&quot;): String), t.getMessage()))).toValidatedNel[org.http4s.ParseFailure, T]
+        </td>
+      </tr><tr>
+        <td>
+          349
+        </td>
+        <td>
+          15968
+        </td>
+        <td>
+          12724
+          -
+          12727
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.formdatadecoderdoctest,org.http4s.server.middleware.urlformliftersuite,org.http4s.queryparamcodecsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          351
+        </td>
+        <td>
+          19839
+        </td>
+        <td>
+          12855
+          -
+          12864
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.map
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          fa.map[B](f)
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          16474
+        </td>
+        <td>
+          12989
+          -
+          12992
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.formdatadecoderdoctest,org.http4s.server.middleware.urlformliftersuite,org.http4s.queryparamcodecsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          358
+        </td>
+        <td>
+          22508
+        </td>
+        <td>
+          13073
+          -
+          13133
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.fail
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.fail[A](&quot;Decoding failed.&quot;, &quot;Empty decoder (always fails).&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          360
+        </td>
+        <td>
+          18145
+        </td>
+        <td>
+          13238
+          -
+          13249
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.orElse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          a.orElse[A](b)
+        </td>
+      </tr><tr>
+        <td>
+          365
+        </td>
+        <td>
+          23033
+        </td>
+        <td>
+          13349
+          -
+          13385
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.fromUnsafeCast
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.fromUnsafeCast[A](((x$11: org.http4s.QueryParameterValue) =&gt; a))(&quot;Success&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          369
+        </td>
+        <td>
+          13227
+        </td>
+        <td>
+          13502
+          -
+          13505
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          371
+        </td>
+        <td>
+          19181
+        </td>
+        <td>
+          13624
+          -
+          13655
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.apply(sanitized, detail)
+        </td>
+      </tr><tr>
+        <td>
+          371
+        </td>
+        <td>
+          15441
+        </td>
+        <td>
+          13624
+          -
+          13666
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.ValidatedIdSyntax.invalidNel
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxValidatedId[org.http4s.ParseFailure](ParseFailure.apply(sanitized, detail)).invalidNel[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          406
+        </td>
+        <td>
+          18381
+        </td>
+        <td>
+          15193
+          -
+          15196
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.formdatadecoderdoctest,org.http4s.server.middleware.urlformliftersuite,org.http4s.queryparamcodecsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          408
+        </td>
+        <td>
+          15712
+        </td>
+        <td>
+          15310
+          -
+          15337
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.fromString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Uri.fromString(value.value)
+        </td>
+      </tr><tr>
+        <td>
+          408
+        </td>
+        <td>
+          19728
+        </td>
+        <td>
+          15325
+          -
+          15336
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QueryParameterValue.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          value.value
+        </td>
+      </tr><tr>
+        <td>
+          408
+        </td>
+        <td>
+          22529
+        </td>
+        <td>
+          15310
+          -
+          15352
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.EitherOps.toValidatedNel
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Uri](Uri.fromString(value.value)).toValidatedNel[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          412
+        </td>
+        <td>
+          16497
+        </td>
+        <td>
+          15455
+          -
+          15473
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.instant
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QueryParamDecoder.this.instant(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          415
+        </td>
+        <td>
+          22929
+        </td>
+        <td>
+          15574
+          -
+          15594
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.localDate
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QueryParamDecoder.this.localDate(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          420
+        </td>
+        <td>
+          18926
+        </td>
+        <td>
+          15713
+          -
+          15737
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.zonedDateTime
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QueryParamDecoder.this.zonedDateTime(formatter)
+        </td>
+      </tr><tr>
+        <td>
+          423
+        </td>
+        <td>
+          13101
+        </td>
+        <td>
+          15868
+          -
+          15877
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Instant&quot;
+        </td>
+      </tr><tr>
+        <td>
+          423
+        </td>
+        <td>
+          15463
+        </td>
+        <td>
+          15854
+          -
+          15866
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.Instant.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.Instant.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          423
+        </td>
+        <td>
+          19745
+        </td>
+        <td>
+          15817
+          -
+          15878
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.Instant](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.Instant.from(x$1)), &quot;Instant&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          426
+        </td>
+        <td>
+          18403
+        </td>
+        <td>
+          15962
+          -
+          16027
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.LocalDate](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.LocalDate.from(x$1)), &quot;LocalDate&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          426
+        </td>
+        <td>
+          15580
+        </td>
+        <td>
+          15999
+          -
+          16013
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.LocalDate.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.LocalDate.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          426
+        </td>
+        <td>
+          22099
+        </td>
+        <td>
+          16015
+          -
+          16026
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;LocalDate&quot;
+        </td>
+      </tr><tr>
+        <td>
+          429
+        </td>
+        <td>
+          18942
+        </td>
+        <td>
+          16111
+          -
+          16176
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.LocalTime](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.LocalTime.from(x$1)), &quot;LocalTime&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          429
+        </td>
+        <td>
+          22661
+        </td>
+        <td>
+          16164
+          -
+          16175
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;LocalTime&quot;
+        </td>
+      </tr><tr>
+        <td>
+          429
+        </td>
+        <td>
+          16362
+        </td>
+        <td>
+          16148
+          -
+          16162
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.LocalTime.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.LocalTime.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          432
+        </td>
+        <td>
+          19616
+        </td>
+        <td>
+          16268
+          -
+          16341
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.LocalDateTime](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.LocalDateTime.from(x$1)), &quot;LocalDateTime&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          432
+        </td>
+        <td>
+          21635
+        </td>
+        <td>
+          16325
+          -
+          16340
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;LocalDateTime&quot;
+        </td>
+      </tr><tr>
+        <td>
+          432
+        </td>
+        <td>
+          15414
+        </td>
+        <td>
+          16305
+          -
+          16323
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.LocalDateTime.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.LocalDateTime.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          435
+        </td>
+        <td>
+          15601
+        </td>
+        <td>
+          16462
+          -
+          16476
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.DayOfWeek.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.DayOfWeek.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          435
+        </td>
+        <td>
+          22113
+        </td>
+        <td>
+          16478
+          -
+          16489
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;DayOfWeek&quot;
+        </td>
+      </tr><tr>
+        <td>
+          435
+        </td>
+        <td>
+          18659
+        </td>
+        <td>
+          16425
+          -
+          16490
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.DayOfWeek](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.DayOfWeek.from(x$1)), &quot;DayOfWeek&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          438
+        </td>
+        <td>
+          18831
+        </td>
+        <td>
+          16566
+          -
+          16623
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.Month](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.Month.from(x$1)), &quot;Month&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          438
+        </td>
+        <td>
+          16736
+        </td>
+        <td>
+          16603
+          -
+          16613
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.Month.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.Month.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          438
+        </td>
+        <td>
+          22681
+        </td>
+        <td>
+          16615
+          -
+          16622
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Month&quot;
+        </td>
+      </tr><tr>
+        <td>
+          441
+        </td>
+        <td>
+          19722
+        </td>
+        <td>
+          16705
+          -
+          16768
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.MonthDay](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.MonthDay.from(x$1)), &quot;MonthDay&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          441
+        </td>
+        <td>
+          15436
+        </td>
+        <td>
+          16742
+          -
+          16755
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.MonthDay.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.MonthDay.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          441
+        </td>
+        <td>
+          21859
+        </td>
+        <td>
+          16757
+          -
+          16767
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;MonthDay&quot;
+        </td>
+      </tr><tr>
+        <td>
+          444
+        </td>
+        <td>
+          15625
+        </td>
+        <td>
+          16879
+          -
+          16888
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.Year.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.Year.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          444
+        </td>
+        <td>
+          22365
+        </td>
+        <td>
+          16890
+          -
+          16896
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Year&quot;
+        </td>
+      </tr><tr>
+        <td>
+          444
+        </td>
+        <td>
+          18677
+        </td>
+        <td>
+          16842
+          -
+          16897
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.Year](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.Year.from(x$1)), &quot;Year&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          447
+        </td>
+        <td>
+          22922
+        </td>
+        <td>
+          17034
+          -
+          17045
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;YearMonth&quot;
+        </td>
+      </tr><tr>
+        <td>
+          447
+        </td>
+        <td>
+          18848
+        </td>
+        <td>
+          16981
+          -
+          17046
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.YearMonth](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.YearMonth.from(x$1)), &quot;YearMonth&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          447
+        </td>
+        <td>
+          16625
+        </td>
+        <td>
+          17018
+          -
+          17032
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.YearMonth.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.YearMonth.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          450
+        </td>
+        <td>
+          15299
+        </td>
+        <td>
+          17169
+          -
+          17184
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.ZoneOffset.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.ZoneOffset.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          450
+        </td>
+        <td>
+          21875
+        </td>
+        <td>
+          17186
+          -
+          17198
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;ZoneOffset&quot;
+        </td>
+      </tr><tr>
+        <td>
+          450
+        </td>
+        <td>
+          19738
+        </td>
+        <td>
+          17132
+          -
+          17199
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.ZoneOffset](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.ZoneOffset.from(x$1)), &quot;ZoneOffset&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          453
+        </td>
+        <td>
+          22389
+        </td>
+        <td>
+          17348
+          -
+          17363
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;ZonedDateTime&quot;
+        </td>
+      </tr><tr>
+        <td>
+          453
+        </td>
+        <td>
+          15851
+        </td>
+        <td>
+          17328
+          -
+          17346
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.ZonedDateTime.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.ZonedDateTime.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          453
+        </td>
+        <td>
+          18548
+        </td>
+        <td>
+          17291
+          -
+          17364
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.ZonedDateTime](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.ZonedDateTime.from(x$1)), &quot;ZonedDateTime&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          456
+        </td>
+        <td>
+          14548
+        </td>
+        <td>
+          17487
+          -
+          17502
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.OffsetTime.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.OffsetTime.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          456
+        </td>
+        <td>
+          22939
+        </td>
+        <td>
+          17504
+          -
+          17516
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;OffsetTime&quot;
+        </td>
+      </tr><tr>
+        <td>
+          456
+        </td>
+        <td>
+          18803
+        </td>
+        <td>
+          17450
+          -
+          17517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.OffsetTime](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.OffsetTime.from(x$1)), &quot;OffsetTime&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          459
+        </td>
+        <td>
+          19606
+        </td>
+        <td>
+          17611
+          -
+          17686
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.javaTimeQueryParamDecoder
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.this.javaTimeQueryParamDecoder[java.time.OffsetDateTime](formatter, ((x$1: java.time.temporal.TemporalAccessor) =&gt; java.time.OffsetDateTime.from(x$1)), &quot;OffsetDateTime&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          459
+        </td>
+        <td>
+          21762
+        </td>
+        <td>
+          17669
+          -
+          17685
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;OffsetDateTime&quot;
+        </td>
+      </tr><tr>
+        <td>
+          459
+        </td>
+        <td>
+          15319
+        </td>
+        <td>
+          17648
+          -
+          17667
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.OffsetDateTime.from
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.OffsetDateTime.from(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          468
+        </td>
+        <td>
+          15864
+        </td>
+        <td>
+          17986
+          -
+          17997
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QueryParameterValue.value
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          value.value
+        </td>
+      </tr><tr>
+        <td>
+          468
+        </td>
+        <td>
+          21992
+        </td>
+        <td>
+          17970
+          -
+          17998
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.format.DateTimeFormatter.parse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          formatter.parse(value.value)
+        </td>
+      </tr><tr>
+        <td>
+          468
+        </td>
+        <td>
+          18567
+        </td>
+        <td>
+          17949
+          -
+          17999
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          fromTemporalAccessor.apply(formatter.parse(value.value))
+        </td>
+      </tr><tr>
+        <td>
+          470
+        </td>
+        <td>
+          14569
+        </td>
+        <td>
+          18104
+          -
+          18116
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getMessage
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          e.getMessage()
+        </td>
+      </tr><tr>
+        <td>
+          470
+        </td>
+        <td>
+          22823
+        </td>
+        <td>
+          18033
+          -
+          18117
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.apply((&quot;Failed to decode value &quot;.+(value.value).+(&quot; as &quot;).+(displayName): String), e.getMessage())
+        </td>
+      </tr><tr>
+        <td>
+          472
+        </td>
+        <td>
+          18823
+        </td>
+        <td>
+          17916
+          -
+          18151
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.Validated.toValidatedNel
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Validated.catchNonFatal[T](fromTemporalAccessor.apply(formatter.parse(value.value))).leftMap[org.http4s.ParseFailure](((e: Throwable) =&gt; ParseFailure.apply((&quot;Failed to decode value &quot;.+(value.value).+(&quot; as &quot;).+(displayName): String), e.getMessage()))).toValidatedNel[org.http4s.ParseFailure, T]
+        </td>
+      </tr><tr>
+        <td>
+          483
+        </td>
+        <td>
+          14428
+        </td>
+        <td>
+          18527
+          -
+          18702
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.emap
+        </td>
+        <td>
+          org.http4s.queryparamcodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParamDecoder.apply[String](QueryParamDecoder.this.stringQueryParamDecoder).emap[T](((s: String) =&gt; cats.syntax.`package`.all.catsSyntaxEither[Throwable, T](cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).catchNonFatal[T](parse.apply(s))).leftMap[org.http4s.ParseFailure](((e: Throwable) =&gt; ParseFailure.apply((&quot;Failed to decode value &quot;.+(s).+(&quot; as &quot;).+(displayName): String), e.getMessage())))))
+        </td>
+      </tr><tr>
+        <td>
+          484
+        </td>
+        <td>
+          14908
+        </td>
+        <td>
+          18567
+          -
+          18573
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          485
+        </td>
+        <td>
+          21493
+        </td>
+        <td>
+          18595
+          -
+          18603
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          parse.apply(s)
+        </td>
+      </tr><tr>
+        <td>
+          485
+        </td>
+        <td>
+          17805
+        </td>
+        <td>
+          18567
+          -
+          18604
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.catchNonFatal
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).catchNonFatal[T](parse.apply(s))
+        </td>
+      </tr><tr>
+        <td>
+          486
+        </td>
+        <td>
+          18259
+        </td>
+        <td>
+          18567
+          -
+          18698
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherOps.leftMap
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[Throwable, T](cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).catchNonFatal[T](parse.apply(s))).leftMap[org.http4s.ParseFailure](((e: Throwable) =&gt; ParseFailure.apply((&quot;Failed to decode value &quot;.+(s).+(&quot; as &quot;).+(displayName): String), e.getMessage())))
+        </td>
+      </tr><tr>
+        <td>
+          486
+        </td>
+        <td>
+          22009
+        </td>
+        <td>
+          18625
+          -
+          18697
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseFailure.apply((&quot;Failed to decode value &quot;.+(s).+(&quot; as &quot;).+(displayName): String), e.getMessage())
+        </td>
+      </tr><tr>
+        <td>
+          486
+        </td>
+        <td>
+          15758
+        </td>
+        <td>
+          18684
+          -
+          18696
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getMessage
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          e.getMessage()
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

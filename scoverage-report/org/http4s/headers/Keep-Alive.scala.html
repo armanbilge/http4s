@@ -1,0 +1,3095 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/Keep-Alive.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package headers
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.implicits._
+</span>21 <span style=''>import cats.kernel.Semigroup
+</span>22 <span style=''>import cats.parse._
+</span>23 <span style=''>import org.http4s.Header
+</span>24 <span style=''>import org.http4s.internal.parsing.Rfc7230
+</span>25 <span style=''>import org.http4s.util.Renderable
+</span>26 <span style=''>import org.http4s.util.Writer
+</span>27 <span style=''>import org.typelevel.ci._
+</span>28 <span style=''>
+</span>29 <span style=''>import java.util.concurrent.TimeUnit
+</span>30 <span style=''>import scala.collection.mutable.ListBuffer
+</span>31 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>32 <span style=''>
+</span>33 <span style=''>object `Keep-Alive` {
+</span>34 <span style=''>
+</span>35 <span style=''>  private sealed trait Parameter
+</span>36 <span style=''>  private final case class Timeout(timeoutSeconds: Long) extends Parameter
+</span>37 <span style=''>  private final case class Max(max: Long) extends Parameter
+</span>38 <span style=''>  private final case class Extension(ext: (String, Option[String])) extends Parameter
+</span>39 <span style=''>
+</span>40 <span style=''>  /*
+</span>41 <span style=''>Spec Version: https://datatracker.ietf.org/doc/html/draft-thomson-hybi-http-timeout-03 (Note:  Max is deprecated and gone)
+</span>42 <span style=''>Keep-Alive           = &quot;Keep-Alive&quot; &quot;:&quot; 1#keep-alive-info
+</span>43 <span style=''>keep-alive-info      =   &quot;timeout&quot; &quot;=&quot; delta-seconds
+</span>44 <span style=''>                       / &quot;max&quot; &quot;=&quot; 1*DIGIT
+</span>45 <span style=''>                       / keep-alive-extension
+</span>46 <span style=''>keep-alive-extension = token [ &quot;=&quot; ( token / quoted-string ) ]
+</span>47 <span style=''>   */
+</span>48 <span style=''>
+</span>49 <span style=''>  def apply(
+</span>50 <span style=''>      timeoutSeconds: Option[Long],
+</span>51 <span style=''>      max: Option[Long],
+</span>52 <span style=''>      extension: List[(String, Option[String])],
+</span>53 <span style=''>  ): ParseResult[`Keep-Alive`] =
+</span>54 <span style=''>    if (</span><span style='background: #AEF1AE'>timeoutSeconds.isDefined || max.isDefined || extension.nonEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>{
+</span>55 <span style=''></span><span style='background: #AEF1AE'>      val reservedTokens = List(&quot;token&quot;, &quot;max&quot;)
+</span>56 <span style=''></span><span style='background: #AEF1AE'>      if (extension.exists(p =&gt; reservedTokens.contains(p._1))) {
+</span>57 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>ParseResult.fail(
+</span>58 <span style=''></span><span style='background: #F0ADAD'>          &quot;Invalid Keep-Alive header&quot;,
+</span>59 <span style=''></span><span style='background: #F0ADAD'>          s&quot;Reserved token of list $reservedTokens was found in the extensions.&quot;,
+</span>60 <span style=''></span><span style='background: #F0ADAD'>        )</span><span style='background: #AEF1AE'>
+</span>61 <span style=''></span><span style='background: #AEF1AE'>      } else {
+</span>62 <span style=''></span><span style='background: #AEF1AE'>        val validatedTimeoutSeconds = timeoutSeconds.traverse(t =&gt; nonNegativeLong(t, &quot;timeout&quot;))
+</span>63 <span style=''></span><span style='background: #AEF1AE'>        val validatedMax = max.traverse(m =&gt; nonNegativeLong(m, &quot;max&quot;))
+</span>64 <span style=''></span><span style='background: #AEF1AE'>        (validatedTimeoutSeconds, validatedMax).mapN((t, m) =&gt; impl(t, m, extension))
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>66 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''> else {
+</span>67 <span style=''>      </span><span style='background: #AEF1AE'>ParseResult.fail(&quot;Invalid Keep-Alive header&quot;, &quot;All fields of Keep-Alive were empty&quot;)</span><span style=''>
+</span>68 <span style=''>    }
+</span>69 <span style=''>
+</span>70 <span style=''>  def unsafeApply(
+</span>71 <span style=''>      timeoutSeconds: Option[Long],
+</span>72 <span style=''>      max: Option[Long],
+</span>73 <span style=''>      extension: List[(String, Option[String])],
+</span>74 <span style=''>  ): `Keep-Alive` =
+</span>75 <span style=''>    </span><span style='background: #AEF1AE'>apply(timeoutSeconds, max, extension).fold(</span><span style='background: #F0ADAD'>throw _</span><span style='background: #AEF1AE'>, identity)</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>  def parse(s: String): ParseResult[`Keep-Alive`] =
+</span>78 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Keep-Alive header&quot;)(s)</span><span style=''>
+</span>79 <span style=''>
+</span>80 <span style=''>  private def nonNegativeLong(l: Long, fieldName: String): ParseResult[Long] =
+</span>81 <span style=''>    if (</span><span style='background: #AEF1AE'>l &gt;= 0</span><span style=''>) </span><span style='background: #AEF1AE'>ParseResult.success(l)</span><span style=''>
+</span>82 <span style=''>    else
+</span>83 <span style=''>      </span><span style='background: #F0ADAD'>ParseResult.fail(
+</span>84 <span style=''></span><span style='background: #F0ADAD'>        s&quot;Invalid long for $fieldName&quot;,
+</span>85 <span style=''></span><span style='background: #F0ADAD'>        s&quot;$fieldName which was $l must be greater than or equal to 0 seconds&quot;,
+</span>86 <span style=''></span><span style='background: #F0ADAD'>      )</span><span style=''>
+</span>87 <span style=''>
+</span>88 <span style=''>  private def safeToLong(s: String): Option[Long] =
+</span>89 <span style=''>    try </span><span style='background: #AEF1AE'>Some(s.toLong)</span><span style=''>
+</span>90 <span style=''>    catch {
+</span>91 <span style=''>      case _: NumberFormatException =&gt; </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>92 <span style=''>    }
+</span>93 <span style=''>  private val parser: Parser[`Keep-Alive`] = {
+</span>94 <span style=''>    import Rfc7230.{headerRep1, quotedString, token}
+</span>95 <span style=''>    import Numbers.digits
+</span>96 <span style=''>
+</span>97 <span style=''>    // &quot;timeout&quot; &quot;=&quot; delta-seconds
+</span>98 <span style=''>    val timeout: Parser[Timeout] =
+</span>99 <span style=''>      </span><span style='background: #AEF1AE'>Parser.string(&quot;timeout=&quot;) *&gt; digits.mapFilter(s =&gt; safeToLong(s).map(Timeout.apply))</span><span style=''>
+</span>100 <span style=''>
+</span>101 <span style=''>    // &quot;max&quot; &quot;=&quot; 1*DIGIT
+</span>102 <span style=''>    val max: Parser[Max] =
+</span>103 <span style=''>      </span><span style='background: #AEF1AE'>Parser.string(&quot;max=&quot;) *&gt; digits.mapFilter(s =&gt; safeToLong(s).map(Max.apply))</span><span style=''>
+</span>104 <span style=''>
+</span>105 <span style=''>    // keep-alive-extension = token [ &quot;=&quot; ( token / quoted-string ) ]
+</span>106 <span style=''>    val keepAliveExtension: Parser[Extension] =
+</span>107 <span style=''>      </span><span style='background: #AEF1AE'>(token ~ (Parser.char('=') *&gt; token.orElse(quotedString)).?).map(Extension.apply)</span><span style=''>
+</span>108 <span style=''>
+</span>109 <span style=''>    /*
+</span>110 <span style=''>  keep-alive-info      = &quot;timeout&quot; &quot;=&quot; delta-seconds
+</span>111 <span style=''>                       / &quot;max&quot; &quot;=&quot; 1*DIGIT
+</span>112 <span style=''>                       / keep-alive-extension
+</span>113 <span style=''>     */
+</span>114 <span style=''>    val keepAliveInfo: Parser[Parameter] = </span><span style='background: #AEF1AE'>timeout.orElse(max).orElse(keepAliveExtension)</span><span style=''>
+</span>115 <span style=''>
+</span>116 <span style=''>    </span><span style='background: #AEF1AE'>headerRep1(keepAliveInfo).map { nel =&gt;
+</span>117 <span style=''></span><span style='background: #AEF1AE'>      var timeoutSeconds: Option[Long] = None
+</span>118 <span style=''></span><span style='background: #AEF1AE'>      var max: Option[Long] = None
+</span>119 <span style=''></span><span style='background: #AEF1AE'>      val extension: ListBuffer[(String, Option[String])] = ListBuffer.empty
+</span>120 <span style=''></span><span style='background: #AEF1AE'>      nel.foldLeft(()) { (_, ka) =&gt;
+</span>121 <span style=''></span><span style='background: #AEF1AE'>        ka match {
+</span>122 <span style=''></span><span style='background: #AEF1AE'>          case Timeout(n) =&gt; if (timeoutSeconds.isEmpty) timeoutSeconds = Some(n) else ()
+</span>123 <span style=''></span><span style='background: #AEF1AE'>          case Max(n) =&gt; if (max.isEmpty) max = Some(n) else ()
+</span>124 <span style=''></span><span style='background: #AEF1AE'>          case Extension(p) =&gt; extension.append(p)
+</span>125 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>126 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>127 <span style=''></span><span style='background: #AEF1AE'>      unsafeApply(timeoutSeconds, max, extension.toList)
+</span>128 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>129 <span style=''>  }
+</span>130 <span style=''>
+</span>131 <span style=''>  private def impl(
+</span>132 <span style=''>      timeoutSeconds: Option[Long],
+</span>133 <span style=''>      max: Option[Long],
+</span>134 <span style=''>      extension: List[(String, Option[String])],
+</span>135 <span style=''>  ) =
+</span>136 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> `Keep-Alive`(timeoutSeconds, max, extension) {}
+</span>137 <span style=''>
+</span>138 <span style=''>  implicit val headerInstance: Header[`Keep-Alive`, Header.Recurring] = </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>139 <span style=''></span><span style='background: #AEF1AE'>    ci&quot;Keep-Alive&quot;,
+</span>140 <span style=''></span><span style='background: #AEF1AE'>    v =&gt;
+</span>141 <span style=''></span><span style='background: #AEF1AE'>      new Renderable {
+</span>142 <span style=''></span><span style='background: #AEF1AE'>        def render(writer: Writer): writer.type =
+</span>143 <span style=''></span><span style='background: #AEF1AE'>          v match {
+</span>144 <span style=''></span><span style='background: #AEF1AE'>            case `Keep-Alive`(t, m, e) =&gt;
+</span>145 <span style=''></span><span style='background: #AEF1AE'>              var hasWritten = false
+</span>146 <span style=''></span><span style='background: #AEF1AE'>              t.foreach { l =&gt;
+</span>147 <span style=''></span><span style='background: #AEF1AE'>                writer &lt;&lt; &quot;timeout=&quot; &lt;&lt; l
+</span>148 <span style=''></span><span style='background: #AEF1AE'>                hasWritten = true
+</span>149 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>150 <span style=''></span><span style='background: #AEF1AE'>              m.foreach { l =&gt;
+</span>151 <span style=''></span><span style='background: #AEF1AE'>                if (hasWritten) writer &lt;&lt; &quot;, &quot; else hasWritten = true
+</span>152 <span style=''></span><span style='background: #AEF1AE'>                writer &lt;&lt; &quot;max=&quot; &lt;&lt; l
+</span>153 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>154 <span style=''></span><span style='background: #AEF1AE'>
+</span>155 <span style=''></span><span style='background: #AEF1AE'>              e.foreach { p =&gt;
+</span>156 <span style=''></span><span style='background: #AEF1AE'>                if (hasWritten) writer &lt;&lt; &quot;, &quot; else hasWritten = true
+</span>157 <span style=''></span><span style='background: #AEF1AE'>                writer &lt;&lt; p._1
+</span>158 <span style=''></span><span style='background: #AEF1AE'>                p._2.foreach { qts =&gt;
+</span>159 <span style=''></span><span style='background: #AEF1AE'>                  writer &lt;&lt; &quot;=&quot;
+</span>160 <span style=''></span><span style='background: #AEF1AE'>                  writer.quote(
+</span>161 <span style=''></span><span style='background: #AEF1AE'>                    qts
+</span>162 <span style=''></span><span style='background: #AEF1AE'>                  )
+</span>163 <span style=''></span><span style='background: #AEF1AE'>                } // All tokens are valid if we quote them as if they were quoted-string
+</span>164 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>165 <span style=''></span><span style='background: #AEF1AE'>              writer
+</span>166 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>167 <span style=''></span><span style='background: #AEF1AE'>      },
+</span>168 <span style=''></span><span style='background: #AEF1AE'>    parse,
+</span>169 <span style=''></span><span style='background: #AEF1AE'>  )</span><span style=''>
+</span>170 <span style=''>
+</span>171 <span style=''>  implicit val headerSemigroupInstance: Semigroup[`Keep-Alive`] = </span><span style='background: #AEF1AE'>new</span><span style=''> Semigroup[`Keep-Alive`] {
+</span>172 <span style=''>    def combine(x: `Keep-Alive`, y: `Keep-Alive`): `Keep-Alive` =
+</span>173 <span style=''>      </span><span style='background: #F0ADAD'>impl(
+</span>174 <span style=''></span><span style='background: #F0ADAD'>        x.timeoutSeconds.orElse(y.timeoutSeconds),
+</span>175 <span style=''></span><span style='background: #F0ADAD'>        x.max.orElse(y.max),
+</span>176 <span style=''></span><span style='background: #F0ADAD'>        x.extension ++ y.extension,
+</span>177 <span style=''></span><span style='background: #F0ADAD'>      )</span><span style=''>
+</span>178 <span style=''>  }
+</span>179 <span style=''>
+</span>180 <span style=''>}
+</span>181 <span style=''>
+</span>182 <span style=''>sealed abstract case class `Keep-Alive` private (
+</span>183 <span style=''>    timeoutSeconds: Option[Long],
+</span>184 <span style=''>    max: Option[Long],
+</span>185 <span style=''>    extension: List[(String, Option[String])],
+</span>186 <span style=''>) {
+</span>187 <span style=''>  def toTimeoutDuration: Option[FiniteDuration] =
+</span>188 <span style=''>    </span><span style='background: #F0ADAD'>timeoutSeconds.map(FiniteDuration(_, TimeUnit.SECONDS))</span><span style=''>
+</span>189 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          20467
+        </td>
+        <td>
+          1877
+          -
+          1895
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.nonEmpty
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          extension.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          13894
+        </td>
+        <td>
+          1860
+          -
+          1873
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.isDefined
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          max.isDefined
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          16133
+        </td>
+        <td>
+          1832
+          -
+          1895
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          timeoutSeconds.isDefined.||(max.isDefined).||(extension.nonEmpty)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          12992
+        </td>
+        <td>
+          1897
+          -
+          2454
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val reservedTokens: List[String] = scala.`package`.List.apply[String](&quot;token&quot;, &quot;max&quot;);
+  if (extension.exists(((p: (String, Option[String])) =&gt; reservedTokens.contains[String](p._1))))
+    ParseResult.fail(&quot;Invalid Keep-Alive header&quot;, (&quot;Reserved token of list &quot;.+(reservedTokens).+(&quot; was found in the extensions.&quot;): String))
+  else
+    {
+      val validatedTimeoutSeconds: org.http4s.ParseResult[Option[Long]] = cats.implicits.toTraverseOps[Option, Long](timeoutSeconds)(cats.implicits.catsStdInstancesForOption).traverse[org.http4s.ParseResult, Long](((t: Long) =&gt; Keep-Alive.this.nonNegativeLong(t, &quot;timeout&quot;)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure]);
+      val validatedMax: org.http4s.ParseResult[Option[Long]] = cats.implicits.toTraverseOps[Option, Long](max)(cats.implicits.catsStdInstancesForOption).traverse[org.http4s.ParseResult, Long](((m: Long) =&gt; Keep-Alive.this.nonNegativeLong(m, &quot;max&quot;)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure]);
+      cats.implicits.catsSyntaxTuple2Semigroupal[org.http4s.ParseResult, Option[Long], Option[Long]](scala.Tuple2.apply[org.http4s.ParseResult[Option[Long]], org.http4s.ParseResult[Option[Long]]](validatedTimeoutSeconds, validatedMax)).mapN[org.http4s.headers.Keep-Alive](((t: Option[Long], m: Option[Long]) =&gt; Keep-Alive.this.impl(t, m, extension)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure], cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure])
+    }
+}
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          23187
+        </td>
+        <td>
+          1926
+          -
+          1946
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[String](&quot;token&quot;, &quot;max&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          13089
+        </td>
+        <td>
+          1957
+          -
+          2009
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.exists
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          extension.exists(((p: (String, Option[String])) =&gt; reservedTokens.contains[String](p._1)))
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          17108
+        </td>
+        <td>
+          1979
+          -
+          2008
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.contains
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          reservedTokens.contains[String](p._1)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          19195
+        </td>
+        <td>
+          2003
+          -
+          2007
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          p._1
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          22387
+        </td>
+        <td>
+          2021
+          -
+          2169
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseResult.fail(&quot;Invalid Keep-Alive header&quot;, (&quot;Reserved token of list &quot;.+(reservedTokens).+(&quot; was found in the extensions.&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          15879
+        </td>
+        <td>
+          2021
+          -
+          2169
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseResult.fail(&quot;Invalid Keep-Alive header&quot;, (&quot;Reserved token of list &quot;.+(reservedTokens).+(&quot; was found in the extensions.&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          19365
+        </td>
+        <td>
+          2049
+          -
+          2076
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;Invalid Keep-Alive header&quot;
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          17416
+        </td>
+        <td>
+          2183
+          -
+          2448
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val validatedTimeoutSeconds: org.http4s.ParseResult[Option[Long]] = cats.implicits.toTraverseOps[Option, Long](timeoutSeconds)(cats.implicits.catsStdInstancesForOption).traverse[org.http4s.ParseResult, Long](((t: Long) =&gt; Keep-Alive.this.nonNegativeLong(t, &quot;timeout&quot;)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure]);
+  val validatedMax: org.http4s.ParseResult[Option[Long]] = cats.implicits.toTraverseOps[Option, Long](max)(cats.implicits.catsStdInstancesForOption).traverse[org.http4s.ParseResult, Long](((m: Long) =&gt; Keep-Alive.this.nonNegativeLong(m, &quot;max&quot;)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure]);
+  cats.implicits.catsSyntaxTuple2Semigroupal[org.http4s.ParseResult, Option[Long], Option[Long]](scala.Tuple2.apply[org.http4s.ParseResult[Option[Long]], org.http4s.ParseResult[Option[Long]]](validatedTimeoutSeconds, validatedMax)).mapN[org.http4s.headers.Keep-Alive](((t: Option[Long], m: Option[Long]) =&gt; Keep-Alive.this.impl(t, m, extension)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure], cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure])
+}
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          20084
+        </td>
+        <td>
+          2223
+          -
+          2223
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.instances.OptionInstances.catsStdInstancesForOption
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsStdInstancesForOption
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          16353
+        </td>
+        <td>
+          2252
+          -
+          2281
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.nonNegativeLong
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.nonNegativeLong(t, &quot;timeout&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          22968
+        </td>
+        <td>
+          2246
+          -
+          2246
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.instances.EitherInstances.catsStdInstancesForEither
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          19083
+        </td>
+        <td>
+          2223
+          -
+          2282
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.Traverse.Ops.traverse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toTraverseOps[Option, Long](timeoutSeconds)(cats.implicits.catsStdInstancesForOption).traverse[org.http4s.ParseResult, Long](((t: Long) =&gt; Keep-Alive.this.nonNegativeLong(t, &quot;timeout&quot;)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure])
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          13110
+        </td>
+        <td>
+          2328
+          -
+          2353
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.nonNegativeLong
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.nonNegativeLong(m, &quot;max&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          17126
+        </td>
+        <td>
+          2310
+          -
+          2310
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.instances.OptionInstances.catsStdInstancesForOption
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsStdInstancesForOption
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          15893
+        </td>
+        <td>
+          2310
+          -
+          2354
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.Traverse.Ops.traverse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toTraverseOps[Option, Long](max)(cats.implicits.catsStdInstancesForOption).traverse[org.http4s.ParseResult, Long](((m: Long) =&gt; Keep-Alive.this.nonNegativeLong(m, &quot;max&quot;)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure])
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          19604
+        </td>
+        <td>
+          2322
+          -
+          2322
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.instances.EitherInstances.catsStdInstancesForEither
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          22255
+        </td>
+        <td>
+          2363
+          -
+          2402
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[org.http4s.ParseResult[Option[Long]], org.http4s.ParseResult[Option[Long]]](validatedTimeoutSeconds, validatedMax)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          16369
+        </td>
+        <td>
+          2407
+          -
+          2407
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.instances.EitherInstances.catsStdInstancesForEither
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          20095
+        </td>
+        <td>
+          2418
+          -
+          2439
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.impl
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.impl(t, m, extension)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          23165
+        </td>
+        <td>
+          2407
+          -
+          2407
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.instances.EitherInstances.catsStdInstancesForEither
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          19101
+        </td>
+        <td>
+          2363
+          -
+          2440
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.Tuple2SemigroupalOps.mapN
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxTuple2Semigroupal[org.http4s.ParseResult, Option[Long], Option[Long]](scala.Tuple2.apply[org.http4s.ParseResult[Option[Long]], org.http4s.ParseResult[Option[Long]]](validatedTimeoutSeconds, validatedMax)).mapN[org.http4s.headers.Keep-Alive](((t: Option[Long], m: Option[Long]) =&gt; Keep-Alive.this.impl(t, m, extension)))(cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure], cats.implicits.catsStdInstancesForEither[org.http4s.ParseFailure])
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          19626
+        </td>
+        <td>
+          2468
+          -
+          2552
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid Keep-Alive header&quot;, &quot;All fields of Keep-Alive were empty&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          16097
+        </td>
+        <td>
+          2468
+          -
+          2552
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid Keep-Alive header&quot;, &quot;All fields of Keep-Alive were empty&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          20111
+        </td>
+        <td>
+          2765
+          -
+          2773
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[org.http4s.headers.Keep-Alive](x)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          16246
+        </td>
+        <td>
+          2713
+          -
+          2774
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.apply(timeoutSeconds, max, extension).fold[org.http4s.headers.Keep-Alive](((x$1: org.http4s.ParseFailure) =&gt; throw x$1), ((x: org.http4s.headers.Keep-Alive) =&gt; scala.Predef.identity[org.http4s.headers.Keep-Alive](x)))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          22274
+        </td>
+        <td>
+          2756
+          -
+          2763
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          throw x$1
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          23182
+        </td>
+        <td>
+          2832
+          -
+          2894
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.headers.Keep-Alive](Keep-Alive.this.parser, &quot;Invalid Keep-Alive header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          13008
+        </td>
+        <td>
+          2991
+          -
+          3013
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[Long](l)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          14950
+        </td>
+        <td>
+          2991
+          -
+          3013
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[Long](l)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          19325
+        </td>
+        <td>
+          2983
+          -
+          2989
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          l.&gt;=(0)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          16118
+        </td>
+        <td>
+          3029
+          -
+          3173
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseResult.fail((&quot;Invalid long for &quot;.+(fieldName): String), (&quot;&quot;.+(fieldName).+(&quot; which was &quot;).+(l).+(&quot; must be greater than or equal to 0 seconds&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          19882
+        </td>
+        <td>
+          3029
+          -
+          3173
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseResult.fail((&quot;Invalid long for &quot;.+(fieldName): String), (&quot;&quot;.+(fieldName).+(&quot; which was &quot;).+(l).+(&quot; must be greater than or equal to 0 seconds&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          16262
+        </td>
+        <td>
+          3235
+          -
+          3249
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](scala.Predef.augmentString(s).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          22374
+        </td>
+        <td>
+          3240
+          -
+          3248
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toLong
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(s).toLong
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          20004
+        </td>
+        <td>
+          3235
+          -
+          3249
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](scala.Predef.augmentString(s).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          23075
+        </td>
+        <td>
+          3301
+          -
+          3305
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          15996
+        </td>
+        <td>
+          3515
+          -
+          3599
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;timeout=&quot;).*&gt;[org.http4s.headers.Keep-Alive.Timeout](cats.parse.Numbers.digits.mapFilter[org.http4s.headers.Keep-Alive.Timeout](((s: String) =&gt; Keep-Alive.this.safeToLong(s).map[org.http4s.headers.Keep-Alive.Timeout](((timeoutSeconds: Long) =&gt; Keep-Alive.this.Timeout.apply(timeoutSeconds))))))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          15308
+        </td>
+        <td>
+          3584
+          -
+          3597
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.Timeout.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.Timeout.apply(timeoutSeconds)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          19895
+        </td>
+        <td>
+          3544
+          -
+          3599
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Numbers.digits.mapFilter[org.http4s.headers.Keep-Alive.Timeout](((s: String) =&gt; Keep-Alive.this.safeToLong(s).map[org.http4s.headers.Keep-Alive.Timeout](((timeoutSeconds: Long) =&gt; Keep-Alive.this.Timeout.apply(timeoutSeconds)))))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          12905
+        </td>
+        <td>
+          3566
+          -
+          3598
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.safeToLong(s).map[org.http4s.headers.Keep-Alive.Timeout](((timeoutSeconds: Long) =&gt; Keep-Alive.this.Timeout.apply(timeoutSeconds)))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          19343
+        </td>
+        <td>
+          3529
+          -
+          3539
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;timeout=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          22249
+        </td>
+        <td>
+          3673
+          -
+          3679
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;max=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          16548
+        </td>
+        <td>
+          3706
+          -
+          3734
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.safeToLong(s).map[org.http4s.headers.Keep-Alive.Max](((max: Long) =&gt; Keep-Alive.this.Max.apply(max)))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          19093
+        </td>
+        <td>
+          3659
+          -
+          3735
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;max=&quot;).*&gt;[org.http4s.headers.Keep-Alive.Max](cats.parse.Numbers.digits.mapFilter[org.http4s.headers.Keep-Alive.Max](((s: String) =&gt; Keep-Alive.this.safeToLong(s).map[org.http4s.headers.Keep-Alive.Max](((max: Long) =&gt; Keep-Alive.this.Max.apply(max))))))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          23085
+        </td>
+        <td>
+          3684
+          -
+          3735
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Numbers.digits.mapFilter[org.http4s.headers.Keep-Alive.Max](((s: String) =&gt; Keep-Alive.this.safeToLong(s).map[org.http4s.headers.Keep-Alive.Max](((max: Long) =&gt; Keep-Alive.this.Max.apply(max)))))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          18557
+        </td>
+        <td>
+          3724
+          -
+          3733
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.Max.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.Max.apply(max)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          13272
+        </td>
+        <td>
+          3904
+          -
+          3916
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          16011
+        </td>
+        <td>
+          3870
+          -
+          3920
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.?
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('=').*&gt;[String](org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)).?
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          15173
+        </td>
+        <td>
+          3883
+          -
+          3886
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          22266
+        </td>
+        <td>
+          3926
+          -
+          3941
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.Extension.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.Extension.apply(ext)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          18426
+        </td>
+        <td>
+          3861
+          -
+          3942
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.~[Option[String]](cats.parse.Parser.char('=').*&gt;[String](org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)).?).map[org.http4s.headers.Keep-Alive.Extension](((ext: (String, Option[String])) =&gt; Keep-Alive.this.Extension.apply(ext)))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          19789
+        </td>
+        <td>
+          3891
+          -
+          3917
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          16242
+        </td>
+        <td>
+          4144
+          -
+          4190
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          timeout.orElse[Product with org.http4s.headers.Keep-Alive.Parameter with java.io.Serializable](max).orElse[Product with org.http4s.headers.Keep-Alive.Parameter with java.io.Serializable](keepAliveExtension)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          19209
+        </td>
+        <td>
+          4196
+          -
+          4733
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.headerRep1[org.http4s.headers.Keep-Alive.Parameter](keepAliveInfo).map[org.http4s.headers.Keep-Alive](((nel: cats.data.NonEmptyList[org.http4s.headers.Keep-Alive.Parameter]) =&gt; {
+  var timeoutSeconds: Option[Long] = scala.None;
+  var max: Option[Long] = scala.None;
+  val extension: scala.collection.mutable.ListBuffer[(String, Option[String])] = scala.collection.mutable.ListBuffer.empty[(String, Option[String])];
+  nel.foldLeft[Unit](())(((x$2: Unit, ka: org.http4s.headers.Keep-Alive.Parameter) =&gt; ka match {
+    case (timeoutSeconds: Long): org.http4s.headers.Keep-Alive.Timeout((n @ _)) =&gt; if (timeoutSeconds.isEmpty)
+      timeoutSeconds = scala.Some.apply[Long](n)
+    else
+      ()
+    case (max: Long): org.http4s.headers.Keep-Alive.Max((n @ _)) =&gt; if (max.isEmpty)
+      max = scala.Some.apply[Long](n)
+    else
+      ()
+    case (ext: (String, Option[String])): org.http4s.headers.Keep-Alive.Extension((p @ _)) =&gt; {
+      extension.append(p);
+      ()
+    }
+  }));
+  Keep-Alive.this.unsafeApply(timeoutSeconds, max, extension.toList)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          23098
+        </td>
+        <td>
+          4276
+          -
+          4280
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          18989
+        </td>
+        <td>
+          4311
+          -
+          4315
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          15194
+        </td>
+        <td>
+          4376
+          -
+          4392
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.mutable.ListBuffer.empty
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.mutable.ListBuffer.empty[(String, Option[String])]
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          13533
+        </td>
+        <td>
+          4412
+          -
+          4414
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          18721
+        </td>
+        <td>
+          4399
+          -
+          4670
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.foldLeft
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          nel.foldLeft[Unit](())(((x$2: Unit, ka: org.http4s.headers.Keep-Alive.Parameter) =&gt; ka match {
+  case (timeoutSeconds: Long): org.http4s.headers.Keep-Alive.Timeout((n @ _)) =&gt; if (timeoutSeconds.isEmpty)
+    timeoutSeconds = scala.Some.apply[Long](n)
+  else
+    ()
+  case (max: Long): org.http4s.headers.Keep-Alive.Max((n @ _)) =&gt; if (max.isEmpty)
+    max = scala.Some.apply[Long](n)
+  else
+    ()
+  case (ext: (String, Option[String])): org.http4s.headers.Keep-Alive.Extension((p @ _)) =&gt; {
+    extension.append(p);
+    ()
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          18448
+        </td>
+        <td>
+          4535
+          -
+          4537
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          22153
+        </td>
+        <td>
+          4505
+          -
+          4529
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          timeoutSeconds = scala.Some.apply[Long](n)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          15800
+        </td>
+        <td>
+          4522
+          -
+          4529
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](n)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          16132
+        </td>
+        <td>
+          4535
+          -
+          4537
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          19487
+        </td>
+        <td>
+          4481
+          -
+          4503
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.isEmpty
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          timeoutSeconds.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          15069
+        </td>
+        <td>
+          4580
+          -
+          4593
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          max = scala.Some.apply[Long](n)
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          22699
+        </td>
+        <td>
+          4567
+          -
+          4578
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.isEmpty
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          max.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          21380
+        </td>
+        <td>
+          4599
+          -
+          4601
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          19508
+        </td>
+        <td>
+          4599
+          -
+          4601
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          19002
+        </td>
+        <td>
+          4586
+          -
+          4593
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](n)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          22171
+        </td>
+        <td>
+          4649
+          -
+          4649
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          15992
+        </td>
+        <td>
+          4633
+          -
+          4652
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Buffer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          extension.append(p)
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          22716
+        </td>
+        <td>
+          4677
+          -
+          4727
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.unsafeApply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.unsafeApply(timeoutSeconds, max, extension.toList)
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          16146
+        </td>
+        <td>
+          4710
+          -
+          4726
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.mutable.ListBuffer.toList
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          extension.toList
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          15087
+        </td>
+        <td>
+          4879
+          -
+          4882
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.$anon.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          15078
+        </td>
+        <td>
+          5004
+          -
+          5946
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Header.createRendered[org.http4s.headers.Keep-Alive, org.http4s.Header.Recurring, org.http4s.util.Renderable](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Keep-Alive&quot;)).ci(), ((v: org.http4s.headers.Keep-Alive) =&gt; {
+  final class $anon extends AnyRef with org.http4s.util.Renderable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.util.Renderable&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def render(writer: org.http4s.util.Writer): writer.type = v match {
+      case (timeoutSeconds: Option[Long], max: Option[Long], extension: List[(String, Option[String])]): org.http4s.headers.Keep-Alive((t @ _), (m @ _), (e @ _)) =&gt; {
+        var hasWritten: Boolean = false;
+        t.foreach[Unit](((l: Long) =&gt; {
+          writer.&lt;&lt;(&quot;timeout=&quot;).&lt;&lt;(l);
+          hasWritten = true
+        }));
+        m.foreach[org.http4s.util.Writer](((l: Long) =&gt; {
+          if (hasWritten)
+            writer.&lt;&lt;(&quot;, &quot;)
+          else
+            hasWritten = true;
+          writer.&lt;&lt;(&quot;max=&quot;).&lt;&lt;(l)
+        }));
+        e.foreach[Unit](((p: (String, Option[String])) =&gt; {
+          if (hasWritten)
+            writer.&lt;&lt;(&quot;, &quot;)
+          else
+            hasWritten = true;
+          writer.&lt;&lt;(p._1);
+          p._2.foreach[org.http4s.util.Writer](((qts: String) =&gt; {
+            writer.&lt;&lt;(&quot;=&quot;);
+            writer.quote(qts, writer.quote$default$2, writer.quote$default$3)
+          }))
+        }));
+        writer
+      }
+    }
+  };
+  new $anon()
+}), ((s: String) =&gt; Keep-Alive.this.parse(s)))(util.this.Renderable.renderableInst[org.http4s.util.Renderable])
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          19130
+        </td>
+        <td>
+          5025
+          -
+          5025
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.util.Renderable]
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          21915
+        </td>
+        <td>
+          5031
+          -
+          5045
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Keep-Alive&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          14602
+        </td>
+        <td>
+          5062
+          -
+          5065
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.$anon.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          19378
+        </td>
+        <td>
+          5222
+          -
+          5227
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          18090
+        </td>
+        <td>
+          5242
+          -
+          5350
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          t.foreach[Unit](((l: Long) =&gt; {
+  writer.&lt;&lt;(&quot;timeout=&quot;).&lt;&lt;(l);
+  hasWritten = true
+}))
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          16004
+        </td>
+        <td>
+          5275
+          -
+          5300
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;timeout=&quot;).&lt;&lt;(l)
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          22401
+        </td>
+        <td>
+          5330
+          -
+          5334
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          19399
+        </td>
+        <td>
+          5365
+          -
+          5505
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          m.foreach[org.http4s.util.Writer](((l: Long) =&gt; {
+  if (hasWritten)
+    writer.&lt;&lt;(&quot;, &quot;)
+  else
+    hasWritten = true;
+  writer.&lt;&lt;(&quot;max=&quot;).&lt;&lt;(l)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          15045
+        </td>
+        <td>
+          5434
+          -
+          5451
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          hasWritten = true
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          19228
+        </td>
+        <td>
+          5447
+          -
+          5451
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          22981
+        </td>
+        <td>
+          5414
+          -
+          5428
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;, &quot;)
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          16165
+        </td>
+        <td>
+          5414
+          -
+          5428
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;, &quot;)
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          21288
+        </td>
+        <td>
+          5468
+          -
+          5489
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;max=&quot;).&lt;&lt;(l)
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          18306
+        </td>
+        <td>
+          5521
+          -
+          5889
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.foreach
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          e.foreach[Unit](((p: (String, Option[String])) =&gt; {
+  if (hasWritten)
+    writer.&lt;&lt;(&quot;, &quot;)
+  else
+    hasWritten = true;
+  writer.&lt;&lt;(p._1);
+  p._2.foreach[org.http4s.util.Writer](((qts: String) =&gt; {
+    writer.&lt;&lt;(&quot;=&quot;);
+    writer.quote(qts, writer.quote$default$2, writer.quote$default$3)
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          18436
+        </td>
+        <td>
+          5603
+          -
+          5607
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          22420
+        </td>
+        <td>
+          5570
+          -
+          5584
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;, &quot;)
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          14587
+        </td>
+        <td>
+          5590
+          -
+          5607
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          hasWritten = true
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          15905
+        </td>
+        <td>
+          5570
+          -
+          5584
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;, &quot;)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          19115
+        </td>
+        <td>
+          5624
+          -
+          5638
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(p._1)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          22998
+        </td>
+        <td>
+          5634
+          -
+          5638
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          p._1
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          22054
+        </td>
+        <td>
+          5655
+          -
+          5802
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          p._2.foreach[org.http4s.util.Writer](((qts: String) =&gt; {
+  writer.&lt;&lt;(&quot;=&quot;);
+  writer.quote(qts, writer.quote$default$2, writer.quote$default$3)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          15062
+        </td>
+        <td>
+          5695
+          -
+          5708
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;=&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          15920
+        </td>
+        <td>
+          5727
+          -
+          5784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.quote
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.quote(qts, writer.quote$default$2, writer.quote$default$3)
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          21665
+        </td>
+        <td>
+          5734
+          -
+          5734
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Writer.quote$default$2
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.quote$default$2
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          19989
+        </td>
+        <td>
+          5734
+          -
+          5734
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Writer.quote$default$3
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.quote$default$3
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          22561
+        </td>
+        <td>
+          5936
+          -
+          5941
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.parse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Keep-Alive.this.parse(s)
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          19092
+        </td>
+        <td>
+          6014
+          -
+          6017
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headers.keepalivesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          22579
+        </td>
+        <td>
+          6116
+          -
+          6245
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Keep-Alive.this.impl(x.timeoutSeconds.orElse[Long](y.timeoutSeconds), x.max.orElse[Long](y.max), x.extension.++[(String, Option[String])](y.extension))
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          21531
+        </td>
+        <td>
+          6154
+          -
+          6170
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.timeoutSeconds
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          y.timeoutSeconds
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          17549
+        </td>
+        <td>
+          6130
+          -
+          6171
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x.timeoutSeconds.orElse[Long](y.timeoutSeconds)
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          22070
+        </td>
+        <td>
+          6181
+          -
+          6200
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x.max.orElse[Long](y.max)
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          15492
+        </td>
+        <td>
+          6194
+          -
+          6199
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.max
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          y.max
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          14836
+        </td>
+        <td>
+          6210
+          -
+          6236
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x.extension.++[(String, Option[String])](y.extension)
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          18324
+        </td>
+        <td>
+          6225
+          -
+          6236
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Keep-Alive.extension
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          y.extension
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          21552
+        </td>
+        <td>
+          6466
+          -
+          6521
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Keep-Alive.this.timeoutSeconds.map[scala.concurrent.duration.FiniteDuration](((x$3: Long) =&gt; scala.concurrent.duration.FiniteDuration.apply(x$3, SECONDS)))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          14978
+        </td>
+        <td>
+          6485
+          -
+          6520
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.concurrent.duration.FiniteDuration.apply(x$3, SECONDS)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

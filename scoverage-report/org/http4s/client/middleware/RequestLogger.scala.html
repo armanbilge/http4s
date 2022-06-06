@@ -1,0 +1,376 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/middleware/RequestLogger.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package client
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.effect.Ref
+</span>22 <span style=''>import cats.effect._
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import fs2._
+</span>25 <span style=''>import org.http4s.internal.{Logger =&gt; InternalLogger}
+</span>26 <span style=''>import org.log4s.getLogger
+</span>27 <span style=''>import org.typelevel.ci.CIString
+</span>28 <span style=''>
+</span>29 <span style=''>/** Simple Middleware for Logging Requests As They Are Processed
+</span>30 <span style=''>  */
+</span>31 <span style=''>object RequestLogger {
+</span>32 <span style=''>  private[this] val logger = getLogger
+</span>33 <span style=''>
+</span>34 <span style=''>  private def defaultLogAction[F[_]: Sync](s: String): F[Unit] = </span><span style='background: #AEF1AE'>Sync[F].delay(logger.info(s))</span><span style=''>
+</span>35 <span style=''>
+</span>36 <span style=''>  def apply[F[_]: Async](
+</span>37 <span style=''>      logHeaders: Boolean,
+</span>38 <span style=''>      logBody: Boolean,
+</span>39 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>40 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>41 <span style=''>  )(client: Client[F]): Client[F] =
+</span>42 <span style=''>    </span><span style='background: #AEF1AE'>impl(client, logBody) { request =&gt;
+</span>43 <span style=''></span><span style='background: #AEF1AE'>      Logger.logMessage[F, Request[F]](request)(
+</span>44 <span style=''></span><span style='background: #AEF1AE'>        logHeaders,
+</span>45 <span style=''></span><span style='background: #AEF1AE'>        logBody,
+</span>46 <span style=''></span><span style='background: #AEF1AE'>        redactHeadersWhen,
+</span>47 <span style=''></span><span style='background: #AEF1AE'>      )(logAction.getOrElse(defaultLogAction[F]))
+</span>48 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>49 <span style=''>
+</span>50 <span style=''>  def logBodyText[F[_]: Async](
+</span>51 <span style=''>      logHeaders: Boolean,
+</span>52 <span style=''>      logBody: Stream[F, Byte] =&gt; Option[F[String]],
+</span>53 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>54 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>55 <span style=''>  )(client: Client[F]): Client[F] =
+</span>56 <span style=''>    </span><span style='background: #F0ADAD'>impl(client, logBody = true) { request =&gt;
+</span>57 <span style=''></span><span style='background: #F0ADAD'>      InternalLogger.logMessageWithBodyText[F, Request[F]](request)(
+</span>58 <span style=''></span><span style='background: #F0ADAD'>        logHeaders,
+</span>59 <span style=''></span><span style='background: #F0ADAD'>        logBody,
+</span>60 <span style=''></span><span style='background: #F0ADAD'>        redactHeadersWhen,
+</span>61 <span style=''></span><span style='background: #F0ADAD'>      )(logAction.getOrElse(defaultLogAction[F]))
+</span>62 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>  def customized[F[_]: Async](
+</span>65 <span style=''>      client: Client[F],
+</span>66 <span style=''>      logBody: Boolean = true,
+</span>67 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>68 <span style=''>  )(requestToText: Request[F] =&gt; F[String]): Client[F] =
+</span>69 <span style=''>    </span><span style='background: #F0ADAD'>impl(client, logBody) { request =&gt;
+</span>70 <span style=''></span><span style='background: #F0ADAD'>      val log = logAction.getOrElse(defaultLogAction[F] _)
+</span>71 <span style=''></span><span style='background: #F0ADAD'>      requestToText(request).flatMap(log)
+</span>72 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>  private def impl[F[_]](client: Client[F], logBody: Boolean)(
+</span>75 <span style=''>      logMessage: Request[F] =&gt; F[Unit]
+</span>76 <span style=''>  )(implicit F: Async[F]): Client[F] =
+</span>77 <span style=''>    </span><span style='background: #AEF1AE'>Client { req =&gt;
+</span>78 <span style=''></span><span style='background: #AEF1AE'>      if (!logBody)
+</span>79 <span style=''></span><span style='background: #AEF1AE'>        Resource.eval(logMessage(req)) *&gt; client.run(req)
+</span>80 <span style=''></span><span style='background: #AEF1AE'>      else
+</span>81 <span style=''></span><span style='background: #AEF1AE'>        Resource.suspend {
+</span>82 <span style=''></span><span style='background: #AEF1AE'>          Ref[F].of(Vector.empty[Chunk[Byte]]).map { vec =&gt;
+</span>83 <span style=''></span><span style='background: #AEF1AE'>            val newBody = Stream.eval(vec.get).flatMap(v =&gt; Stream.emits(v)).unchunks
+</span>84 <span style=''></span><span style='background: #AEF1AE'>
+</span>85 <span style=''></span><span style='background: #AEF1AE'>            val logAtEnd: F[Unit] =
+</span>86 <span style=''></span><span style='background: #AEF1AE'>              logMessage(req.withBodyStream(newBody)).handleErrorWith { case t =&gt;
+</span>87 <span style=''></span><span style='background: #AEF1AE'>                F.delay(logger.error(t)(&quot;Error logging request body&quot;))
+</span>88 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>89 <span style=''></span><span style='background: #AEF1AE'>
+</span>90 <span style=''></span><span style='background: #AEF1AE'>            // Cannot Be Done Asynchronously - Otherwise All Chunks May Not Be Appended Previous to Finalization
+</span>91 <span style=''></span><span style='background: #AEF1AE'>            val logPipe: Pipe[F, Byte, Byte] =
+</span>92 <span style=''></span><span style='background: #AEF1AE'>              _.observe(_.chunks.flatMap(s =&gt; Stream.exec(vec.update(_ :+ s))))
+</span>93 <span style=''></span><span style='background: #AEF1AE'>                .onFinalizeWeak(logAtEnd)
+</span>94 <span style=''></span><span style='background: #AEF1AE'>
+</span>95 <span style=''></span><span style='background: #AEF1AE'>            client.run(req.pipeBodyThrough(logPipe))
+</span>96 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>97 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>98 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>99 <span style=''>
+</span>100 <span style=''>  val defaultRequestColor: String = </span><span style='background: #AEF1AE'>Console.BLUE</span><span style=''>
+</span>101 <span style=''>
+</span>102 <span style=''>  def colored[F[_]](
+</span>103 <span style=''>      logHeaders: Boolean,
+</span>104 <span style=''>      logBody: Boolean,
+</span>105 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>106 <span style=''>      color: String = defaultRequestColor,
+</span>107 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>108 <span style=''>  )(client: Client[F])(implicit F: Async[F]): Client[F] =
+</span>109 <span style=''>    </span><span style='background: #F0ADAD'>customized(client, logBody, logAction) { request =&gt;
+</span>110 <span style=''></span><span style='background: #F0ADAD'>      import Console._
+</span>111 <span style=''></span><span style='background: #F0ADAD'>      val methodColor =
+</span>112 <span style=''></span><span style='background: #F0ADAD'>        if (request.method.isSafe) color
+</span>113 <span style=''></span><span style='background: #F0ADAD'>        else YELLOW
+</span>114 <span style=''></span><span style='background: #F0ADAD'>
+</span>115 <span style=''></span><span style='background: #F0ADAD'>      val prelude =
+</span>116 <span style=''></span><span style='background: #F0ADAD'>        s&quot;${request.httpVersion} $methodColor${request.method}$RESET$color $BOLD${request.uri}$RESET$color&quot;
+</span>117 <span style=''></span><span style='background: #F0ADAD'>
+</span>118 <span style=''></span><span style='background: #F0ADAD'>      val headers: String =
+</span>119 <span style=''></span><span style='background: #F0ADAD'>        InternalLogger.defaultLogHeaders[F, Request[F]](request)(logHeaders, redactHeadersWhen)
+</span>120 <span style=''></span><span style='background: #F0ADAD'>
+</span>121 <span style=''></span><span style='background: #F0ADAD'>      val bodyText: F[String] =
+</span>122 <span style=''></span><span style='background: #F0ADAD'>        InternalLogger.defaultLogBody[F, Request[F]](request)(logBody) match {
+</span>123 <span style=''></span><span style='background: #F0ADAD'>          case Some(textF) =&gt; textF.map(text =&gt; s&quot;&quot;&quot;body=&quot;$text&quot;&quot;&quot;&quot;)
+</span>124 <span style=''></span><span style='background: #F0ADAD'>          case None =&gt; Sync[F].pure(&quot;&quot;)
+</span>125 <span style=''></span><span style='background: #F0ADAD'>        }
+</span>126 <span style=''></span><span style='background: #F0ADAD'>
+</span>127 <span style=''></span><span style='background: #F0ADAD'>      def spaced(x: String): String = if (x.isEmpty) x else s&quot; $x&quot;
+</span>128 <span style=''></span><span style='background: #F0ADAD'>
+</span>129 <span style=''></span><span style='background: #F0ADAD'>      bodyText
+</span>130 <span style=''></span><span style='background: #F0ADAD'>        .map(body =&gt; s&quot;$color$prelude${spaced(headers)}${spaced(body)}$RESET&quot;)
+</span>131 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>132 <span style=''>
+</span>133 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          11209
+        </td>
+        <td>
+          1044
+          -
+          1073
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Sync.apply[F](evidence$1).delay[Unit](if (RequestLogger.this.logger.logger.isInfoEnabled())
+  RequestLogger.this.logger.logger.info(s)
+else
+  ())
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          11874
+        </td>
+        <td>
+          1325
+          -
+          1528
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.RequestLogger.impl
+        </td>
+        <td>
+          org.http4s.client.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          RequestLogger.this.impl[[_]F[_]](client, logBody)(((request: org.http4s.Request[[_]F[_]]) =&gt; Logger.logMessage[F, org.http4s.Request[F]](request)(logHeaders, logBody, redactHeadersWhen)(logAction.getOrElse[String =&gt; F[Unit]](((s: String) =&gt; RequestLogger.this.defaultLogAction[F](s)(evidence$2))))(evidence$2)))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          11490
+        </td>
+        <td>
+          1815
+          -
+          2045
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.RequestLogger.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestLogger.this.impl[[_]F[_]](client, true)(((request: org.http4s.Request[[_]F[_]]) =&gt; org.http4s.internal.Logger.logMessageWithBodyText[F, org.http4s.Request[F]](request)(logHeaders, logBody, redactHeadersWhen)(logAction.getOrElse[String =&gt; F[Unit]](((s: String) =&gt; RequestLogger.this.defaultLogAction[F](s)(evidence$3))))(evidence$3)))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          11062
+        </td>
+        <td>
+          2246
+          -
+          2387
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.RequestLogger.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestLogger.this.impl[[_]F[_]](client, logBody)(((request: org.http4s.Request[[_]F[_]]) =&gt; {
+  val log: String =&gt; F[Unit] = logAction.getOrElse[String =&gt; F[Unit]](((s: String) =&gt; RequestLogger.this.defaultLogAction[F](s)(evidence$4)));
+  cats.syntax.`package`.all.toFlatMapOps[F, String](requestToText.apply(request))(evidence$4).flatMap[Unit](log)
+}))(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          12014
+        </td>
+        <td>
+          2535
+          -
+          3383
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Client.apply[[_]F[_]](((req: org.http4s.Request[[_]F[_]]) =&gt; if (logBody.unary_!)
+  cats.syntax.`package`.all.catsSyntaxApply[[+A]cats.effect.kernel.Resource[F,A], Unit](cats.effect.`package`.Resource.eval[F, Unit](logMessage.apply(req)))(kernel.this.Resource.catsEffectAsyncForResource[[_]F[_]](F)).*&gt;[org.http4s.Response[F]](client.run(req))
+else
+  cats.effect.`package`.Resource.suspend[F, org.http4s.Response[F]](cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]]))(F).map[cats.effect.Resource[F,org.http4s.Response[F]]](((vec: cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]) =&gt; {
+    val newBody: fs2.Stream[[x]F[x],Byte] = fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((v: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](v)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]);
+    val logAtEnd: F[Unit] = cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](logMessage.apply(req.withBodyStream(newBody)))(F).handleErrorWith(((x0$1: Throwable) =&gt; x0$1 match {
+      case (t @ _) =&gt; F.delay[Unit](RequestLogger.this.logger.logger.error(&quot;Error logging request body&quot;, t))
+    }))(F);
+    val logPipe: fs2.Pipe[F,Byte,Byte] = ((x$1: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$1).observe(((x$2: fs2.Stream[[_]F[_],Byte]) =&gt; x$2.chunks.flatMap[[x]F[x], fs2.INothing](((s: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$3: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$3.:+[fs2.Chunk[Byte]](s))))))(compat.this.NotGiven.default[Nothing])))(F).onFinalizeWeak[[x]F[x]](logAtEnd)(F));
+    client.run(req.pipeBodyThrough(logPipe))
+  })))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          11566
+        </td>
+        <td>
+          3421
+          -
+          3433
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;\u001B[34m&quot;
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          11093
+        </td>
+        <td>
+          3745
+          -
+          4558
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.RequestLogger.customized
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestLogger.this.customized[F](client, logBody, logAction)(((request: org.http4s.Request[F]) =&gt; {
+  import scala.Console._;
+  val methodColor: String = if (request.method.isSafe)
+    color
+  else
+    &quot;\u001B[33m&quot;;
+  val prelude: String = (&quot;&quot;.+(request.httpVersion).+(&quot; &quot;).+(methodColor).+(request.method).+(&quot;\u001B[0m&quot;).+(color).+(&quot; &quot;).+(&quot;\u001B[1m&quot;).+(request.uri).+(&quot;\u001B[0m&quot;).+(color): String);
+  val headers: String = org.http4s.internal.Logger.defaultLogHeaders[F, org.http4s.Request[F]](request)(logHeaders, redactHeadersWhen);
+  val bodyText: F[String] = org.http4s.internal.Logger.defaultLogBody[F, org.http4s.Request[F]](request)(logBody)(F) match {
+    case (value: F[String]): Some[F[String]]((textF @ _)) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](textF)(F).map[String](((text: String) =&gt; (&quot;body=\&quot;&quot;.+(text).+(&quot;\&quot;&quot;): String)))
+    case scala.None =&gt; cats.effect.`package`.Sync.apply[F](F).pure[String](&quot;&quot;)
+  };
+  def spaced(x: String): String = if (x.isEmpty())
+    x
+  else
+    (&quot; &quot;.+(x): String);
+  cats.syntax.`package`.all.toFunctorOps[F, String](bodyText)(F).map[String](((body: String) =&gt; (&quot;&quot;.+(color).+(prelude).+(spaced(headers)).+(spaced(body)).+(&quot;\u001B[0m&quot;): String)))
+}))(F)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

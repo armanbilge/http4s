@@ -1,0 +1,960 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/testkit/testroutes/GetRoutes.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package client.testkit.testroutes
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.effect._
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import fs2._
+</span>23 <span style=''>import org.http4s.Status._
+</span>24 <span style=''>
+</span>25 <span style=''>import scala.concurrent.duration._
+</span>26 <span style=''>
+</span>27 <span style=''>private[http4s] object GetRoutes {
+</span>28 <span style=''>  val SimplePath = </span><span style='background: #AEF1AE'>&quot;/simple&quot;</span><span style=''>
+</span>29 <span style=''>  val LargePath = </span><span style='background: #AEF1AE'>&quot;/large&quot;</span><span style=''>
+</span>30 <span style=''>  val ChunkedPath = </span><span style='background: #AEF1AE'>&quot;/chunked&quot;</span><span style=''>
+</span>31 <span style=''>  val DelayedPath = </span><span style='background: #AEF1AE'>&quot;/delayed&quot;</span><span style=''>
+</span>32 <span style=''>  val NoContentPath = </span><span style='background: #AEF1AE'>&quot;/no-content&quot;</span><span style=''>
+</span>33 <span style=''>  val NotFoundPath = </span><span style='background: #AEF1AE'>&quot;/not-found&quot;</span><span style=''>
+</span>34 <span style=''>  val EmptyNotFoundPath = </span><span style='background: #AEF1AE'>&quot;/empty-not-found&quot;</span><span style=''>
+</span>35 <span style=''>  val InternalServerErrorPath = </span><span style='background: #AEF1AE'>&quot;/internal-server-error&quot;</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  def getPaths(implicit F: Temporal[IO]): Map[String, IO[Response[IO]]] =
+</span>38 <span style=''>    </span><span style='background: #AEF1AE'>Map(
+</span>39 <span style=''></span><span style='background: #AEF1AE'>      SimplePath -&gt; Response[IO](Ok).withEntity(&quot;simple path&quot;).pure[IO],
+</span>40 <span style=''></span><span style='background: #AEF1AE'>      LargePath -&gt; Response[IO](Ok)
+</span>41 <span style=''></span><span style='background: #AEF1AE'>        .withEntity(&quot;a&quot; * 8 * 1024)
+</span>42 <span style=''></span><span style='background: #AEF1AE'>        .pure[IO], // must be at least as large as the buffers used by the client
+</span>43 <span style=''></span><span style='background: #AEF1AE'>      ChunkedPath -&gt; Response[IO](Ok)
+</span>44 <span style=''></span><span style='background: #AEF1AE'>        .withEntity(Stream.emits(&quot;chunk&quot;.toSeq.map(_.toString)).covary[IO])
+</span>45 <span style=''></span><span style='background: #AEF1AE'>        .pure[IO],
+</span>46 <span style=''></span><span style='background: #AEF1AE'>      DelayedPath -&gt;
+</span>47 <span style=''></span><span style='background: #AEF1AE'>        F.sleep(1.second) *&gt;
+</span>48 <span style=''></span><span style='background: #AEF1AE'>        Response[IO](Ok).withEntity(&quot;delayed path&quot;).pure[IO],
+</span>49 <span style=''></span><span style='background: #AEF1AE'>      NoContentPath -&gt; Response[IO](NoContent).pure[IO],
+</span>50 <span style=''></span><span style='background: #AEF1AE'>      NotFoundPath -&gt; Response[IO](NotFound).withEntity(&quot;not found&quot;).pure[IO],
+</span>51 <span style=''></span><span style='background: #AEF1AE'>      EmptyNotFoundPath -&gt; Response[IO](NotFound).pure[IO],
+</span>52 <span style=''></span><span style='background: #AEF1AE'>      InternalServerErrorPath -&gt; Response[IO](InternalServerError).pure[IO],
+</span>53 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>54 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          28
+        </td>
+        <td>
+          6247
+        </td>
+        <td>
+          826
+          -
+          835
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/simple&quot;
+        </td>
+      </tr><tr>
+        <td>
+          29
+        </td>
+        <td>
+          6090
+        </td>
+        <td>
+          854
+          -
+          862
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/large&quot;
+        </td>
+      </tr><tr>
+        <td>
+          30
+        </td>
+        <td>
+          5843
+        </td>
+        <td>
+          883
+          -
+          893
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/chunked&quot;
+        </td>
+      </tr><tr>
+        <td>
+          31
+        </td>
+        <td>
+          6291
+        </td>
+        <td>
+          914
+          -
+          924
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/delayed&quot;
+        </td>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          6018
+        </td>
+        <td>
+          947
+          -
+          960
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/no-content&quot;
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          5766
+        </td>
+        <td>
+          982
+          -
+          994
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/not-found&quot;
+        </td>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          6321
+        </td>
+        <td>
+          1021
+          -
+          1039
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/empty-not-found&quot;
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          6064
+        </td>
+        <td>
+          1072
+          -
+          1096
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/internal-server-error&quot;
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          5782
+        </td>
+        <td>
+          1176
+          -
+          1931
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapFactory.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Map.apply[String, cats.effect.IO[org.http4s.Response[cats.effect.IO]]](scala.Predef.ArrowAssoc[String](GetRoutes.this.SimplePath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;simple path&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F)), scala.Predef.ArrowAssoc[String](GetRoutes.this.LargePath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](scala.Predef.augmentString(scala.Predef.augmentString(&quot;a&quot;).*(8)).*(1024))(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F)), scala.Predef.ArrowAssoc[String](GetRoutes.this.ChunkedPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[fs2.Stream[cats.effect.IO,String]](fs2.this.Stream.PureOps[String](fs2.Stream.emits[[x]fs2.Pure[x], String](scala.Predef.wrapString(&quot;chunk&quot;).toSeq.map[String](((x$1: Char) =&gt; x$1.toString())))).covary[cats.effect.IO])(http4s.this.EntityEncoder.streamEncoder[[+A]cats.effect.IO[A], String](http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]])))).pure[cats.effect.IO](F)), scala.Predef.ArrowAssoc[String](GetRoutes.this.DelayedPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](F.sleep(scala.concurrent.duration.`package`.DurationInt(1).second).*&gt;[org.http4s.Response[cats.effect.IO]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;delayed path&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F))), scala.Predef.ArrowAssoc[String](GetRoutes.this.NoContentPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NoContent, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F)), scala.Predef.ArrowAssoc[String](GetRoutes.this.NotFoundPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NotFound, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;not found&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F)), scala.Predef.ArrowAssoc[String](GetRoutes.this.EmptyNotFoundPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NotFound, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F)), scala.Predef.ArrowAssoc[String](GetRoutes.this.InternalServerErrorPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.InternalServerError, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F)))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          6091
+        </td>
+        <td>
+          1187
+          -
+          1252
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](GetRoutes.this.SimplePath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;simple path&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          5789
+        </td>
+        <td>
+          1187
+          -
+          1197
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.testroutes.GetRoutes.SimplePath
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GetRoutes.this.SimplePath
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          6234
+        </td>
+        <td>
+          1201
+          -
+          1252
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;simple path&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          5846
+        </td>
+        <td>
+          1260
+          -
+          1269
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.testroutes.GetRoutes.LargePath
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GetRoutes.this.LargePath
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          6005
+        </td>
+        <td>
+          1260
+          -
+          1343
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](GetRoutes.this.LargePath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](scala.Predef.augmentString(scala.Predef.augmentString(&quot;a&quot;).*(8)).*(1024))(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F))
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          6257
+        </td>
+        <td>
+          1273
+          -
+          1343
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](scala.Predef.augmentString(scala.Predef.augmentString(&quot;a&quot;).*(8)).*(1024))(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          5723
+        </td>
+        <td>
+          1414
+          -
+          1425
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.testroutes.GetRoutes.ChunkedPath
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GetRoutes.this.ChunkedPath
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          6067
+        </td>
+        <td>
+          1414
+          -
+          1539
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](GetRoutes.this.ChunkedPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[fs2.Stream[cats.effect.IO,String]](fs2.this.Stream.PureOps[String](fs2.Stream.emits[[x]fs2.Pure[x], String](scala.Predef.wrapString(&quot;chunk&quot;).toSeq.map[String](((x$1: Char) =&gt; x$1.toString())))).covary[cats.effect.IO])(http4s.this.EntityEncoder.streamEncoder[[+A]cats.effect.IO[A], String](http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]])))).pure[cats.effect.IO](F))
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          6305
+        </td>
+        <td>
+          1429
+          -
+          1539
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[fs2.Stream[cats.effect.IO,String]](fs2.this.Stream.PureOps[String](fs2.Stream.emits[[x]fs2.Pure[x], String](scala.Predef.wrapString(&quot;chunk&quot;).toSeq.map[String](((x$1: Char) =&gt; x$1.toString())))).covary[cats.effect.IO])(http4s.this.EntityEncoder.streamEncoder[[+A]cats.effect.IO[A], String](http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]])))).pure[cats.effect.IO](F)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          5995
+        </td>
+        <td>
+          1547
+          -
+          1651
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](GetRoutes.this.DelayedPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](F.sleep(scala.concurrent.duration.`package`.DurationInt(1).second).*&gt;[org.http4s.Response[cats.effect.IO]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;delayed path&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F)))
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          5776
+        </td>
+        <td>
+          1547
+          -
+          1558
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.testroutes.GetRoutes.DelayedPath
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GetRoutes.this.DelayedPath
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          5962
+        </td>
+        <td>
+          1578
+          -
+          1586
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.DurationConversions.second
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.concurrent.duration.`package`.DurationInt(1).second
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          6259
+        </td>
+        <td>
+          1570
+          -
+          1651
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.IO.*&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.sleep(scala.concurrent.duration.`package`.DurationInt(1).second).*&gt;[org.http4s.Response[cats.effect.IO]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;delayed path&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          6217
+        </td>
+        <td>
+          1578
+          -
+          1579
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          1
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          5828
+        </td>
+        <td>
+          1599
+          -
+          1651
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.Ok, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;delayed path&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F)
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          6079
+        </td>
+        <td>
+          1659
+          -
+          1708
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](GetRoutes.this.NoContentPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NoContent, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F))
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          5762
+        </td>
+        <td>
+          1659
+          -
+          1672
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.testroutes.GetRoutes.NoContentPath
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GetRoutes.this.NoContentPath
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          6308
+        </td>
+        <td>
+          1676
+          -
+          1708
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NoContent, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          5777
+        </td>
+        <td>
+          1716
+          -
+          1728
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.testroutes.GetRoutes.NotFoundPath
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GetRoutes.this.NotFoundPath
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          6219
+        </td>
+        <td>
+          1732
+          -
+          1787
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NotFound, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;not found&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          5984
+        </td>
+        <td>
+          1716
+          -
+          1787
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](GetRoutes.this.NotFoundPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NotFound, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO]).withEntity[String](&quot;not found&quot;)(http4s.this.EntityEncoder.stringEncoder[[+A]cats.effect.IO[A]](http4s.this.EntityEncoder.stringEncoder$default$1[[+A]cats.effect.IO[A]]))).pure[cats.effect.IO](F))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          5831
+        </td>
+        <td>
+          1795
+          -
+          1812
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.testroutes.GetRoutes.EmptyNotFoundPath
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GetRoutes.this.EmptyNotFoundPath
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          5998
+        </td>
+        <td>
+          1795
+          -
+          1847
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](GetRoutes.this.EmptyNotFoundPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NotFound, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          6296
+        </td>
+        <td>
+          1816
+          -
+          1847
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.NotFound, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          5765
+        </td>
+        <td>
+          1855
+          -
+          1878
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.testroutes.GetRoutes.InternalServerErrorPath
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          GetRoutes.this.InternalServerErrorPath
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          6033
+        </td>
+        <td>
+          1855
+          -
+          1924
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](GetRoutes.this.InternalServerErrorPath).-&gt;[cats.effect.IO[org.http4s.Response[cats.effect.IO]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.InternalServerError, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          6204
+        </td>
+        <td>
+          1882
+          -
+          1924
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[cats.effect.IO]](Response.apply[cats.effect.IO](org.http4s.Status.InternalServerError, Response.apply$default$2[cats.effect.IO], Response.apply$default$3[cats.effect.IO], Response.apply$default$4[cats.effect.IO], Response.apply$default$5[cats.effect.IO])).pure[cats.effect.IO](F)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

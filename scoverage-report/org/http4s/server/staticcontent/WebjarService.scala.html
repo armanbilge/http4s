@@ -1,0 +1,2602 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/staticcontent/WebjarService.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package staticcontent
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.data.Kleisli
+</span>22 <span style=''>import cats.data.OptionT
+</span>23 <span style=''>import cats.effect.kernel.Async
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>import org.http4s.internal.CollectionCompat.CollectionConverters._
+</span>26 <span style=''>
+</span>27 <span style=''>import java.nio.file.Path
+</span>28 <span style=''>import java.nio.file.Paths
+</span>29 <span style=''>import scala.util.control.NoStackTrace
+</span>30 <span style=''>
+</span>31 <span style=''>/** [[org.http4s.server.staticcontent.WebjarServiceBuilder]] builder
+</span>32 <span style=''>  *
+</span>33 <span style=''>  * @param cacheStrategy strategy to use for caching purposes.
+</span>34 <span style=''>  * @param classLoader optional classloader for extracting the resources
+</span>35 <span style=''>  * @param preferGzipped prefer gzip compression format?
+</span>36 <span style=''>  * @param webjarAssetFilter To filter which assets from the webjars should be served
+</span>37 <span style=''>  */
+</span>38 <span style=''>class WebjarServiceBuilder[F[_]] private (
+</span>39 <span style=''>    webjarAssetFilter: WebjarServiceBuilder.WebjarAssetFilter,
+</span>40 <span style=''>    cacheStrategy: CacheStrategy[F],
+</span>41 <span style=''>    classLoader: Option[ClassLoader],
+</span>42 <span style=''>    preferGzipped: Boolean,
+</span>43 <span style=''>) {
+</span>44 <span style=''>
+</span>45 <span style=''>  import WebjarServiceBuilder.{WebjarAsset, WebjarAssetFilter, serveWebjarAsset}
+</span>46 <span style=''>
+</span>47 <span style=''>  private def copy(
+</span>48 <span style=''>      webjarAssetFilter: WebjarAssetFilter = webjarAssetFilter,
+</span>49 <span style=''>      cacheStrategy: CacheStrategy[F] = cacheStrategy,
+</span>50 <span style=''>      classLoader: Option[ClassLoader] = classLoader,
+</span>51 <span style=''>      preferGzipped: Boolean = preferGzipped,
+</span>52 <span style=''>  ) =
+</span>53 <span style=''>    </span><span style='background: #AEF1AE'>new WebjarServiceBuilder[F](webjarAssetFilter, cacheStrategy, classLoader, preferGzipped)</span><span style=''>
+</span>54 <span style=''>
+</span>55 <span style=''>  def withWebjarAssetFilter(webjarAssetFilter: WebjarAssetFilter): WebjarServiceBuilder[F] =
+</span>56 <span style=''>    </span><span style='background: #AEF1AE'>copy(webjarAssetFilter = webjarAssetFilter)</span><span style=''>
+</span>57 <span style=''>
+</span>58 <span style=''>  def withCacheStrategy(cacheStrategy: CacheStrategy[F]): WebjarServiceBuilder[F] =
+</span>59 <span style=''>    </span><span style='background: #F0ADAD'>copy(cacheStrategy = cacheStrategy)</span><span style=''>
+</span>60 <span style=''>
+</span>61 <span style=''>  def withClassLoader(classLoader: Option[ClassLoader]): WebjarServiceBuilder[F] =
+</span>62 <span style=''>    </span><span style='background: #AEF1AE'>copy(classLoader = classLoader)</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>  def withPreferGzipped(preferGzipped: Boolean): WebjarServiceBuilder[F] =
+</span>65 <span style=''>    </span><span style='background: #AEF1AE'>copy(preferGzipped = preferGzipped)</span><span style=''>
+</span>66 <span style=''>
+</span>67 <span style=''>  def toRoutes(implicit F: Async[F]): HttpRoutes[F] = {
+</span>68 <span style=''>    object BadTraversal extends Exception with NoStackTrace
+</span>69 <span style=''>    val Root = </span><span style='background: #AEF1AE'>Paths.get(&quot;&quot;)</span><span style=''>
+</span>70 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli {
+</span>71 <span style=''></span><span style='background: #AEF1AE'>      // Intercepts the routes that match webjar asset names
+</span>72 <span style=''></span><span style='background: #AEF1AE'>      case request if request.method == Method.GET =&gt;
+</span>73 <span style=''></span><span style='background: #AEF1AE'>        val segments = request.pathInfo.segments.map(_.decoded(plusIsSpace = true))
+</span>74 <span style=''></span><span style='background: #AEF1AE'>        OptionT
+</span>75 <span style=''></span><span style='background: #AEF1AE'>          .liftF(F.catchNonFatal {
+</span>76 <span style=''></span><span style='background: #AEF1AE'>            segments.foldLeft(Root) {
+</span>77 <span style=''></span><span style='background: #AEF1AE'>              case (_, &quot;&quot; | &quot;.&quot; | &quot;..&quot;) =&gt; throw BadTraversal
+</span>78 <span style=''></span><span style='background: #AEF1AE'>              case (path, segment) =&gt;
+</span>79 <span style=''></span><span style='background: #AEF1AE'>                path.resolve(segment)
+</span>80 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>81 <span style=''></span><span style='background: #AEF1AE'>          })
+</span>82 <span style=''></span><span style='background: #AEF1AE'>          .subflatMap(toWebjarAsset)
+</span>83 <span style=''></span><span style='background: #AEF1AE'>          .filter(webjarAssetFilter)
+</span>84 <span style=''></span><span style='background: #AEF1AE'>          .flatMap(serveWebjarAsset(cacheStrategy, classLoader, request, preferGzipped)(_))
+</span>85 <span style=''></span><span style='background: #AEF1AE'>          .recover { case BadTraversal =&gt;
+</span>86 <span style=''></span><span style='background: #AEF1AE'>            Response(Status.BadRequest)
+</span>87 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>88 <span style=''></span><span style='background: #AEF1AE'>      case _ =&gt; OptionT.none
+</span>89 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>90 <span style=''>  }
+</span>91 <span style=''>
+</span>92 <span style=''>  /** Returns an Option(WebjarAsset) for a Request, or None if it couldn't be mapped
+</span>93 <span style=''>    *
+</span>94 <span style=''>    * @param p The request path without the prefix
+</span>95 <span style=''>    * @return The WebjarAsset, or None if it couldn't be mapped
+</span>96 <span style=''>    */
+</span>97 <span style=''>  private def toWebjarAsset(p: Path): Option[WebjarAsset] = {
+</span>98 <span style=''>    val count = </span><span style='background: #AEF1AE'>p.getNameCount</span><span style=''>
+</span>99 <span style=''>    if (</span><span style='background: #AEF1AE'>count &gt; 2</span><span style=''>) </span><span style='background: #AEF1AE'>{
+</span>100 <span style=''></span><span style='background: #AEF1AE'>      val library = p.getName(0).toString
+</span>101 <span style=''></span><span style='background: #AEF1AE'>      val version = p.getName(1).toString
+</span>102 <span style=''></span><span style='background: #AEF1AE'>      val asset = asScalaIterator(p.subpath(2, count).iterator()).mkString(&quot;/&quot;)
+</span>103 <span style=''></span><span style='background: #AEF1AE'>      Some(WebjarAsset(library, version, asset))
+</span>104 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''> else
+</span>105 <span style=''>      </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>106 <span style=''>  }
+</span>107 <span style=''>
+</span>108 <span style=''>  /** Creates a scala.Iterator from a java.util.Iterator.
+</span>109 <span style=''>    *
+</span>110 <span style=''>    * We're not using scala.jdk.CollectionConverters (which was added in 2.13)
+</span>111 <span style=''>    * or scala.collection.convert.ImplicitConversion (which was deprecated in 2.13)
+</span>112 <span style=''>    * to ease cross-building against multiple Scala versions.
+</span>113 <span style=''>    */
+</span>114 <span style=''>  private def asScalaIterator[A](underlying: java.util.Iterator[A]): Iterator[A] =
+</span>115 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Iterator[A] {
+</span>116 <span style=''>      override def hasNext: Boolean = </span><span style='background: #AEF1AE'>underlying.hasNext</span><span style=''>
+</span>117 <span style=''>      override def next(): A = </span><span style='background: #AEF1AE'>underlying.next()</span><span style=''>
+</span>118 <span style=''>    }
+</span>119 <span style=''>
+</span>120 <span style=''>}
+</span>121 <span style=''>
+</span>122 <span style=''>object WebjarServiceBuilder {
+</span>123 <span style=''>  def apply[F[_]] =
+</span>124 <span style=''>    </span><span style='background: #AEF1AE'>new WebjarServiceBuilder(
+</span>125 <span style=''></span><span style='background: #AEF1AE'>      webjarAssetFilter = _ =&gt; true,
+</span>126 <span style=''></span><span style='background: #AEF1AE'>      cacheStrategy = NoopCacheStrategy[F],
+</span>127 <span style=''></span><span style='background: #AEF1AE'>      classLoader = None,
+</span>128 <span style=''></span><span style='background: #AEF1AE'>      preferGzipped = false,
+</span>129 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>130 <span style=''>
+</span>131 <span style=''>  /** A filter callback for Webjar asset
+</span>132 <span style=''>    * It's a function that takes the WebjarAsset and returns whether or not the asset
+</span>133 <span style=''>    * should be served to the client.
+</span>134 <span style=''>    */
+</span>135 <span style=''>  type WebjarAssetFilter = WebjarAsset =&gt; Boolean
+</span>136 <span style=''>
+</span>137 <span style=''>  /** Contains the information about an asset inside a webjar
+</span>138 <span style=''>    *
+</span>139 <span style=''>    * @param library The webjar's library name
+</span>140 <span style=''>    * @param version The version of the webjar
+</span>141 <span style=''>    * @param asset The asset name inside the webjar
+</span>142 <span style=''>    */
+</span>143 <span style=''>  final case class WebjarAsset(library: String, version: String, asset: String) {
+</span>144 <span style=''>
+</span>145 <span style=''>    /** Constructs a full path for an asset inside a webjar asset
+</span>146 <span style=''>      *
+</span>147 <span style=''>      * @return The full name in the Webjar
+</span>148 <span style=''>      */
+</span>149 <span style=''>    private[staticcontent] lazy val pathInJar: String =
+</span>150 <span style=''>      s&quot;/META-INF/resources/webjars/$library/$version/$asset&quot;
+</span>151 <span style=''>  }
+</span>152 <span style=''>
+</span>153 <span style=''>  /** Returns an asset that matched the request if it's found in the webjar path
+</span>154 <span style=''>    *
+</span>155 <span style=''>    * @param request The Request
+</span>156 <span style=''>    * @param preferGzipped prefer gzip compression format?
+</span>157 <span style=''>    * @param webjarAsset The WebjarAsset
+</span>158 <span style=''>    * @return Either the the Asset, if it exist, or Pass
+</span>159 <span style=''>    */
+</span>160 <span style=''>  private def serveWebjarAsset[F[_]](
+</span>161 <span style=''>      cacheStrategy: CacheStrategy[F],
+</span>162 <span style=''>      classLoader: Option[ClassLoader],
+</span>163 <span style=''>      request: Request[F],
+</span>164 <span style=''>      preferGzipped: Boolean,
+</span>165 <span style=''>  )(webjarAsset: WebjarAsset)(implicit F: Async[F]): OptionT[F, Response[F]] =
+</span>166 <span style=''>    </span><span style='background: #AEF1AE'>StaticFile
+</span>167 <span style=''></span><span style='background: #AEF1AE'>      .fromResource(
+</span>168 <span style=''></span><span style='background: #AEF1AE'>        webjarAsset.pathInJar,
+</span>169 <span style=''></span><span style='background: #AEF1AE'>        Some(request),
+</span>170 <span style=''></span><span style='background: #AEF1AE'>        classloader = classLoader,
+</span>171 <span style=''></span><span style='background: #AEF1AE'>        preferGzipped = preferGzipped,
+</span>172 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>173 <span style=''></span><span style='background: #AEF1AE'>      .semiflatMap(cacheStrategy.cache(request.pathInfo, _))</span><span style=''>
+</span>174 <span style=''>}
+</span>175 <span style=''>
+</span>176 <span style=''>object WebjarService {
+</span>177 <span style=''>
+</span>178 <span style=''>  /** [[org.http4s.server.staticcontent.WebjarService]] configuration
+</span>179 <span style=''>    *
+</span>180 <span style=''>    * @param filter To filter which assets from the webjars should be served
+</span>181 <span style=''>    * @param cacheStrategy strategy to use for caching purposes. Default to no caching.
+</span>182 <span style=''>    */
+</span>183 <span style=''>  final case class Config[F[_]](
+</span>184 <span style=''>      filter: WebjarAssetFilter = _ =&gt; true,
+</span>185 <span style=''>      cacheStrategy: CacheStrategy[F] = NoopCacheStrategy[F],
+</span>186 <span style=''>  )
+</span>187 <span style=''>
+</span>188 <span style=''>  /** Contains the information about an asset inside a webjar
+</span>189 <span style=''>    *
+</span>190 <span style=''>    * @param library The webjar's library name
+</span>191 <span style=''>    * @param version The version of the webjar
+</span>192 <span style=''>    * @param asset The asset name inside the webjar
+</span>193 <span style=''>    */
+</span>194 <span style=''>  final case class WebjarAsset(library: String, version: String, asset: String) {
+</span>195 <span style=''>
+</span>196 <span style=''>    /** Constructs a full path for an asset inside a webjar asset
+</span>197 <span style=''>      *
+</span>198 <span style=''>      * @return The full name in the Webjar
+</span>199 <span style=''>      */
+</span>200 <span style=''>    private[staticcontent] lazy val pathInJar: String =
+</span>201 <span style=''>      s&quot;/META-INF/resources/webjars/$library/$version/$asset&quot;
+</span>202 <span style=''>  }
+</span>203 <span style=''>
+</span>204 <span style=''>  /** A filter callback for Webjar asset
+</span>205 <span style=''>    * It's a function that takes the WebjarAsset and returns whether or not the asset
+</span>206 <span style=''>    * should be served to the client.
+</span>207 <span style=''>    */
+</span>208 <span style=''>  type WebjarAssetFilter = WebjarAsset =&gt; Boolean
+</span>209 <span style=''>
+</span>210 <span style=''>  /** Creates a new [[HttpRoutes]] that will filter the webjars
+</span>211 <span style=''>    *
+</span>212 <span style=''>    * @param config The configuration for this service
+</span>213 <span style=''>    * @return The HttpRoutes
+</span>214 <span style=''>    */
+</span>215 <span style=''>  @deprecated(&quot;use WebjarServiceBuilder&quot;, &quot;1.0.0-M1&quot;)
+</span>216 <span style=''>  def apply[F[_]](config: Config[F])(implicit F: Async[F]): HttpRoutes[F] = {
+</span>217 <span style=''>    object BadTraversal extends Exception with NoStackTrace
+</span>218 <span style=''>    val Root = </span><span style='background: #F0ADAD'>Paths.get(&quot;&quot;)</span><span style=''>
+</span>219 <span style=''>    </span><span style='background: #F0ADAD'>Kleisli {
+</span>220 <span style=''></span><span style='background: #F0ADAD'>      // Intercepts the routes that match webjar asset names
+</span>221 <span style=''></span><span style='background: #F0ADAD'>      case request if request.method == Method.GET &amp;&amp; request.pathInfo.nonEmpty =&gt;
+</span>222 <span style=''></span><span style='background: #F0ADAD'>        val segments = request.pathInfo.segments.map(_.decoded(plusIsSpace = true))
+</span>223 <span style=''></span><span style='background: #F0ADAD'>        OptionT
+</span>224 <span style=''></span><span style='background: #F0ADAD'>          .liftF(F.catchNonFatal {
+</span>225 <span style=''></span><span style='background: #F0ADAD'>            segments.foldLeft(Root) {
+</span>226 <span style=''></span><span style='background: #F0ADAD'>              case (_, &quot;&quot; | &quot;.&quot; | &quot;..&quot;) =&gt; throw BadTraversal
+</span>227 <span style=''></span><span style='background: #F0ADAD'>              case (path, segment) =&gt;
+</span>228 <span style=''></span><span style='background: #F0ADAD'>                path.resolve(segment)
+</span>229 <span style=''></span><span style='background: #F0ADAD'>            }
+</span>230 <span style=''></span><span style='background: #F0ADAD'>          })
+</span>231 <span style=''></span><span style='background: #F0ADAD'>          .subflatMap(toWebjarAsset)
+</span>232 <span style=''></span><span style='background: #F0ADAD'>          .filter(config.filter)
+</span>233 <span style=''></span><span style='background: #F0ADAD'>          .flatMap(serveWebjarAsset(config, request)(_))
+</span>234 <span style=''></span><span style='background: #F0ADAD'>          .recover { case BadTraversal =&gt;
+</span>235 <span style=''></span><span style='background: #F0ADAD'>            Response(Status.BadRequest)
+</span>236 <span style=''></span><span style='background: #F0ADAD'>          }
+</span>237 <span style=''></span><span style='background: #F0ADAD'>      case _ =&gt; OptionT.none
+</span>238 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>239 <span style=''>  }
+</span>240 <span style=''>
+</span>241 <span style=''>  /** Returns an Option(WebjarAsset) for a Request, or None if it couldn't be mapped
+</span>242 <span style=''>    *
+</span>243 <span style=''>    * @param p The request path without the prefix
+</span>244 <span style=''>    * @return The WebjarAsset, or None if it couldn't be mapped
+</span>245 <span style=''>    */
+</span>246 <span style=''>  private def toWebjarAsset(p: Path): Option[WebjarAsset] = {
+</span>247 <span style=''>    val count = </span><span style='background: #F0ADAD'>p.getNameCount</span><span style=''>
+</span>248 <span style=''>    if (</span><span style='background: #F0ADAD'>count &gt; 2</span><span style=''>) </span><span style='background: #F0ADAD'>{
+</span>249 <span style=''></span><span style='background: #F0ADAD'>      val library = p.getName(0).toString
+</span>250 <span style=''></span><span style='background: #F0ADAD'>      val version = p.getName(1).toString
+</span>251 <span style=''></span><span style='background: #F0ADAD'>      val asset = p.subpath(2, count).iterator().asScala.mkString(&quot;/&quot;)
+</span>252 <span style=''></span><span style='background: #F0ADAD'>      Some(WebjarAsset(library, version, asset))
+</span>253 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''> else
+</span>254 <span style=''>      </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>255 <span style=''>  }
+</span>256 <span style=''>
+</span>257 <span style=''>  /** Returns an asset that matched the request if it's found in the webjar path
+</span>258 <span style=''>    *
+</span>259 <span style=''>    * @param webjarAsset The WebjarAsset
+</span>260 <span style=''>    * @param config The configuration
+</span>261 <span style=''>    * @param request The Request
+</span>262 <span style=''>    * @return Either the the Asset, if it exist, or Pass
+</span>263 <span style=''>    */
+</span>264 <span style=''>  private def serveWebjarAsset[F[_]: Async](config: Config[F], request: Request[F])(
+</span>265 <span style=''>      webjarAsset: WebjarAsset
+</span>266 <span style=''>  ): OptionT[F, Response[F]] =
+</span>267 <span style=''>    </span><span style='background: #F0ADAD'>StaticFile
+</span>268 <span style=''></span><span style='background: #F0ADAD'>      .fromResource(webjarAsset.pathInJar, Some(request))
+</span>269 <span style=''></span><span style='background: #F0ADAD'>      .semiflatMap(config.cacheStrategy.cache(request.pathInfo, _))</span><span style=''>
+</span>270 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9308
+        </td>
+        <td>
+          1822
+          -
+          1911
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.staticcontent.WebjarServiceBuilder[F](webjarAssetFilter, cacheStrategy, classLoader, preferGzipped)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          8307
+        </td>
+        <td>
+          2010
+          -
+          2053
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy(webjarAssetFilter, WebjarServiceBuilder.this.copy$default$2, WebjarServiceBuilder.this.copy$default$3, WebjarServiceBuilder.this.copy$default$4)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          8273
+        </td>
+        <td>
+          2010
+          -
+          2010
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          8856
+        </td>
+        <td>
+          2010
+          -
+          2010
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          10001
+        </td>
+        <td>
+          2010
+          -
+          2010
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          7532
+        </td>
+        <td>
+          2143
+          -
+          2178
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebjarServiceBuilder.this.copy(x$2, x$1, x$3, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          9186
+        </td>
+        <td>
+          2143
+          -
+          2143
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebjarServiceBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          7956
+        </td>
+        <td>
+          2143
+          -
+          2143
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebjarServiceBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          7324
+        </td>
+        <td>
+          2143
+          -
+          2143
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebjarServiceBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          9315
+        </td>
+        <td>
+          2267
+          -
+          2267
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          10035
+        </td>
+        <td>
+          2267
+          -
+          2267
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          8250
+        </td>
+        <td>
+          2267
+          -
+          2267
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          8865
+        </td>
+        <td>
+          2267
+          -
+          2298
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy(x$2, x$3, x$1, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          9172
+        </td>
+        <td>
+          2379
+          -
+          2379
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          8348
+        </td>
+        <td>
+          2379
+          -
+          2379
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          8028
+        </td>
+        <td>
+          2379
+          -
+          2414
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy(x$2, x$3, x$4, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          7330
+        </td>
+        <td>
+          2379
+          -
+          2379
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          9760
+        </td>
+        <td>
+          2547
+          -
+          2560
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.file.Paths.get
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.file.Paths.get(&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          8124
+        </td>
+        <td>
+          2565
+          -
+          3322
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((x0$1: org.http4s.Request[F]) =&gt; x0$1 match {
+  case (request @ _) if request.method.==(Method.GET) =&gt; {
+    val segments: scala.collection.immutable.Vector[String] = request.pathInfo.segments.map[String](((x$1: org.http4s.Uri.Path.Segment) =&gt; {
+      &lt;artifact&gt; val x$1: Boolean(true) = true;
+      &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$1.decoded$default$1;
+      &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$1.decoded$default$3;
+      x$1.decoded(x$2, true, x$3)
+    }));
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[[_]F[_]]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](Root)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).subflatMap[org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset](((p: java.nio.file.Path) =&gt; WebjarServiceBuilder.this.toWebjarAsset(p)))(F).filter(WebjarServiceBuilder.this.webjarAssetFilter)(F).flatMap[org.http4s.Response[[_]F[_]]](((x$2: org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset) =&gt; WebjarServiceBuilder.serveWebjarAsset[[_]F[_]](WebjarServiceBuilder.this.cacheStrategy, WebjarServiceBuilder.this.classLoader, request, WebjarServiceBuilder.this.preferGzipped)(x$2)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recover(({
+      @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,org.http4s.Response[[_]F[_]]] with java.io.Serializable {
+        def &lt;init&gt;(): &lt;$anon: Throwable =&gt; org.http4s.Response[[_]F[_]]&gt; = {
+          $anonfun.super.&lt;init&gt;();
+          ()
+        };
+        final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: org.http4s.Response[[_]F[_]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+          case (defaultCase$ @ _) =&gt; default.apply(x1)
+        };
+        final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; true
+          case (defaultCase$ @ _) =&gt; false
+        }
+      };
+      new $anonfun()
+    }: PartialFunction[Throwable,org.http4s.Response[[_]F[_]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+  }
+  case _ =&gt; cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          9267
+        </td>
+        <td>
+          2676
+          -
+          2686
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.GET
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Method.GET
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          8255
+        </td>
+        <td>
+          2658
+          -
+          2686
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          request.method.==(Method.GET)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          9091
+        </td>
+        <td>
+          2713
+          -
+          2773
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.map
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          request.pathInfo.segments.map[String](((x$1: org.http4s.Uri.Path.Segment) =&gt; {
+  &lt;artifact&gt; val x$1: Boolean(true) = true;
+  &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$1.decoded$default$1;
+  &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$1.decoded$default$3;
+  x$1.decoded(x$2, true, x$3)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          8353
+        </td>
+        <td>
+          2745
+          -
+          2745
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$3
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.decoded$default$3
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          8912
+        </td>
+        <td>
+          2745
+          -
+          2745
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$1
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.decoded$default$1
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          7282
+        </td>
+        <td>
+          2743
+          -
+          2772
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.decoded(x$2, true, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          10039
+        </td>
+        <td>
+          2767
+          -
+          2771
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          9750
+        </td>
+        <td>
+          3120
+          -
+          3120
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          8030
+        </td>
+        <td>
+          2782
+          -
+          3193
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.flatMap
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](Root)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).subflatMap[org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset](((p: java.nio.file.Path) =&gt; WebjarServiceBuilder.this.toWebjarAsset(p)))(F).filter(WebjarServiceBuilder.this.webjarAssetFilter)(F).flatMap[org.http4s.Response[[_]F[_]]](((x$2: org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset) =&gt; WebjarServiceBuilder.serveWebjarAsset[[_]F[_]](WebjarServiceBuilder.this.cacheStrategy, WebjarServiceBuilder.this.classLoader, request, WebjarServiceBuilder.this.preferGzipped)(x$2)(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          9096
+        </td>
+        <td>
+          3213
+          -
+          3213
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          8001
+        </td>
+        <td>
+          3213
+          -
+          3213
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          9756
+        </td>
+        <td>
+          2782
+          -
+          3287
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recover
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[[_]F[_]]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](Root)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).subflatMap[org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset](((p: java.nio.file.Path) =&gt; WebjarServiceBuilder.this.toWebjarAsset(p)))(F).filter(WebjarServiceBuilder.this.webjarAssetFilter)(F).flatMap[org.http4s.Response[[_]F[_]]](((x$2: org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset) =&gt; WebjarServiceBuilder.serveWebjarAsset[[_]F[_]](WebjarServiceBuilder.this.cacheStrategy, WebjarServiceBuilder.this.classLoader, request, WebjarServiceBuilder.this.preferGzipped)(x$2)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recover(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,org.http4s.Response[[_]F[_]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; org.http4s.Response[[_]F[_]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: org.http4s.Response[[_]F[_]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,org.http4s.Response[[_]F[_]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          9997
+        </td>
+        <td>
+          3248
+          -
+          3248
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          9273
+        </td>
+        <td>
+          3257
+          -
+          3274
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.BadRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Status.BadRequest
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          8914
+        </td>
+        <td>
+          3248
+          -
+          3248
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          7290
+        </td>
+        <td>
+          3248
+          -
+          3275
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          8437
+        </td>
+        <td>
+          3248
+          -
+          3248
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          8260
+        </td>
+        <td>
+          3248
+          -
+          3248
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          9355
+        </td>
+        <td>
+          3304
+          -
+          3316
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.none
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          10002
+        </td>
+        <td>
+          3619
+          -
+          3633
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.file.Path.getNameCount
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          p.getNameCount()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          9364
+        </td>
+        <td>
+          3653
+          -
+          3873
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val library: String = p.getName(0).toString();
+  val version: String = p.getName(1).toString();
+  val asset: String = WebjarServiceBuilder.this.asScalaIterator[java.nio.file.Path](p.subpath(2, count).iterator()).mkString(&quot;/&quot;);
+  scala.Some.apply[org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset](WebjarServiceBuilder.WebjarAsset.apply(library, version, asset))
+}
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          8993
+        </td>
+        <td>
+          3642
+          -
+          3651
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          count.&gt;(2)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          7746
+        </td>
+        <td>
+          3675
+          -
+          3696
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          p.getName(0).toString()
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          7205
+        </td>
+        <td>
+          3717
+          -
+          3738
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          p.getName(1).toString()
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          9045
+        </td>
+        <td>
+          3757
+          -
+          3818
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.this.asScalaIterator[java.nio.file.Path](p.subpath(2, count).iterator()).mkString(&quot;/&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          9894
+        </td>
+        <td>
+          3825
+          -
+          3867
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset](WebjarServiceBuilder.WebjarAsset.apply(library, version, asset))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          8006
+        </td>
+        <td>
+          3830
+          -
+          3866
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebjarServiceBuilder.WebjarAsset.apply(library, version, asset)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          8253
+        </td>
+        <td>
+          3885
+          -
+          3889
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          9954
+        </td>
+        <td>
+          3885
+          -
+          3889
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          7281
+        </td>
+        <td>
+          4278
+          -
+          4281
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          9000
+        </td>
+        <td>
+          4334
+          -
+          4352
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.Iterator.hasNext
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          underlying.hasNext()
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          7900
+        </td>
+        <td>
+          4384
+          -
+          4401
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.Iterator.next
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          underlying.next()
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          8213
+        </td>
+        <td>
+          4466
+          -
+          4633
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarServiceBuilder.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.staticcontent.WebjarServiceBuilder[[_]F[_]](((x$3: org.http4s.server.staticcontent.WebjarServiceBuilder.WebjarAsset) =&gt; true), NoopCacheStrategy.apply[F], scala.None, false)
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          9176
+        </td>
+        <td>
+          4523
+          -
+          4527
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          8056
+        </td>
+        <td>
+          4551
+          -
+          4571
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.NoopCacheStrategy.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          NoopCacheStrategy.apply[F]
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          9900
+        </td>
+        <td>
+          4593
+          -
+          4597
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          8658
+        </td>
+        <td>
+          4621
+          -
+          4626
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.webjarservicefiltersuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          10063
+        </td>
+        <td>
+          5953
+          -
+          6181
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.semiflatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  &lt;artifact&gt; val x$1: String = webjarAsset.pathInJar;
+  &lt;artifact&gt; val x$2: Some[org.http4s.Request[F]] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[org.http4s.Request[F]](request);
+  &lt;artifact&gt; val x$3: Option[ClassLoader] @scala.reflect.internal.annotations.uncheckedBounds = classLoader;
+  &lt;artifact&gt; val x$4: Boolean = preferGzipped;
+  StaticFile.fromResource[[_]F[_]](x$1, x$2, x$4, x$3)(F)
+}.semiflatMap[org.http4s.Response[F]](((x$4: org.http4s.Response[[_]F[_]]) =&gt; cacheStrategy.cache(request.pathInfo, x$4)(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          8953
+        </td>
+        <td>
+          7747
+          -
+          7760
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.file.Paths.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.nio.file.Paths.get(&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          9106
+        </td>
+        <td>
+          7765
+          -
+          8512
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((x0$1: org.http4s.Request[F]) =&gt; x0$1 match {
+  case (request @ _) if request.method.==(Method.GET).&amp;&amp;(request.pathInfo.nonEmpty) =&gt; {
+    val segments: scala.collection.immutable.Vector[String] = request.pathInfo.segments.map[String](((x$6: org.http4s.Uri.Path.Segment) =&gt; {
+      &lt;artifact&gt; val x$1: Boolean(true) = true;
+      &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$6.decoded$default$1;
+      &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$6.decoded$default$3;
+      x$6.decoded(x$2, true, x$3)
+    }));
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[[_]F[_]]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](Root)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).subflatMap[org.http4s.server.staticcontent.WebjarService.WebjarAsset](((p: java.nio.file.Path) =&gt; WebjarService.this.toWebjarAsset(p)))(F).filter(config.filter)(F).flatMap[org.http4s.Response[[_]F[_]]](((x$7: org.http4s.server.staticcontent.WebjarService.WebjarAsset) =&gt; WebjarService.this.serveWebjarAsset[[_]F[_]](config, request)(x$7)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recover(({
+      @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,org.http4s.Response[[_]F[_]]] with java.io.Serializable {
+        def &lt;init&gt;(): &lt;$anon: Throwable =&gt; org.http4s.Response[[_]F[_]]&gt; = {
+          $anonfun.super.&lt;init&gt;();
+          ()
+        };
+        final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: org.http4s.Response[[_]F[_]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+          case (defaultCase$ @ _) =&gt; default.apply(x1)
+        };
+        final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; true
+          case (defaultCase$ @ _) =&gt; false
+        }
+      };
+      new $anonfun()
+    }: PartialFunction[Throwable,org.http4s.Response[[_]F[_]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+  }
+  case _ =&gt; cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          9145
+        </td>
+        <td>
+          7858
+          -
+          7915
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          request.method.==(Method.GET).&amp;&amp;(request.pathInfo.nonEmpty)
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          7287
+        </td>
+        <td>
+          7890
+          -
+          7915
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          request.pathInfo.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          7907
+        </td>
+        <td>
+          7876
+          -
+          7886
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.GET
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Method.GET
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          8723
+        </td>
+        <td>
+          7974
+          -
+          7974
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$6.decoded$default$3
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          7999
+        </td>
+        <td>
+          7996
+          -
+          8000
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          10045
+        </td>
+        <td>
+          7942
+          -
+          8002
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          request.pathInfo.segments.map[String](((x$6: org.http4s.Uri.Path.Segment) =&gt; {
+  &lt;artifact&gt; val x$1: Boolean(true) = true;
+  &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$6.decoded$default$1;
+  &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$6.decoded$default$3;
+  x$6.decoded(x$2, true, x$3)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          9907
+        </td>
+        <td>
+          7974
+          -
+          7974
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$6.decoded$default$1
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          8222
+        </td>
+        <td>
+          7972
+          -
+          8001
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$6.decoded(x$2, true, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          8893
+        </td>
+        <td>
+          8011
+          -
+          8383
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](Root)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).subflatMap[org.http4s.server.staticcontent.WebjarService.WebjarAsset](((p: java.nio.file.Path) =&gt; WebjarService.this.toWebjarAsset(p)))(F).filter(config.filter)(F).flatMap[org.http4s.Response[[_]F[_]]](((x$7: org.http4s.server.staticcontent.WebjarService.WebjarAsset) =&gt; WebjarService.this.serveWebjarAsset[[_]F[_]](config, request)(x$7)(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          7912
+        </td>
+        <td>
+          8345
+          -
+          8345
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          7898
+        </td>
+        <td>
+          8011
+          -
+          8477
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recover
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[[_]F[_]]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](Root)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).subflatMap[org.http4s.server.staticcontent.WebjarService.WebjarAsset](((p: java.nio.file.Path) =&gt; WebjarService.this.toWebjarAsset(p)))(F).filter(config.filter)(F).flatMap[org.http4s.Response[[_]F[_]]](((x$7: org.http4s.server.staticcontent.WebjarService.WebjarAsset) =&gt; WebjarService.this.serveWebjarAsset[[_]F[_]](config, request)(x$7)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recover(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,org.http4s.Response[[_]F[_]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; org.http4s.Response[[_]F[_]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: org.http4s.Response[[_]F[_]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,org.http4s.Response[[_]F[_]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          9952
+        </td>
+        <td>
+          8403
+          -
+          8403
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarService.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          8896
+        </td>
+        <td>
+          8403
+          -
+          8403
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          8732
+        </td>
+        <td>
+          8438
+          -
+          8438
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          9153
+        </td>
+        <td>
+          8438
+          -
+          8438
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          8169
+        </td>
+        <td>
+          8438
+          -
+          8465
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          7238
+        </td>
+        <td>
+          8447
+          -
+          8464
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.BadRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Status.BadRequest
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          9776
+        </td>
+        <td>
+          8438
+          -
+          8438
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          7955
+        </td>
+        <td>
+          8438
+          -
+          8438
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          9664
+        </td>
+        <td>
+          8494
+          -
+          8506
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.none
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+        </td>
+      </tr><tr>
+        <td>
+          247
+        </td>
+        <td>
+          7962
+        </td>
+        <td>
+          8809
+          -
+          8823
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.file.Path.getNameCount
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          p.getNameCount()
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          9728
+        </td>
+        <td>
+          8843
+          -
+          9054
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  val library: String = p.getName(0).toString();
+  val version: String = p.getName(1).toString();
+  val asset: String = org.http4s.internal.CollectionCompat.CollectionConverters.IteratorHasAsScala[java.nio.file.Path](p.subpath(2, count).iterator()).asScala.mkString(&quot;/&quot;);
+  scala.Some.apply[org.http4s.server.staticcontent.WebjarService.WebjarAsset](WebjarService.this.WebjarAsset.apply(library, version, asset))
+}
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          9778
+        </td>
+        <td>
+          8832
+          -
+          8841
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          count.&gt;(2)
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          8821
+        </td>
+        <td>
+          8865
+          -
+          8886
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          p.getName(0).toString()
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          8280
+        </td>
+        <td>
+          8907
+          -
+          8928
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          p.getName(1).toString()
+        </td>
+      </tr><tr>
+        <td>
+          251
+        </td>
+        <td>
+          9958
+        </td>
+        <td>
+          8947
+          -
+          8999
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.internal.CollectionCompat.CollectionConverters.IteratorHasAsScala[java.nio.file.Path](p.subpath(2, count).iterator()).asScala.mkString(&quot;/&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          8869
+        </td>
+        <td>
+          9011
+          -
+          9047
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.WebjarService.WebjarAsset.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebjarService.this.WebjarAsset.apply(library, version, asset)
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          7904
+        </td>
+        <td>
+          9006
+          -
+          9048
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[org.http4s.server.staticcontent.WebjarService.WebjarAsset](WebjarService.this.WebjarAsset.apply(library, version, asset))
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          9144
+        </td>
+        <td>
+          9066
+          -
+          9070
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          7971
+        </td>
+        <td>
+          9066
+          -
+          9070
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          269
+        </td>
+        <td>
+          9853
+        </td>
+        <td>
+          9490
+          -
+          9626
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.semiflatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StaticFile.fromResource[[_]F[_]](webjarAsset.pathInJar, scala.Some.apply[org.http4s.Request[F]](request), StaticFile.fromResource$default$3[Nothing], StaticFile.fromResource$default$4[Nothing])(evidence$1).semiflatMap[org.http4s.Response[F]](((x$8: org.http4s.Response[[_]F[_]]) =&gt; config.cacheStrategy.cache(request.pathInfo, x$8)(evidence$1)))(evidence$1)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

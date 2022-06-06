@@ -1,0 +1,1472 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/Strict-Transport-Security.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package headers
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.parse.Parser
+</span>21 <span style=''>import cats.parse.Parser0
+</span>22 <span style=''>import org.http4s.Header
+</span>23 <span style=''>import org.http4s.internal.parsing.Rfc7230.ows
+</span>24 <span style=''>import org.http4s.parser.AdditionalRules
+</span>25 <span style=''>import org.http4s.util.Renderable
+</span>26 <span style=''>import org.http4s.util.Writer
+</span>27 <span style=''>import org.typelevel.ci._
+</span>28 <span style=''>
+</span>29 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>30 <span style=''>
+</span>31 <span style=''>/** Defined by https://datatracker.ietf.org/doc/html/rfc6797
+</span>32 <span style=''>  */
+</span>33 <span style=''>object `Strict-Transport-Security` {
+</span>34 <span style=''>  private[headers] class StrictTransportSecurityImpl(
+</span>35 <span style=''>      maxAge: Long,
+</span>36 <span style=''>      includeSubDomains: Boolean,
+</span>37 <span style=''>      preload: Boolean,
+</span>38 <span style=''>  ) extends `Strict-Transport-Security`(maxAge, includeSubDomains, preload)
+</span>39 <span style=''>
+</span>40 <span style=''>  def fromLong(
+</span>41 <span style=''>      maxAge: Long,
+</span>42 <span style=''>      includeSubDomains: Boolean = true,
+</span>43 <span style=''>      preload: Boolean = false,
+</span>44 <span style=''>  ): ParseResult[`Strict-Transport-Security`] =
+</span>45 <span style=''>    if (</span><span style='background: #AEF1AE'>maxAge &gt;= 0</span><span style=''>)
+</span>46 <span style=''>      </span><span style='background: #AEF1AE'>ParseResult.success(new StrictTransportSecurityImpl(maxAge, includeSubDomains, preload))</span><span style=''>
+</span>47 <span style=''>    else
+</span>48 <span style=''>      </span><span style='background: #AEF1AE'>ParseResult.fail(
+</span>49 <span style=''></span><span style='background: #AEF1AE'>        &quot;Invalid maxAge value&quot;,
+</span>50 <span style=''></span><span style='background: #AEF1AE'>        s&quot;Strict-Transport-Security param $maxAge must be more or equal to 0 seconds&quot;,
+</span>51 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>  def unsafeFromDuration(
+</span>54 <span style=''>      maxAge: FiniteDuration,
+</span>55 <span style=''>      includeSubDomains: Boolean = true,
+</span>56 <span style=''>      preload: Boolean = false,
+</span>57 <span style=''>  ): `Strict-Transport-Security` =
+</span>58 <span style=''>    </span><span style='background: #AEF1AE'>fromLong(maxAge.toSeconds, includeSubDomains, preload).fold(throw _, identity)</span><span style=''>
+</span>59 <span style=''>
+</span>60 <span style=''>  def unsafeFromLong(
+</span>61 <span style=''>      maxAge: Long,
+</span>62 <span style=''>      includeSubDomains: Boolean = true,
+</span>63 <span style=''>      preload: Boolean = false,
+</span>64 <span style=''>  ): `Strict-Transport-Security` =
+</span>65 <span style=''>    </span><span style='background: #AEF1AE'>fromLong(maxAge, includeSubDomains, preload).fold(throw _, identity)</span><span style=''>
+</span>66 <span style=''>
+</span>67 <span style=''>  def parse(s: String): ParseResult[`Strict-Transport-Security`] =
+</span>68 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Strict-Transport-Security header&quot;)(s)</span><span style=''>
+</span>69 <span style=''>
+</span>70 <span style=''>  private[http4s] val parser: Parser0[`Strict-Transport-Security`] = {
+</span>71 <span style=''>    val maxAge: Parser[`Strict-Transport-Security`] =
+</span>72 <span style=''>      </span><span style='background: #AEF1AE'>(Parser.ignoreCase(&quot;max-age=&quot;) *&gt; AdditionalRules.NonNegativeLong).map { (age: Long) =&gt;
+</span>73 <span style=''></span><span style='background: #AEF1AE'>        `Strict-Transport-Security`
+</span>74 <span style=''></span><span style='background: #AEF1AE'>          .unsafeFromLong(maxAge = age, includeSubDomains = false, preload = false)
+</span>75 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>    sealed trait StsAttribute
+</span>78 <span style=''>    case object IncludeSubDomains extends StsAttribute
+</span>79 <span style=''>    case object Preload extends StsAttribute
+</span>80 <span style=''>
+</span>81 <span style=''>    val stsAttributes: Parser0[StsAttribute] = </span><span style='background: #AEF1AE'>Parser
+</span>82 <span style=''></span><span style='background: #AEF1AE'>      .ignoreCase(&quot;includeSubDomains&quot;)
+</span>83 <span style=''></span><span style='background: #AEF1AE'>      .as(IncludeSubDomains)
+</span>84 <span style=''></span><span style='background: #AEF1AE'>      .orElse(Parser.ignoreCase(&quot;preload&quot;).as(Preload))</span><span style=''>
+</span>85 <span style=''>
+</span>86 <span style=''>    </span><span style='background: #AEF1AE'>(maxAge ~ (Parser.string(&quot;;&quot;) *&gt; ows *&gt; stsAttributes).rep0).map { case (sts, attributes) =&gt;
+</span>87 <span style=''></span><span style='background: #AEF1AE'>      attributes.foldLeft(sts) {
+</span>88 <span style=''></span><span style='background: #AEF1AE'>        case (sts, IncludeSubDomains) =&gt; sts.withIncludeSubDomains(true)
+</span>89 <span style=''></span><span style='background: #AEF1AE'>        case (sts, Preload) =&gt; sts.withPreload(true)
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>91 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>92 <span style=''>  }
+</span>93 <span style=''>
+</span>94 <span style=''>  implicit val headerInstance: Header[`Strict-Transport-Security`, Header.Single] =
+</span>95 <span style=''>    </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>96 <span style=''></span><span style='background: #AEF1AE'>      ci&quot;Strict-Transport-Security&quot;,
+</span>97 <span style=''></span><span style='background: #AEF1AE'>      h =&gt;
+</span>98 <span style=''></span><span style='background: #AEF1AE'>        new Renderable {
+</span>99 <span style=''></span><span style='background: #AEF1AE'>          def render(writer: Writer): writer.type = {
+</span>100 <span style=''></span><span style='background: #AEF1AE'>            writer &lt;&lt; &quot;max-age=&quot; &lt;&lt; h.maxAge
+</span>101 <span style=''></span><span style='background: #AEF1AE'>            if (h.includeSubDomains) writer &lt;&lt; &quot;; includeSubDomains&quot;
+</span>102 <span style=''></span><span style='background: #AEF1AE'>            if (h.preload) writer &lt;&lt; &quot;; preload&quot;
+</span>103 <span style=''></span><span style='background: #AEF1AE'>            writer
+</span>104 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>105 <span style=''></span><span style='background: #AEF1AE'>
+</span>106 <span style=''></span><span style='background: #AEF1AE'>        },
+</span>107 <span style=''></span><span style='background: #AEF1AE'>      parse,
+</span>108 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>109 <span style=''>
+</span>110 <span style=''>}
+</span>111 <span style=''>
+</span>112 <span style=''>sealed abstract case class `Strict-Transport-Security`(
+</span>113 <span style=''>    maxAge: Long,
+</span>114 <span style=''>    includeSubDomains: Boolean = true,
+</span>115 <span style=''>    preload: Boolean = false,
+</span>116 <span style=''>) {
+</span>117 <span style=''>  def withIncludeSubDomains(includeSubDomains: Boolean): `Strict-Transport-Security` =
+</span>118 <span style=''>    </span><span style='background: #AEF1AE'>new `Strict-Transport-Security`.StrictTransportSecurityImpl(
+</span>119 <span style=''></span><span style='background: #AEF1AE'>      this.maxAge,
+</span>120 <span style=''></span><span style='background: #AEF1AE'>      includeSubDomains,
+</span>121 <span style=''></span><span style='background: #AEF1AE'>      this.preload,
+</span>122 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>123 <span style=''>
+</span>124 <span style=''>  def withPreload(preload: Boolean): `Strict-Transport-Security` =
+</span>125 <span style=''>    </span><span style='background: #AEF1AE'>new `Strict-Transport-Security`.StrictTransportSecurityImpl(
+</span>126 <span style=''></span><span style='background: #AEF1AE'>      this.maxAge,
+</span>127 <span style=''></span><span style='background: #AEF1AE'>      this.includeSubDomains,
+</span>128 <span style=''></span><span style='background: #AEF1AE'>      preload,
+</span>129 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>130 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          21167
+        </td>
+        <td>
+          1412
+          -
+          1423
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          maxAge.&gt;=(0)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          17297
+        </td>
+        <td>
+          1451
+          -
+          1518
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.StrictTransportSecurityImpl.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Strict-Transport-Security.this.StrictTransportSecurityImpl(maxAge, includeSubDomains, preload)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          21546
+        </td>
+        <td>
+          1431
+          -
+          1519
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[org.http4s.headers.Strict-Transport-Security.StrictTransportSecurityImpl](new Strict-Transport-Security.this.StrictTransportSecurityImpl(maxAge, includeSubDomains, preload))
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          15095
+        </td>
+        <td>
+          1431
+          -
+          1519
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[org.http4s.headers.Strict-Transport-Security.StrictTransportSecurityImpl](new Strict-Transport-Security.this.StrictTransportSecurityImpl(maxAge, includeSubDomains, preload))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          20238
+        </td>
+        <td>
+          1535
+          -
+          1679
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid maxAge value&quot;, (&quot;Strict-Transport-Security param &quot;.+(maxAge).+(&quot; must be more or equal to 0 seconds&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          14086
+        </td>
+        <td>
+          1535
+          -
+          1679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid maxAge value&quot;, (&quot;Strict-Transport-Security param &quot;.+(maxAge).+(&quot; must be more or equal to 0 seconds&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          17879
+        </td>
+        <td>
+          1561
+          -
+          1583
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Invalid maxAge value&quot;
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          17043
+        </td>
+        <td>
+          1849
+          -
+          1927
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Strict-Transport-Security.this.fromLong(maxAge.toSeconds, includeSubDomains, preload).fold[org.http4s.headers.Strict-Transport-Security](((x$1: org.http4s.ParseFailure) =&gt; throw x$1), ((x: org.http4s.headers.Strict-Transport-Security) =&gt; scala.Predef.identity[org.http4s.headers.Strict-Transport-Security](x)))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          21059
+        </td>
+        <td>
+          1918
+          -
+          1926
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[org.http4s.headers.Strict-Transport-Security](x)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          14333
+        </td>
+        <td>
+          1909
+          -
+          1916
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          throw x$1
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          18340
+        </td>
+        <td>
+          1858
+          -
+          1874
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.toSeconds
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          maxAge.toSeconds
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          21570
+        </td>
+        <td>
+          2142
+          -
+          2150
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[org.http4s.headers.Strict-Transport-Security](x)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          17583
+        </td>
+        <td>
+          2083
+          -
+          2151
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Strict-Transport-Security.this.fromLong(maxAge, includeSubDomains, preload).fold[org.http4s.headers.Strict-Transport-Security](((x$2: org.http4s.ParseFailure) =&gt; throw x$2), ((x: org.http4s.headers.Strict-Transport-Security) =&gt; scala.Predef.identity[org.http4s.headers.Strict-Transport-Security](x)))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          13147
+        </td>
+        <td>
+          2133
+          -
+          2140
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          throw x$2
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          13955
+        </td>
+        <td>
+          2224
+          -
+          2301
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.headers.Strict-Transport-Security](Strict-Transport-Security.this.parser, &quot;Invalid Strict-Transport-Security header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          18218
+        </td>
+        <td>
+          2468
+          -
+          2499
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.parser.AdditionalRules.NonNegativeLong
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.parser.AdditionalRules.NonNegativeLong
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          20796
+        </td>
+        <td>
+          2434
+          -
+          2649
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.ignoreCase(&quot;max-age=&quot;).*&gt;[Long](org.http4s.parser.AdditionalRules.NonNegativeLong).map[org.http4s.headers.Strict-Transport-Security](((age: Long) =&gt; Strict-Transport-Security.unsafeFromLong(age, false, false)))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          20257
+        </td>
+        <td>
+          2453
+          -
+          2463
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;max-age=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          14213
+        </td>
+        <td>
+          2530
+          -
+          2641
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.unsafeFromLong
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Strict-Transport-Security.unsafeFromLong(age, false, false)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          16939
+        </td>
+        <td>
+          2854
+          -
+          2873
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;includeSubDomains&quot;
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          21310
+        </td>
+        <td>
+          2829
+          -
+          2959
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.ignoreCase(&quot;includeSubDomains&quot;).as[IncludeSubDomains.type](IncludeSubDomains).orElse[Product with StsAttribute with java.io.Serializable](cats.parse.Parser.ignoreCase(&quot;preload&quot;).as[Preload.type](Preload))
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          13171
+        </td>
+        <td>
+          2918
+          -
+          2958
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.as
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.ignoreCase(&quot;preload&quot;).as[Preload.type](Preload)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          14058
+        </td>
+        <td>
+          2998
+          -
+          3001
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          20144
+        </td>
+        <td>
+          2975
+          -
+          3024
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep0
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;;&quot;).*&gt;[Unit](org.http4s.internal.parsing.Rfc7230.ows).*&gt;[StsAttribute](stsAttributes).rep0
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          17287
+        </td>
+        <td>
+          2965
+          -
+          3230
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          maxAge.~[List[StsAttribute]](cats.parse.Parser.string(&quot;;&quot;).*&gt;[Unit](org.http4s.internal.parsing.Rfc7230.ows).*&gt;[StsAttribute](stsAttributes).rep0).map[org.http4s.headers.Strict-Transport-Security](((x0$1: (org.http4s.headers.Strict-Transport-Security, List[StsAttribute])) =&gt; x0$1 match {
+  case (_1: org.http4s.headers.Strict-Transport-Security, _2: List[StsAttribute]): (org.http4s.headers.Strict-Transport-Security, List[StsAttribute])((sts @ _), (attributes @ _)) =&gt; attributes.foldLeft[org.http4s.headers.Strict-Transport-Security](sts)(((x0$2: org.http4s.headers.Strict-Transport-Security, x1$1: StsAttribute) =&gt; scala.Tuple2.apply[org.http4s.headers.Strict-Transport-Security, StsAttribute](x0$2, x1$1) match {
+    case (_1: org.http4s.headers.Strict-Transport-Security, _2: StsAttribute): (org.http4s.headers.Strict-Transport-Security, StsAttribute)((sts @ _), IncludeSubDomains) =&gt; sts.withIncludeSubDomains(true)
+    case (_1: org.http4s.headers.Strict-Transport-Security, _2: StsAttribute): (org.http4s.headers.Strict-Transport-Security, StsAttribute)((sts @ _), Preload) =&gt; sts.withPreload(true)
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          17450
+        </td>
+        <td>
+          2990
+          -
+          2993
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          20660
+        </td>
+        <td>
+          3064
+          -
+          3224
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          attributes.foldLeft[org.http4s.headers.Strict-Transport-Security](sts)(((x0$2: org.http4s.headers.Strict-Transport-Security, x1$1: StsAttribute) =&gt; scala.Tuple2.apply[org.http4s.headers.Strict-Transport-Security, StsAttribute](x0$2, x1$1) match {
+  case (_1: org.http4s.headers.Strict-Transport-Security, _2: StsAttribute): (org.http4s.headers.Strict-Transport-Security, StsAttribute)((sts @ _), IncludeSubDomains) =&gt; sts.withIncludeSubDomains(true)
+  case (_1: org.http4s.headers.Strict-Transport-Security, _2: StsAttribute): (org.http4s.headers.Strict-Transport-Security, StsAttribute)((sts @ _), Preload) =&gt; sts.withPreload(true)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          18235
+        </td>
+        <td>
+          3132
+          -
+          3163
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.withIncludeSubDomains
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          sts.withIncludeSubDomains(true)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          14227
+        </td>
+        <td>
+          3195
+          -
+          3216
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.withPreload
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          sts.withPreload(true)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          20952
+        </td>
+        <td>
+          3345
+          -
+          3345
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.util.Renderable]
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          17174
+        </td>
+        <td>
+          3324
+          -
+          3698
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Header.createRendered[org.http4s.headers.Strict-Transport-Security, org.http4s.Header.Single, org.http4s.util.Renderable](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Strict-Transport-Security&quot;)).ci(), ((h: org.http4s.headers.Strict-Transport-Security) =&gt; {
+  final class $anon extends AnyRef with org.http4s.util.Renderable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.util.Renderable&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def render(writer: org.http4s.util.Writer): writer.type = {
+      writer.&lt;&lt;(&quot;max-age=&quot;).&lt;&lt;(h.maxAge);
+      if (h.includeSubDomains)
+        writer.&lt;&lt;(&quot;; includeSubDomains&quot;)
+      else
+        ();
+      if (h.preload)
+        writer.&lt;&lt;(&quot;; preload&quot;)
+      else
+        ();
+      writer
+    }
+  };
+  new $anon()
+}), ((s: String) =&gt; Strict-Transport-Security.this.parse(s)))(util.this.Renderable.renderableInst[org.http4s.util.Renderable])
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          13043
+        </td>
+        <td>
+          3353
+          -
+          3382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.server.middleware.hstssuite,org.http4s.headers.stricttransportsecuritysuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Strict-Transport-Security&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          16406
+        </td>
+        <td>
+          3403
+          -
+          3406
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.$anon.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          21849
+        </td>
+        <td>
+          3496
+          -
+          3506
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;max-age=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          17466
+        </td>
+        <td>
+          3510
+          -
+          3518
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.maxAge
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.maxAge
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          13937
+        </td>
+        <td>
+          3486
+          -
+          3518
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;max-age=&quot;).&lt;&lt;(h.maxAge)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          20518
+        </td>
+        <td>
+          3535
+          -
+          3554
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.includeSubDomains
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.includeSubDomains
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          14772
+        </td>
+        <td>
+          3556
+          -
+          3587
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;; includeSubDomains&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          17158
+        </td>
+        <td>
+          3531
+          -
+          3531
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          16182
+        </td>
+        <td>
+          3556
+          -
+          3587
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;; includeSubDomains&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          21054
+        </td>
+        <td>
+          3531
+          -
+          3531
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          18003
+        </td>
+        <td>
+          3615
+          -
+          3636
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;; preload&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          20533
+        </td>
+        <td>
+          3600
+          -
+          3600
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          13949
+        </td>
+        <td>
+          3600
+          -
+          3600
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          13443
+        </td>
+        <td>
+          3604
+          -
+          3613
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.preload
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.preload
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          21864
+        </td>
+        <td>
+          3615
+          -
+          3636
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;; preload&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          14785
+        </td>
+        <td>
+          3686
+          -
+          3691
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.parse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Strict-Transport-Security.this.parse(s)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          17774
+        </td>
+        <td>
+          3941
+          -
+          4071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.StrictTransportSecurityImpl.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Strict-Transport-Security.StrictTransportSecurityImpl(this.maxAge, includeSubDomains, this.preload)
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          13162
+        </td>
+        <td>
+          4008
+          -
+          4019
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.maxAge
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.maxAge
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          21423
+        </td>
+        <td>
+          4052
+          -
+          4064
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.preload
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.preload
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          16425
+        </td>
+        <td>
+          4144
+          -
+          4274
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.StrictTransportSecurityImpl.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Strict-Transport-Security.StrictTransportSecurityImpl(this.maxAge, this.includeSubDomains, preload)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          13849
+        </td>
+        <td>
+          4211
+          -
+          4222
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.maxAge
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.maxAge
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          20405
+        </td>
+        <td>
+          4230
+          -
+          4252
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Strict-Transport-Security.includeSubDomains
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.includeSubDomains
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

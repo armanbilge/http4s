@@ -1,0 +1,4762 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/dsl/impl/ResponseGenerator.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package dsl
+</span>19 <span style=''>package impl
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.Applicative
+</span>22 <span style=''>import cats.Monad
+</span>23 <span style=''>import cats.arrow.FunctionK
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>import org.http4s.headers._
+</span>26 <span style=''>
+</span>27 <span style=''>import ResponseGenerator.addEntityLength
+</span>28 <span style=''>
+</span>29 <span style=''>trait ResponseGenerator extends Any {
+</span>30 <span style=''>  def status: Status
+</span>31 <span style=''>}
+</span>32 <span style=''>
+</span>33 <span style=''>private[impl] object ResponseGenerator {
+</span>34 <span style=''>  def addEntityLength[G[_]](entity: Entity[G], headers: Headers): Headers =
+</span>35 <span style=''>    </span><span style='background: #AEF1AE'>headers.put(entity.length.flatMap(x =&gt; `Content-Length`.fromLong(x).toOption))</span><span style=''>
+</span>36 <span style=''>}
+</span>37 <span style=''>
+</span>38 <span style=''>/**  Helper for the generation of a [[org.http4s.Response]] which will not contain a body
+</span>39 <span style=''>  *
+</span>40 <span style=''>  * While it is possible to for the [[org.http4s.Response]] manually, the EntityResponseGenerators
+</span>41 <span style=''>  * offer shortcut syntax to make intention clear and concise.
+</span>42 <span style=''>  *
+</span>43 <span style=''>  * @example {{{
+</span>44 <span style=''>  * val resp: F[Response] = Status.Continue()
+</span>45 <span style=''>  * }}}
+</span>46 <span style=''>  */
+</span>47 <span style=''>trait EmptyResponseGenerator[F[_], G[_]] extends Any with ResponseGenerator {
+</span>48 <span style=''>  def apply()(implicit F: Applicative[F]): F[Response[G]] = </span><span style='background: #AEF1AE'>F.pure(Response[G](status))</span><span style=''>
+</span>49 <span style=''>
+</span>50 <span style=''>  def headers(header: Header.ToRaw, _headers: Header.ToRaw*)(implicit
+</span>51 <span style=''>      F: Applicative[F]
+</span>52 <span style=''>  ): F[Response[G]] =
+</span>53 <span style=''>    </span><span style='background: #F0ADAD'>F.pure(Response[G](status, headers = Headers(header :: _headers.toList)))</span><span style=''>
+</span>54 <span style=''>}
+</span>55 <span style=''>
+</span>56 <span style=''>/** Helper for the generation of a [[org.http4s.Response]] which may contain a body
+</span>57 <span style=''>  *
+</span>58 <span style=''>  * While it is possible to construct the [[org.http4s.Response]]
+</span>59 <span style=''>  * manually, the EntityResponseGenerators offer shortcut syntax to
+</span>60 <span style=''>  * make intention clear and concise.
+</span>61 <span style=''>  *
+</span>62 <span style=''>  * @example {{{
+</span>63 <span style=''>  * val resp: IO[Response] = Ok(&quot;Hello world!&quot;)
+</span>64 <span style=''>  * }}}
+</span>65 <span style=''>  */
+</span>66 <span style=''>trait EntityResponseGenerator[F[_], G[_]] extends Any with ResponseGenerator {
+</span>67 <span style=''>  def liftG: FunctionK[G, F]
+</span>68 <span style=''>
+</span>69 <span style=''>  def apply()(implicit F: Applicative[F]): F[Response[G]] =
+</span>70 <span style=''>    </span><span style='background: #AEF1AE'>F.pure(Response[G](status, headers = Headers(List(`Content-Length`.zero))))</span><span style=''>
+</span>71 <span style=''>
+</span>72 <span style=''>  def headers(header: Header.ToRaw, _headers: Header.ToRaw*)(implicit
+</span>73 <span style=''>      F: Applicative[F]
+</span>74 <span style=''>  ): F[Response[G]] =
+</span>75 <span style=''>    </span><span style='background: #F0ADAD'>F.pure(
+</span>76 <span style=''></span><span style='background: #F0ADAD'>      Response[G](
+</span>77 <span style=''></span><span style='background: #F0ADAD'>        status,
+</span>78 <span style=''></span><span style='background: #F0ADAD'>        headers = Headers(`Content-Length`.zero) ++ Headers(header :: _headers.toList),
+</span>79 <span style=''></span><span style='background: #F0ADAD'>      )
+</span>80 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>81 <span style=''>
+</span>82 <span style=''>  def apply[A](body: G[A])(implicit F: Monad[F], w: EntityEncoder[G, A]): F[Response[G]] =
+</span>83 <span style=''>    </span><span style='background: #F0ADAD'>F.flatMap(liftG(body))(apply[A](_))</span><span style=''>
+</span>84 <span style=''>
+</span>85 <span style=''>  def apply[A](body: A, headers: Header.ToRaw*)(implicit
+</span>86 <span style=''>      F: Applicative[F],
+</span>87 <span style=''>      w: EntityEncoder[G, A],
+</span>88 <span style=''>  ): F[Response[G]] = {
+</span>89 <span style=''>    val h = </span><span style='background: #AEF1AE'>w.headers |+| Headers(headers)</span><span style=''>
+</span>90 <span style=''>    val entity = </span><span style='background: #AEF1AE'>w.toEntity(body)</span><span style=''>
+</span>91 <span style=''>    </span><span style='background: #AEF1AE'>F.pure(Response[G](status = status, headers = addEntityLength(entity, h), body = entity.body))</span><span style=''>
+</span>92 <span style=''>  }
+</span>93 <span style=''>}
+</span>94 <span style=''>
+</span>95 <span style=''>/** Helper for the generation of a [[org.http4s.Response]] which may contain
+</span>96 <span style=''>  * a Location header and may contain a body.
+</span>97 <span style=''>  *
+</span>98 <span style=''>  * A 300, 301, 302, 303, 307 and 308 status SHOULD contain a Location header, which
+</span>99 <span style=''>  * distinguishes this from other `EntityResponseGenerator`s.
+</span>100 <span style=''>  */
+</span>101 <span style=''>trait LocationResponseGenerator[F[_], G[_]] extends Any with EntityResponseGenerator[F, G] {
+</span>102 <span style=''>  def apply(location: Location)(implicit F: Applicative[F]): F[Response[G]] =
+</span>103 <span style=''>    </span><span style='background: #AEF1AE'>F.pure(Response[G](status = status, headers = Headers(`Content-Length`.zero, location)))</span><span style=''>
+</span>104 <span style=''>
+</span>105 <span style=''>  def apply[A](location: Location, body: A, headers: Header.ToRaw*)(implicit
+</span>106 <span style=''>      F: Applicative[F],
+</span>107 <span style=''>      w: EntityEncoder[G, A],
+</span>108 <span style=''>  ): F[Response[G]] = {
+</span>109 <span style=''>    val h = </span><span style='background: #AEF1AE'>w.headers |+| Headers(location, headers)</span><span style=''>
+</span>110 <span style=''>    val entity = </span><span style='background: #AEF1AE'>w.toEntity(body)</span><span style=''>
+</span>111 <span style=''>    </span><span style='background: #AEF1AE'>F.pure(Response[G](status = status, headers = addEntityLength(entity, h), body = entity.body))</span><span style=''>
+</span>112 <span style=''>  }
+</span>113 <span style=''>}
+</span>114 <span style=''>
+</span>115 <span style=''>/** Helper for the generation of a [[org.http4s.Response]] which must contain
+</span>116 <span style=''>  * a WWW-Authenticate header and may contain a body.
+</span>117 <span style=''>  *
+</span>118 <span style=''>  * A 401 status MUST contain a `WWW-Authenticate` header, which
+</span>119 <span style=''>  * distinguishes this from other `ResponseGenerator`s.
+</span>120 <span style=''>  */
+</span>121 <span style=''>trait WwwAuthenticateResponseGenerator[F[_], G[_]] extends Any with ResponseGenerator {
+</span>122 <span style=''>  def apply(authenticate: `WWW-Authenticate`, headers: Header.ToRaw*)(implicit
+</span>123 <span style=''>      F: Applicative[F]
+</span>124 <span style=''>  ): F[Response[G]] =
+</span>125 <span style=''>    </span><span style='background: #F0ADAD'>F.pure(
+</span>126 <span style=''></span><span style='background: #F0ADAD'>      Response[G](status, headers = Headers(`Content-Length`.zero, authenticate, headers))
+</span>127 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>128 <span style=''>
+</span>129 <span style=''>  def apply[A](authenticate: `WWW-Authenticate`, body: A, headers: Header.ToRaw*)(implicit
+</span>130 <span style=''>      F: Applicative[F],
+</span>131 <span style=''>      w: EntityEncoder[G, A],
+</span>132 <span style=''>  ): F[Response[G]] = {
+</span>133 <span style=''>    val h = </span><span style='background: #F0ADAD'>w.headers |+| Headers(authenticate, headers)</span><span style=''>
+</span>134 <span style=''>    val entity = </span><span style='background: #F0ADAD'>w.toEntity(body)</span><span style=''>
+</span>135 <span style=''>    </span><span style='background: #F0ADAD'>F.pure(Response[G](status = status, headers = addEntityLength(entity, h), body = entity.body))</span><span style=''>
+</span>136 <span style=''>  }
+</span>137 <span style=''>}
+</span>138 <span style=''>
+</span>139 <span style=''>/** Helper for the generation of a [[org.http4s.Response]] which must contain
+</span>140 <span style=''>  * an Allow header and may contain a body.
+</span>141 <span style=''>  *
+</span>142 <span style=''>  * A 405 status MUST contain an `Allow` header, which
+</span>143 <span style=''>  * distinguishes this from other `ResponseGenerator`s.
+</span>144 <span style=''>  */
+</span>145 <span style=''>trait AllowResponseGenerator[F[_], G[_]] extends Any with ResponseGenerator {
+</span>146 <span style=''>  def apply(allow: Allow, headers: Header.ToRaw*)(implicit F: Applicative[F]): F[Response[G]] =
+</span>147 <span style=''>    </span><span style='background: #F0ADAD'>F.pure(Response[G](status, headers = Headers(`Content-Length`.zero, allow, headers)))</span><span style=''>
+</span>148 <span style=''>
+</span>149 <span style=''>  def apply[A](allow: Allow, body: A, headers: Header.ToRaw*)(implicit
+</span>150 <span style=''>      F: Applicative[F],
+</span>151 <span style=''>      w: EntityEncoder[G, A],
+</span>152 <span style=''>  ): F[Response[G]] = {
+</span>153 <span style=''>    val h = </span><span style='background: #F0ADAD'>w.headers |+| Headers(allow, headers)</span><span style=''>
+</span>154 <span style=''>    val entity = </span><span style='background: #F0ADAD'>w.toEntity(body)</span><span style=''>
+</span>155 <span style=''>    </span><span style='background: #F0ADAD'>F.pure(Response[G](status = status, headers = addEntityLength(entity, h), body = entity.body))</span><span style=''>
+</span>156 <span style=''>  }
+</span>157 <span style=''>}
+</span>158 <span style=''>
+</span>159 <span style=''>/** Helper for the generation of a [[org.http4s.Response]] which must contain
+</span>160 <span style=''>  * a Proxy-Authenticate header and may contain a body.
+</span>161 <span style=''>  *
+</span>162 <span style=''>  * A 407 status MUST contain a `Proxy-Authenticate` header, which
+</span>163 <span style=''>  * distinguishes this from other `EntityResponseGenerator`s.
+</span>164 <span style=''>  */
+</span>165 <span style=''>trait ProxyAuthenticateResponseGenerator[F[_], G[_]] extends Any with ResponseGenerator {
+</span>166 <span style=''>  def apply(authenticate: `Proxy-Authenticate`, headers: Header.ToRaw*)(implicit
+</span>167 <span style=''>      F: Applicative[F]
+</span>168 <span style=''>  ): F[Response[G]] =
+</span>169 <span style=''>    </span><span style='background: #F0ADAD'>F.pure(
+</span>170 <span style=''></span><span style='background: #F0ADAD'>      Response[G](status, headers = Headers(`Content-Length`.zero, authenticate, headers))
+</span>171 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>172 <span style=''>
+</span>173 <span style=''>  def apply[A](authenticate: `Proxy-Authenticate`, body: A, headers: Header.ToRaw*)(implicit
+</span>174 <span style=''>      F: Applicative[F],
+</span>175 <span style=''>      w: EntityEncoder[G, A],
+</span>176 <span style=''>  ): F[Response[G]] = {
+</span>177 <span style=''>    val h = </span><span style='background: #F0ADAD'>w.headers |+| Headers(authenticate, headers)</span><span style=''>
+</span>178 <span style=''>    val entity = </span><span style='background: #F0ADAD'>w.toEntity(body)</span><span style=''>
+</span>179 <span style=''>    </span><span style='background: #F0ADAD'>F.pure(Response[G](status = status, headers = addEntityLength(entity, h), body = entity.body))</span><span style=''>
+</span>180 <span style=''>  }
+</span>181 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          7075
+        </td>
+        <td>
+          1022
+          -
+          1022
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForOption
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForOption
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          7132
+        </td>
+        <td>
+          1001
+          -
+          1066
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.foldablesToRaw
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](entity.length.flatMap[org.http4s.headers.Content-Length](((x: Long) =&gt; org.http4s.headers.Content-Length.fromLong(x).toOption)))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          6665
+        </td>
+        <td>
+          1001
+          -
+          1066
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          entity.length.flatMap[org.http4s.headers.Content-Length](((x: Long) =&gt; org.http4s.headers.Content-Length.fromLong(x).toOption))
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          6671
+        </td>
+        <td>
+          1022
+          -
+          1022
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          6886
+        </td>
+        <td>
+          989
+          -
+          1067
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.put
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.put(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](entity.length.flatMap[org.http4s.headers.Content-Length](((x: Long) =&gt; org.http4s.headers.Content-Length.fromLong(x).toOption)))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          6934
+        </td>
+        <td>
+          1028
+          -
+          1065
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.toOption
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Length.fromLong(x).toOption
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          6841
+        </td>
+        <td>
+          1022
+          -
+          1022
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          6842
+        </td>
+        <td>
+          1552
+          -
+          1571
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](EmptyResponseGenerator.this.status, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G])
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          7060
+        </td>
+        <td>
+          1560
+          -
+          1560
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          6910
+        </td>
+        <td>
+          1560
+          -
+          1560
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[G]
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          6620
+        </td>
+        <td>
+          1564
+          -
+          1570
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EmptyResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          6700
+        </td>
+        <td>
+          1545
+          -
+          1572
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]](Response.apply[G](EmptyResponseGenerator.this.status, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          7086
+        </td>
+        <td>
+          1560
+          -
+          1560
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          6652
+        </td>
+        <td>
+          1560
+          -
+          1560
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6902
+        </td>
+        <td>
+          1731
+          -
+          1765
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply({
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.Header.ToRaw = header;
+  Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](_headers.toList.::[org.http4s.Header.ToRaw](rassoc$1))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+})
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7087
+        </td>
+        <td>
+          1709
+          -
+          1709
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6656
+        </td>
+        <td>
+          1709
+          -
+          1709
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6686
+        </td>
+        <td>
+          1701
+          -
+          1766
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6599
+        </td>
+        <td>
+          1746
+          -
+          1746
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7119
+        </td>
+        <td>
+          1694
+          -
+          1767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = EmptyResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = Headers.apply({
+    final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.Header.ToRaw = header;
+    Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](_headers.toList.::[org.http4s.Header.ToRaw](rassoc$1))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+  });
+  &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$6: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6876
+        </td>
+        <td>
+          1746
+          -
+          1764
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.::
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          _headers.toList.::[org.http4s.Header.ToRaw](rassoc$1)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7136
+        </td>
+        <td>
+          1713
+          -
+          1719
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EmptyResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6816
+        </td>
+        <td>
+          1709
+          -
+          1709
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7016
+        </td>
+        <td>
+          1746
+          -
+          1764
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](_headers.toList.::[org.http4s.Header.ToRaw](rassoc$1))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6588
+        </td>
+        <td>
+          2293
+          -
+          2360
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](x$1, x$3, x$2, x$4, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6851
+        </td>
+        <td>
+          2301
+          -
+          2301
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          7057
+        </td>
+        <td>
+          2286
+          -
+          2361
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$1: org.http4s.Status = EntityResponseGenerator.this.status;
+  &lt;artifact&gt; val x$2: org.http4s.Headers = Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.headers.Content-Length](scala.`package`.List.apply[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero))(((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))));
+  &lt;artifact&gt; val x$3: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$4: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[G];
+  &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$1, x$3, x$2, x$4, x$5)
+})
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6818
+        </td>
+        <td>
+          2323
+          -
+          2359
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.headers.Content-Length](scala.`package`.List.apply[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero))(((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          7072
+        </td>
+        <td>
+          2331
+          -
+          2358
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.headers.Content-Length](scala.`package`.List.apply[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero))(((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6904
+        </td>
+        <td>
+          2335
+          -
+          2335
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6638
+        </td>
+        <td>
+          2335
+          -
+          2335
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          7122
+        </td>
+        <td>
+          2301
+          -
+          2301
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6571
+        </td>
+        <td>
+          2301
+          -
+          2301
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6601
+        </td>
+        <td>
+          2336
+          -
+          2357
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6879
+        </td>
+        <td>
+          2305
+          -
+          2311
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          7028
+        </td>
+        <td>
+          2331
+          -
+          2358
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          6556
+        </td>
+        <td>
+          2483
+          -
+          2627
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = EntityResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)).++(Headers.apply({
+    final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$2: org.http4s.Header.ToRaw = header;
+    Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](_headers.toList.::[org.http4s.Header.ToRaw](rassoc$2))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+  }));
+  &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$6: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          6794
+        </td>
+        <td>
+          2505
+          -
+          2505
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          6830
+        </td>
+        <td>
+          2497
+          -
+          2621
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          6653
+        </td>
+        <td>
+          2505
+          -
+          2505
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7065
+        </td>
+        <td>
+          2505
+          -
+          2505
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          6923
+        </td>
+        <td>
+          2518
+          -
+          2524
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          6809
+        </td>
+        <td>
+          2552
+          -
+          2573
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7110
+        </td>
+        <td>
+          2593
+          -
+          2593
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7044
+        </td>
+        <td>
+          2544
+          -
+          2612
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)).++(Headers.apply({
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$2: org.http4s.Header.ToRaw = header;
+  Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](_headers.toList.::[org.http4s.Header.ToRaw](rassoc$2))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          6574
+        </td>
+        <td>
+          2593
+          -
+          2611
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.::
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          _headers.toList.::[org.http4s.Header.ToRaw](rassoc$2)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          6592
+        </td>
+        <td>
+          2578
+          -
+          2612
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply({
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$2: org.http4s.Header.ToRaw = header;
+  Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](_headers.toList.::[org.http4s.Header.ToRaw](rassoc$2))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+})
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7076
+        </td>
+        <td>
+          2569
+          -
+          2569
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          6642
+        </td>
+        <td>
+          2552
+          -
+          2573
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          6845
+        </td>
+        <td>
+          2593
+          -
+          2611
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](_headers.toList.::[org.http4s.Header.ToRaw](rassoc$2))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          7147
+        </td>
+        <td>
+          2734
+          -
+          2745
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityResponseGenerator.this.liftG.apply[A](body)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          6880
+        </td>
+        <td>
+          2747
+          -
+          2758
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.dsl.impl.EntityResponseGenerator.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityResponseGenerator.this.apply[A](x$1)(F, w)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          6577
+        </td>
+        <td>
+          2724
+          -
+          2759
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.flatMap[A, org.http4s.Response[G]](EntityResponseGenerator.this.liftG.apply[A](body))(((x$1: A) =&gt; EntityResponseGenerator.this.apply[A](x$1)(F, w)))
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          7099
+        </td>
+        <td>
+          2931
+          -
+          2938
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6752
+        </td>
+        <td>
+          2911
+          -
+          2911
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headersMonoid
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.Headers.headersMonoid
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6635
+        </td>
+        <td>
+          2931
+          -
+          2931
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          7047
+        </td>
+        <td>
+          2909
+          -
+          2918
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityEncoder.headers
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          w.headers
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6559
+        </td>
+        <td>
+          2909
+          -
+          2939
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[org.http4s.Headers](w.headers)(http4s.this.Headers.headersMonoid).|+|(Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))))
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6822
+        </td>
+        <td>
+          2923
+          -
+          2939
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          7123
+        </td>
+        <td>
+          2957
+          -
+          2973
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          w.toEntity(body)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          7090
+        </td>
+        <td>
+          2985
+          -
+          3071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          6806
+        </td>
+        <td>
+          2978
+          -
+          3072
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = EntityResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = ResponseGenerator.addEntityLength[[_]G[_]](entity, h);
+  &lt;artifact&gt; val x$5: org.http4s.EntityBody[G] @scala.reflect.internal.annotations.uncheckedBounds = entity.body;
+  &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          6641
+        </td>
+        <td>
+          2993
+          -
+          2993
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          6862
+        </td>
+        <td>
+          3006
+          -
+          3012
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          6787
+        </td>
+        <td>
+          2993
+          -
+          2993
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          7032
+        </td>
+        <td>
+          3059
+          -
+          3070
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.body
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          entity.body
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          6586
+        </td>
+        <td>
+          3024
+          -
+          3050
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.addEntityLength
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResponseGenerator.addEntityLength[[_]G[_]](entity, h)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6537
+        </td>
+        <td>
+          3549
+          -
+          3549
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6988
+        </td>
+        <td>
+          3541
+          -
+          3621
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](x$1, x$3, x$2, x$4, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          7063
+        </td>
+        <td>
+          3549
+          -
+          3549
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6563
+        </td>
+        <td>
+          3562
+          -
+          3568
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          LocationResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6811
+        </td>
+        <td>
+          3549
+          -
+          3549
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6865
+        </td>
+        <td>
+          3605
+          -
+          3605
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          7023
+        </td>
+        <td>
+          3611
+          -
+          3611
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Location.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Location.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6987
+        </td>
+        <td>
+          3588
+          -
+          3609
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6852
+        </td>
+        <td>
+          3534
+          -
+          3622
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$1: org.http4s.Status = LocationResponseGenerator.this.status;
+  &lt;artifact&gt; val x$2: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](location)(headers.this.Location.headerInstance));
+  &lt;artifact&gt; val x$3: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$4: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[G];
+  &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$1, x$3, x$2, x$4, x$5)
+})
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6759
+        </td>
+        <td>
+          3611
+          -
+          3619
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](location)(headers.this.Location.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6627
+        </td>
+        <td>
+          3580
+          -
+          3620
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](location)(headers.this.Location.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6621
+        </td>
+        <td>
+          3588
+          -
+          3609
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          7009
+        </td>
+        <td>
+          3792
+          -
+          3832
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[org.http4s.Headers](w.headers)(http4s.this.Headers.headersMonoid).|+|(Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](location)(headers.this.Location.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          6629
+        </td>
+        <td>
+          3814
+          -
+          3822
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](location)(headers.this.Location.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          6575
+        </td>
+        <td>
+          3792
+          -
+          3801
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityEncoder.headers
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          w.headers
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          6557
+        </td>
+        <td>
+          3806
+          -
+          3832
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](location)(headers.this.Location.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          6796
+        </td>
+        <td>
+          3824
+          -
+          3831
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          7104
+        </td>
+        <td>
+          3824
+          -
+          3824
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          6783
+        </td>
+        <td>
+          3814
+          -
+          3814
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Location.headerInstance
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Location.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          7025
+        </td>
+        <td>
+          3794
+          -
+          3794
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headersMonoid
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.Headers.headersMonoid
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          6854
+        </td>
+        <td>
+          3850
+          -
+          3866
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          w.toEntity(body)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          6785
+        </td>
+        <td>
+          3952
+          -
+          3963
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.body
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          entity.body
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          6546
+        </td>
+        <td>
+          3871
+          -
+          3965
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = LocationResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = ResponseGenerator.addEntityLength[[_]G[_]](entity, h);
+  &lt;artifact&gt; val x$5: org.http4s.EntityBody[G] @scala.reflect.internal.annotations.uncheckedBounds = entity.body;
+  &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          7105
+        </td>
+        <td>
+          3886
+          -
+          3886
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          7018
+        </td>
+        <td>
+          3917
+          -
+          3943
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.addEntityLength
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResponseGenerator.addEntityLength[[_]G[_]](entity, h)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          6799
+        </td>
+        <td>
+          3878
+          -
+          3964
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          6578
+        </td>
+        <td>
+          3899
+          -
+          3905
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          LocationResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          6526
+        </td>
+        <td>
+          3886
+          -
+          3886
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          6774
+        </td>
+        <td>
+          4452
+          -
+          4556
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = WwwAuthenticateResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.WWW-Authenticate](authenticate)(headers.this.WWW-Authenticate.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))));
+  &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$6: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          7030
+        </td>
+        <td>
+          4466
+          -
+          4550
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          7033
+        </td>
+        <td>
+          4504
+          -
+          4525
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6614
+        </td>
+        <td>
+          4521
+          -
+          4521
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6602
+        </td>
+        <td>
+          4474
+          -
+          4474
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6527
+        </td>
+        <td>
+          4527
+          -
+          4539
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.WWW-Authenticate](authenticate)(headers.this.WWW-Authenticate.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6736
+        </td>
+        <td>
+          4474
+          -
+          4474
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6999
+        </td>
+        <td>
+          4474
+          -
+          4474
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6547
+        </td>
+        <td>
+          4496
+          -
+          4549
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.WWW-Authenticate](authenticate)(headers.this.WWW-Authenticate.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6834
+        </td>
+        <td>
+          4541
+          -
+          4548
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6771
+        </td>
+        <td>
+          4527
+          -
+          4527
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.WWW-Authenticate.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.WWW-Authenticate.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          7010
+        </td>
+        <td>
+          4478
+          -
+          4484
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WwwAuthenticateResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          7091
+        </td>
+        <td>
+          4541
+          -
+          4541
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          6863
+        </td>
+        <td>
+          4504
+          -
+          4525
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          7078
+        </td>
+        <td>
+          4742
+          -
+          4742
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headersMonoid
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http4s.this.Headers.headersMonoid
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          6737
+        </td>
+        <td>
+          4776
+          -
+          4783
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          6593
+        </td>
+        <td>
+          4754
+          -
+          4784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.WWW-Authenticate](authenticate)(headers.this.WWW-Authenticate.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          7002
+        </td>
+        <td>
+          4776
+          -
+          4776
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          6509
+        </td>
+        <td>
+          4740
+          -
+          4749
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityEncoder.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          w.headers
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          7017
+        </td>
+        <td>
+          4740
+          -
+          4784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[org.http4s.Headers](w.headers)(http4s.this.Headers.headersMonoid).|+|(Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.WWW-Authenticate](authenticate)(headers.this.WWW-Authenticate.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          6795
+        </td>
+        <td>
+          4762
+          -
+          4762
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.WWW-Authenticate.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.WWW-Authenticate.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          6540
+        </td>
+        <td>
+          4762
+          -
+          4774
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.WWW-Authenticate](authenticate)(headers.this.WWW-Authenticate.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          6762
+        </td>
+        <td>
+          4802
+          -
+          4818
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          w.toEntity(body)
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          6497
+        </td>
+        <td>
+          4851
+          -
+          4857
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WwwAuthenticateResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          7080
+        </td>
+        <td>
+          4869
+          -
+          4895
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.addEntityLength
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResponseGenerator.addEntityLength[[_]G[_]](entity, h)
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          6724
+        </td>
+        <td>
+          4830
+          -
+          4916
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          6613
+        </td>
+        <td>
+          4823
+          -
+          4917
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = WwwAuthenticateResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = ResponseGenerator.addEntityLength[[_]G[_]](entity, h);
+  &lt;artifact&gt; val x$5: org.http4s.EntityBody[G] @scala.reflect.internal.annotations.uncheckedBounds = entity.body;
+  &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          6831
+        </td>
+        <td>
+          4904
+          -
+          4915
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.body
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          entity.body
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          6532
+        </td>
+        <td>
+          4838
+          -
+          4838
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          6980
+        </td>
+        <td>
+          4838
+          -
+          4838
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6534
+        </td>
+        <td>
+          5413
+          -
+          5418
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Allow](allow)(headers.this.Allow.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          7048
+        </td>
+        <td>
+          5364
+          -
+          5370
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          AllowResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6833
+        </td>
+        <td>
+          5413
+          -
+          5413
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Allow.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Allow.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6519
+        </td>
+        <td>
+          5360
+          -
+          5360
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          7051
+        </td>
+        <td>
+          5360
+          -
+          5360
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6773
+        </td>
+        <td>
+          5360
+          -
+          5360
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6955
+        </td>
+        <td>
+          5352
+          -
+          5429
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6823
+        </td>
+        <td>
+          5345
+          -
+          5430
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = AllowResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Allow](allow)(headers.this.Allow.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))));
+  &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$6: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6727
+        </td>
+        <td>
+          5420
+          -
+          5427
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6951
+        </td>
+        <td>
+          5390
+          -
+          5411
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6499
+        </td>
+        <td>
+          5407
+          -
+          5407
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6753
+        </td>
+        <td>
+          5390
+          -
+          5411
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6609
+        </td>
+        <td>
+          5382
+          -
+          5428
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Allow](allow)(headers.this.Allow.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6998
+        </td>
+        <td>
+          5420
+          -
+          5420
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          6761
+        </td>
+        <td>
+          5623
+          -
+          5630
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          7054
+        </td>
+        <td>
+          5623
+          -
+          5623
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          6949
+        </td>
+        <td>
+          5594
+          -
+          5631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[org.http4s.Headers](w.headers)(http4s.this.Headers.headersMonoid).|+|(Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Allow](allow)(headers.this.Allow.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))))
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          6521
+        </td>
+        <td>
+          5608
+          -
+          5631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Allow](allow)(headers.this.Allow.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          6745
+        </td>
+        <td>
+          5616
+          -
+          5616
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Allow.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Allow.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          6610
+        </td>
+        <td>
+          5616
+          -
+          5621
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Allow](allow)(headers.this.Allow.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          6565
+        </td>
+        <td>
+          5594
+          -
+          5603
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityEncoder.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          w.headers
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          7001
+        </td>
+        <td>
+          5596
+          -
+          5596
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headersMonoid
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http4s.this.Headers.headersMonoid
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          6825
+        </td>
+        <td>
+          5649
+          -
+          5665
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          w.toEntity(body)
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          7039
+        </td>
+        <td>
+          5685
+          -
+          5685
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          6764
+        </td>
+        <td>
+          5677
+          -
+          5763
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          6746
+        </td>
+        <td>
+          5751
+          -
+          5762
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.body
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          entity.body
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          6512
+        </td>
+        <td>
+          5670
+          -
+          5764
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = AllowResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = ResponseGenerator.addEntityLength[[_]G[_]](entity, h);
+  &lt;artifact&gt; val x$5: org.http4s.EntityBody[G] @scala.reflect.internal.annotations.uncheckedBounds = entity.body;
+  &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          7175
+        </td>
+        <td>
+          5685
+          -
+          5685
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          6541
+        </td>
+        <td>
+          5698
+          -
+          5704
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          AllowResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          6989
+        </td>
+        <td>
+          5716
+          -
+          5742
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.addEntityLength
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResponseGenerator.addEntityLength[[_]G[_]](entity, h)
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          6714
+        </td>
+        <td>
+          6265
+          -
+          6369
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = ProxyAuthenticateResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Proxy-Authenticate](authenticate)(headers.this.Proxy-Authenticate.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))));
+  &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$6: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6564
+        </td>
+        <td>
+          6287
+          -
+          6287
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6683
+        </td>
+        <td>
+          6287
+          -
+          6287
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6713
+        </td>
+        <td>
+          6340
+          -
+          6340
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Proxy-Authenticate.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Proxy-Authenticate.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6515
+        </td>
+        <td>
+          6309
+          -
+          6362
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Proxy-Authenticate](authenticate)(headers.this.Proxy-Authenticate.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          7050
+        </td>
+        <td>
+          6354
+          -
+          6354
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6954
+        </td>
+        <td>
+          6287
+          -
+          6287
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6813
+        </td>
+        <td>
+          6317
+          -
+          6338
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6538
+        </td>
+        <td>
+          6334
+          -
+          6334
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6756
+        </td>
+        <td>
+          6354
+          -
+          6361
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6992
+        </td>
+        <td>
+          6317
+          -
+          6338
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6983
+        </td>
+        <td>
+          6279
+          -
+          6363
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[G](x$3, x$5, x$4, x$6, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          6950
+        </td>
+        <td>
+          6291
+          -
+          6297
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ProxyAuthenticateResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          7168
+        </td>
+        <td>
+          6340
+          -
+          6352
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Proxy-Authenticate](authenticate)(headers.this.Proxy-Authenticate.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          6528
+        </td>
+        <td>
+          6577
+          -
+          6589
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Proxy-Authenticate](authenticate)(headers.this.Proxy-Authenticate.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          6701
+        </td>
+        <td>
+          6591
+          -
+          6598
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          6937
+        </td>
+        <td>
+          6591
+          -
+          6591
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          7035
+        </td>
+        <td>
+          6557
+          -
+          6557
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headersMonoid
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http4s.this.Headers.headersMonoid
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          6789
+        </td>
+        <td>
+          6577
+          -
+          6577
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Proxy-Authenticate.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Proxy-Authenticate.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          7169
+        </td>
+        <td>
+          6555
+          -
+          6564
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityEncoder.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          w.headers
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          7013
+        </td>
+        <td>
+          6555
+          -
+          6599
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[org.http4s.Headers](w.headers)(http4s.this.Headers.headersMonoid).|+|(Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Proxy-Authenticate](authenticate)(headers.this.Proxy-Authenticate.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))))
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          6549
+        </td>
+        <td>
+          6569
+          -
+          6599
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Proxy-Authenticate](authenticate)(headers.this.Proxy-Authenticate.headerInstance), Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          6716
+        </td>
+        <td>
+          6617
+          -
+          6633
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          w.toEntity(body)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          6552
+        </td>
+        <td>
+          6638
+          -
+          6732
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[G]]({
+  &lt;artifact&gt; val x$3: org.http4s.Status = ProxyAuthenticateResponseGenerator.this.status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = ResponseGenerator.addEntityLength[[_]G[_]](entity, h);
+  &lt;artifact&gt; val x$5: org.http4s.EntityBody[G] @scala.reflect.internal.annotations.uncheckedBounds = entity.body;
+  &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[G];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[G];
+  Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+})
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          6692
+        </td>
+        <td>
+          6645
+          -
+          6731
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[G](x$3, x$6, x$4, x$5, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          6940
+        </td>
+        <td>
+          6653
+          -
+          6653
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          7158
+        </td>
+        <td>
+          6666
+          -
+          6672
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ProxyAuthenticateResponseGenerator.this.status
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          6778
+        </td>
+        <td>
+          6719
+          -
+          6730
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.body
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          entity.body
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          7038
+        </td>
+        <td>
+          6684
+          -
+          6710
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.dsl.impl.ResponseGenerator.addEntityLength
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResponseGenerator.addEntityLength[[_]G[_]](entity, h)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          6511
+        </td>
+        <td>
+          6653
+          -
+          6653
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[G]
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

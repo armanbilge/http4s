@@ -1,0 +1,4187 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/circe/CirceInstances.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2015 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package circe
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.data.NonEmptyList
+</span>21 <span style=''>import cats.effect.Concurrent
+</span>22 <span style=''>import cats.syntax.either._
+</span>23 <span style=''>import fs2.Chunk
+</span>24 <span style=''>import fs2.Pull
+</span>25 <span style=''>import fs2.Stream
+</span>26 <span style=''>import io.circe._
+</span>27 <span style=''>import io.circe.jawn._
+</span>28 <span style=''>import org.http4s.headers.`Content-Type`
+</span>29 <span style=''>import org.http4s.jawn.JawnInstances
+</span>30 <span style=''>import org.typelevel.jawn.ParseException
+</span>31 <span style=''>import org.typelevel.jawn.fs2.unwrapJsonArray
+</span>32 <span style=''>
+</span>33 <span style=''>import java.nio.ByteBuffer
+</span>34 <span style=''>
+</span>35 <span style=''>trait CirceInstances extends JawnInstances {
+</span>36 <span style=''>  protected val circeSupportParser =
+</span>37 <span style=''>    </span><span style='background: #AEF1AE'>new CirceSupportParser(maxValueSize = None, allowDuplicateKeys = false)</span><span style=''>
+</span>38 <span style=''>
+</span>39 <span style=''>  import circeSupportParser.facade
+</span>40 <span style=''>
+</span>41 <span style=''>  protected def defaultPrinter: Printer = </span><span style='background: #AEF1AE'>Printer.noSpaces</span><span style=''>
+</span>42 <span style=''>
+</span>43 <span style=''>  protected def circeParseExceptionMessage: ParsingFailure =&gt; DecodeFailure =
+</span>44 <span style=''>    CirceInstances.defaultCirceParseError
+</span>45 <span style=''>
+</span>46 <span style=''>  protected def jsonDecodeError: (Json, NonEmptyList[DecodingFailure]) =&gt; DecodeFailure =
+</span>47 <span style=''>    CirceInstances.defaultJsonDecodeError
+</span>48 <span style=''>
+</span>49 <span style=''>  def jsonDecoderIncremental[F[_]: Concurrent]: EntityDecoder[F, Json] =
+</span>50 <span style=''>    </span><span style='background: #AEF1AE'>this.jawnDecoder[F, Json]</span><span style=''>
+</span>51 <span style=''>
+</span>52 <span style=''>  def jsonDecoderByteBuffer[F[_]: Concurrent]: EntityDecoder[F, Json] =
+</span>53 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaType.application.json)(jsonDecoderByteBufferImpl[F])</span><span style=''>
+</span>54 <span style=''>
+</span>55 <span style=''>  private def jsonDecoderByteBufferImpl[F[_]: Concurrent](m: Media[F]): DecodeResult[F, Json] =
+</span>56 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.collectBinary(m).subflatMap { chunk =&gt;
+</span>57 <span style=''></span><span style='background: #AEF1AE'>      val bb = ByteBuffer.wrap(chunk.toArray)
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      if (bb.hasRemaining)
+</span>59 <span style=''></span><span style='background: #AEF1AE'>        circeSupportParser
+</span>60 <span style=''></span><span style='background: #AEF1AE'>          .parseFromByteBuffer(bb)
+</span>61 <span style=''></span><span style='background: #AEF1AE'>          .toEither
+</span>62 <span style=''></span><span style='background: #AEF1AE'>          .leftMap(e =&gt; circeParseExceptionMessage(ParsingFailure(e.getMessage(), e)))
+</span>63 <span style=''></span><span style='background: #AEF1AE'>      else
+</span>64 <span style=''></span><span style='background: #AEF1AE'>        Left(jawnEmptyBodyMessage)
+</span>65 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>66 <span style=''>
+</span>67 <span style=''>  // default cutoff value is based on benchmarks results
+</span>68 <span style=''>  implicit def jsonDecoder[F[_]: Concurrent]: EntityDecoder[F, Json] =
+</span>69 <span style=''>    </span><span style='background: #AEF1AE'>jsonDecoderAdaptive(cutoff = 100000, MediaType.application.json)</span><span style=''>
+</span>70 <span style=''>
+</span>71 <span style=''>  def jsonDecoderAdaptive[F[_]: Concurrent](
+</span>72 <span style=''>      cutoff: Long,
+</span>73 <span style=''>      r1: MediaRange,
+</span>74 <span style=''>      rs: MediaRange*
+</span>75 <span style=''>  ): EntityDecoder[F, Json] =
+</span>76 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(r1, rs: _*) { msg =&gt;
+</span>77 <span style=''></span><span style='background: #AEF1AE'>      msg.contentLength match {
+</span>78 <span style=''></span><span style='background: #AEF1AE'>        case Some(contentLength) if contentLength &lt; cutoff =&gt;
+</span>79 <span style=''></span><span style='background: #AEF1AE'>          jsonDecoderByteBufferImpl[F](msg)
+</span>80 <span style=''></span><span style='background: #AEF1AE'>        case _ =&gt; this.jawnDecoderImpl[F, Json](msg)
+</span>81 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>82 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>83 <span style=''>
+</span>84 <span style=''>  def jsonOf[F[_]: Concurrent, A: Decoder]: EntityDecoder[F, A] =
+</span>85 <span style=''>    </span><span style='background: #AEF1AE'>jsonOfWithMedia(MediaType.application.json)</span><span style=''>
+</span>86 <span style=''>
+</span>87 <span style=''>  def jsonOfSensitive[F[_]: Concurrent, A: Decoder](redact: Json =&gt; String): EntityDecoder[F, A] =
+</span>88 <span style=''>    </span><span style='background: #AEF1AE'>jsonOfWithSensitiveMedia(redact, MediaType.application.json)</span><span style=''>
+</span>89 <span style=''>
+</span>90 <span style=''>  def jsonOfWithMedia[F[_], A](r1: MediaRange, rs: MediaRange*)(implicit
+</span>91 <span style=''>      F: Concurrent[F],
+</span>92 <span style=''>      decoder: Decoder[A],
+</span>93 <span style=''>  ): EntityDecoder[F, A] =
+</span>94 <span style=''>    </span><span style='background: #AEF1AE'>jsonOfWithMediaHelper[F, A](r1, jsonDecodeError, rs: _*)</span><span style=''>
+</span>95 <span style=''>
+</span>96 <span style=''>  def jsonOfWithSensitiveMedia[F[_], A](
+</span>97 <span style=''>      redact: Json =&gt; String,
+</span>98 <span style=''>      r1: MediaRange,
+</span>99 <span style=''>      rs: MediaRange*
+</span>100 <span style=''>  )(implicit F: Concurrent[F], decoder: Decoder[A]): EntityDecoder[F, A] =
+</span>101 <span style=''>    </span><span style='background: #AEF1AE'>jsonOfWithMediaHelper[F, A](
+</span>102 <span style=''></span><span style='background: #AEF1AE'>      r1,
+</span>103 <span style=''></span><span style='background: #AEF1AE'>      (json, nelDecodeFailures) =&gt;
+</span>104 <span style=''></span><span style='background: #AEF1AE'>        CirceInstances.jsonDecodeErrorHelper(json, redact, nelDecodeFailures),
+</span>105 <span style=''></span><span style='background: #AEF1AE'>      rs: _*
+</span>106 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>107 <span style=''>
+</span>108 <span style=''>  private def jsonOfWithMediaHelper[F[_], A](
+</span>109 <span style=''>      r1: MediaRange,
+</span>110 <span style=''>      decodeErrorHandler: (Json, NonEmptyList[DecodingFailure]) =&gt; DecodeFailure,
+</span>111 <span style=''>      rs: MediaRange*
+</span>112 <span style=''>  )(implicit F: Concurrent[F], decoder: Decoder[A]): EntityDecoder[F, A] =
+</span>113 <span style=''>    </span><span style='background: #AEF1AE'>jsonDecoderAdaptive[F](cutoff = 100000, r1, rs: _*).flatMapR { json =&gt;
+</span>114 <span style=''></span><span style='background: #AEF1AE'>      decoder
+</span>115 <span style=''></span><span style='background: #AEF1AE'>        .decodeJson(json)
+</span>116 <span style=''></span><span style='background: #AEF1AE'>        .fold(
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          failure =&gt; DecodeResult.failureT(decodeErrorHandler(json, NonEmptyList.one(failure))),
+</span>118 <span style=''></span><span style='background: #AEF1AE'>          DecodeResult.successT(_),
+</span>119 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>120 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>121 <span style=''>
+</span>122 <span style=''>  /** An [[EntityDecoder]] that uses circe's accumulating decoder for decoding the JSON.
+</span>123 <span style=''>    *
+</span>124 <span style=''>    * In case of a failure, returns an [[InvalidMessageBodyFailure]] with the cause containing
+</span>125 <span style=''>    * a [[DecodingFailures]] exception, from which the errors can be extracted.
+</span>126 <span style=''>    */
+</span>127 <span style=''>  def accumulatingJsonOf[F[_], A](implicit
+</span>128 <span style=''>      F: Concurrent[F],
+</span>129 <span style=''>      decoder: Decoder[A],
+</span>130 <span style=''>  ): EntityDecoder[F, A] =
+</span>131 <span style=''>    </span><span style='background: #AEF1AE'>jsonDecoder[F].flatMapR { json =&gt;
+</span>132 <span style=''></span><span style='background: #AEF1AE'>      decoder
+</span>133 <span style=''></span><span style='background: #AEF1AE'>        .decodeAccumulating(json.hcursor)
+</span>134 <span style=''></span><span style='background: #AEF1AE'>        .fold(
+</span>135 <span style=''></span><span style='background: #AEF1AE'>          failures =&gt; DecodeResult.failureT(jsonDecodeError(json, failures)),
+</span>136 <span style=''></span><span style='background: #AEF1AE'>          DecodeResult.successT(_),
+</span>137 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>138 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>139 <span style=''>
+</span>140 <span style=''>  implicit def jsonEncoder[F[_]]: EntityEncoder[F, Json] =
+</span>141 <span style=''>    </span><span style='background: #AEF1AE'>jsonEncoderWithPrinter(defaultPrinter)</span><span style=''>
+</span>142 <span style=''>
+</span>143 <span style=''>  def jsonEncoderWithPrinter[F[_]](printer: Printer): EntityEncoder[F, Json] =
+</span>144 <span style=''>    </span><span style='background: #AEF1AE'>EntityEncoder[F, Chunk[Byte]]
+</span>145 <span style=''></span><span style='background: #AEF1AE'>      .contramap[Json](CirceInstances.fromJsonToChunk(printer))
+</span>146 <span style=''></span><span style='background: #AEF1AE'>      .withContentType(`Content-Type`(MediaType.application.json))</span><span style=''>
+</span>147 <span style=''>
+</span>148 <span style=''>  def jsonEncoderOf[F[_], A: Encoder]: EntityEncoder[F, A] =
+</span>149 <span style=''>    </span><span style='background: #AEF1AE'>jsonEncoderWithPrinterOf(defaultPrinter)</span><span style=''>
+</span>150 <span style=''>
+</span>151 <span style=''>  def jsonEncoderWithPrinterOf[F[_], A](printer: Printer)(implicit
+</span>152 <span style=''>      encoder: Encoder[A]
+</span>153 <span style=''>  ): EntityEncoder[F, A] =
+</span>154 <span style=''>    </span><span style='background: #AEF1AE'>jsonEncoderWithPrinter[F](printer).contramap[A](encoder.apply)</span><span style=''>
+</span>155 <span style=''>
+</span>156 <span style=''>  implicit def streamJsonArrayEncoder[F[_]]: EntityEncoder[F, Stream[F, Json]] =
+</span>157 <span style=''>    </span><span style='background: #AEF1AE'>streamJsonArrayEncoderWithPrinter(defaultPrinter)</span><span style=''>
+</span>158 <span style=''>
+</span>159 <span style=''>  implicit def streamJsonArrayDecoder[F[_]: Concurrent]: EntityDecoder[F, Stream[F, Json]] =
+</span>160 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaType.application.json) { media =&gt;
+</span>161 <span style=''></span><span style='background: #AEF1AE'>      DecodeResult.successT(media.body.chunks.through(unwrapJsonArray))
+</span>162 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>163 <span style=''>
+</span>164 <span style=''>  /** An [[EntityEncoder]] for a [[fs2.Stream]] of JSONs, which will encode it as a single JSON array. */
+</span>165 <span style=''>  def streamJsonArrayEncoderWithPrinter[F[_]](printer: Printer): EntityEncoder[F, Stream[F, Json]] =
+</span>166 <span style=''>    </span><span style='background: #AEF1AE'>EntityEncoder
+</span>167 <span style=''></span><span style='background: #AEF1AE'>      .streamEncoder[F, Chunk[Byte]]
+</span>168 <span style=''></span><span style='background: #AEF1AE'>      .contramap[Stream[F, Json]] { stream =&gt;
+</span>169 <span style=''></span><span style='background: #AEF1AE'>        stream.through(CirceInstances.streamedJsonArray(printer)).chunks
+</span>170 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>171 <span style=''></span><span style='background: #AEF1AE'>      .withContentType(`Content-Type`(MediaType.application.json))</span><span style=''>
+</span>172 <span style=''>
+</span>173 <span style=''>  def streamJsonArrayEncoderOf[F[_], A: Encoder]: EntityEncoder[F, Stream[F, A]] =
+</span>174 <span style=''>    </span><span style='background: #AEF1AE'>streamJsonArrayEncoderWithPrinterOf(defaultPrinter)</span><span style=''>
+</span>175 <span style=''>
+</span>176 <span style=''>  /** An [[EntityEncoder]] for a [[fs2.Stream]] of values, which will encode it as a single JSON array. */
+</span>177 <span style=''>  def streamJsonArrayEncoderWithPrinterOf[F[_], A](printer: Printer)(implicit
+</span>178 <span style=''>      encoder: Encoder[A]
+</span>179 <span style=''>  ): EntityEncoder[F, Stream[F, A]] =
+</span>180 <span style=''>    </span><span style='background: #AEF1AE'>streamJsonArrayEncoderWithPrinter[F](printer).contramap[Stream[F, A]](_.map(encoder.apply))</span><span style=''>
+</span>181 <span style=''>
+</span>182 <span style=''>  implicit val encodeUri: Encoder[Uri] =
+</span>183 <span style=''>    </span><span style='background: #AEF1AE'>Encoder.encodeString.contramap[Uri](_.toString)</span><span style=''>
+</span>184 <span style=''>
+</span>185 <span style=''>  implicit val decodeUri: Decoder[Uri] =
+</span>186 <span style=''>    </span><span style='background: #AEF1AE'>Decoder.decodeString.emap { str =&gt;
+</span>187 <span style=''></span><span style='background: #AEF1AE'>      Uri.fromString(str).leftMap(_ =&gt; </span><span style='background: #F0ADAD'>&quot;Uri&quot;</span><span style='background: #AEF1AE'>)
+</span>188 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>189 <span style=''>
+</span>190 <span style=''>  implicit final def toMessageSyntax[F[_]](req: Message[F]): CirceInstances.MessageSyntax[F] =
+</span>191 <span style=''>    </span><span style='background: #AEF1AE'>new CirceInstances.MessageSyntax(req)</span><span style=''>
+</span>192 <span style=''>}
+</span>193 <span style=''>
+</span>194 <span style=''>sealed abstract case class CirceInstancesBuilder private[circe] (
+</span>195 <span style=''>    defaultPrinter: Printer = Printer.noSpaces,
+</span>196 <span style=''>    jsonDecodeError: (Json, NonEmptyList[DecodingFailure]) =&gt; DecodeFailure =
+</span>197 <span style=''>      CirceInstances.defaultJsonDecodeError,
+</span>198 <span style=''>    circeParseExceptionMessage: ParsingFailure =&gt; DecodeFailure =
+</span>199 <span style=''>      CirceInstances.defaultCirceParseError,
+</span>200 <span style=''>    jawnParseExceptionMessage: ParseException =&gt; DecodeFailure =
+</span>201 <span style=''>      JawnInstances.defaultJawnParseExceptionMessage,
+</span>202 <span style=''>    jawnEmptyBodyMessage: DecodeFailure = JawnInstances.defaultJawnEmptyBodyMessage,
+</span>203 <span style=''>    circeSupportParser: CirceSupportParser =
+</span>204 <span style=''>      new CirceSupportParser(maxValueSize = None, allowDuplicateKeys = false),
+</span>205 <span style=''>) { self =&gt;
+</span>206 <span style=''>  def withPrinter(pp: Printer): CirceInstancesBuilder =
+</span>207 <span style=''>    </span><span style='background: #AEF1AE'>this.copy(defaultPrinter = pp)</span><span style=''>
+</span>208 <span style=''>
+</span>209 <span style=''>  def withJsonDecodeError(
+</span>210 <span style=''>      f: (Json, NonEmptyList[DecodingFailure]) =&gt; DecodeFailure
+</span>211 <span style=''>  ): CirceInstancesBuilder =
+</span>212 <span style=''>    </span><span style='background: #AEF1AE'>this.copy(jsonDecodeError = f)</span><span style=''>
+</span>213 <span style=''>
+</span>214 <span style=''>  def withJawnParseExceptionMessage(f: ParseException =&gt; DecodeFailure): CirceInstancesBuilder =
+</span>215 <span style=''>    </span><span style='background: #AEF1AE'>this.copy(jawnParseExceptionMessage = f)</span><span style=''>
+</span>216 <span style=''>  def withCirceParseExceptionMessage(f: ParsingFailure =&gt; DecodeFailure): CirceInstancesBuilder =
+</span>217 <span style=''>    </span><span style='background: #AEF1AE'>this.copy(circeParseExceptionMessage = f)</span><span style=''>
+</span>218 <span style=''>
+</span>219 <span style=''>  def withEmptyBodyMessage(df: DecodeFailure): CirceInstancesBuilder =
+</span>220 <span style=''>    </span><span style='background: #AEF1AE'>this.copy(jawnEmptyBodyMessage = df)</span><span style=''>
+</span>221 <span style=''>
+</span>222 <span style=''>  def withCirceSupportParser(csp: CirceSupportParser): CirceInstancesBuilder =
+</span>223 <span style=''>    </span><span style='background: #AEF1AE'>this.copy(circeSupportParser = csp)</span><span style=''>
+</span>224 <span style=''>
+</span>225 <span style=''>  protected def copy(
+</span>226 <span style=''>      defaultPrinter: Printer = self.defaultPrinter,
+</span>227 <span style=''>      jsonDecodeError: (Json, NonEmptyList[DecodingFailure]) =&gt; DecodeFailure =
+</span>228 <span style=''>        self.jsonDecodeError,
+</span>229 <span style=''>      circeParseExceptionMessage: ParsingFailure =&gt; DecodeFailure = self.circeParseExceptionMessage,
+</span>230 <span style=''>      jawnParseExceptionMessage: ParseException =&gt; DecodeFailure = self.jawnParseExceptionMessage,
+</span>231 <span style=''>      jawnEmptyBodyMessage: DecodeFailure = self.jawnEmptyBodyMessage,
+</span>232 <span style=''>      circeSupportParser: CirceSupportParser = self.circeSupportParser,
+</span>233 <span style=''>  ): CirceInstancesBuilder =
+</span>234 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> CirceInstancesBuilder(
+</span>235 <span style=''>      defaultPrinter,
+</span>236 <span style=''>      jsonDecodeError,
+</span>237 <span style=''>      circeParseExceptionMessage,
+</span>238 <span style=''>      jawnParseExceptionMessage,
+</span>239 <span style=''>      jawnEmptyBodyMessage,
+</span>240 <span style=''>      circeSupportParser,
+</span>241 <span style=''>    ) {}
+</span>242 <span style=''>
+</span>243 <span style=''>  def build: CirceInstances =
+</span>244 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> CirceInstances {
+</span>245 <span style=''>      override val circeSupportParser: CirceSupportParser = </span><span style='background: #AEF1AE'>self.circeSupportParser</span><span style=''>
+</span>246 <span style=''>      override val defaultPrinter: Printer = </span><span style='background: #AEF1AE'>self.defaultPrinter</span><span style=''>
+</span>247 <span style=''>      override val jsonDecodeError: (Json, NonEmptyList[DecodingFailure]) =&gt; DecodeFailure =
+</span>248 <span style=''>        </span><span style='background: #AEF1AE'>self.jsonDecodeError</span><span style=''>
+</span>249 <span style=''>      override val circeParseExceptionMessage: ParsingFailure =&gt; DecodeFailure =
+</span>250 <span style=''>        </span><span style='background: #AEF1AE'>self.circeParseExceptionMessage</span><span style=''>
+</span>251 <span style=''>      override val jawnParseExceptionMessage: ParseException =&gt; DecodeFailure =
+</span>252 <span style=''>        </span><span style='background: #AEF1AE'>self.jawnParseExceptionMessage</span><span style=''>
+</span>253 <span style=''>      override val jawnEmptyBodyMessage: DecodeFailure = </span><span style='background: #AEF1AE'>self.jawnEmptyBodyMessage</span><span style=''>
+</span>254 <span style=''>    }
+</span>255 <span style=''>}
+</span>256 <span style=''>
+</span>257 <span style=''>object CirceInstances {
+</span>258 <span style=''>
+</span>259 <span style=''>  def withPrinter(p: Printer): CirceInstancesBuilder =
+</span>260 <span style=''>    </span><span style='background: #AEF1AE'>builder.withPrinter(p)</span><span style=''>
+</span>261 <span style=''>
+</span>262 <span style=''>  val builder: CirceInstancesBuilder = </span><span style='background: #AEF1AE'>new</span><span style=''> CirceInstancesBuilder() {}
+</span>263 <span style=''>
+</span>264 <span style=''>  // These are lazy since they are used when initializing the `builder`!
+</span>265 <span style=''>
+</span>266 <span style=''>  private[circe] lazy val defaultCirceParseError: ParsingFailure =&gt; DecodeFailure =
+</span>267 <span style=''>    pe =&gt; MalformedMessageBodyFailure(&quot;Invalid JSON&quot;, Some(pe))
+</span>268 <span style=''>
+</span>269 <span style=''>  private[circe] lazy val defaultJsonDecodeError
+</span>270 <span style=''>      : (Json, NonEmptyList[DecodingFailure]) =&gt; DecodeFailure = { (json, failures) =&gt;
+</span>271 <span style=''>    jsonDecodeErrorHelper(json, _.toString, failures)
+</span>272 <span style=''>  }
+</span>273 <span style=''>
+</span>274 <span style=''>  private def jsonDecodeErrorHelper(
+</span>275 <span style=''>      json: Json,
+</span>276 <span style=''>      jsonToString: Json =&gt; String,
+</span>277 <span style=''>      failures: NonEmptyList[DecodingFailure],
+</span>278 <span style=''>  ): DecodeFailure = {
+</span>279 <span style=''>
+</span>280 <span style=''>    val str: String = </span><span style='background: #AEF1AE'>jsonToString(json)</span><span style=''>
+</span>281 <span style=''>
+</span>282 <span style=''>    </span><span style='background: #AEF1AE'>InvalidMessageBodyFailure(
+</span>283 <span style=''></span><span style='background: #AEF1AE'>      s&quot;Could not decode JSON: $str&quot;,
+</span>284 <span style=''></span><span style='background: #AEF1AE'>      if (failures.tail.isEmpty) Some(failures.head) else Some(DecodingFailures(failures)),
+</span>285 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>286 <span style=''>  }
+</span>287 <span style=''>
+</span>288 <span style=''>  // Constant byte chunks for the stream as JSON array encoder.
+</span>289 <span style=''>
+</span>290 <span style=''>  private def fromJsonToChunk(printer: Printer)(json: Json): Chunk[Byte] =
+</span>291 <span style=''>    </span><span style='background: #AEF1AE'>Chunk.ByteBuffer.view(printer.printToByteBuffer(json))</span><span style=''>
+</span>292 <span style=''>
+</span>293 <span style=''>  private def streamedJsonArray[F[_]](printer: Printer)(s: Stream[F, Json]): Stream[F, Byte] =
+</span>294 <span style=''>    </span><span style='background: #AEF1AE'>s.pull.uncons1.flatMap {
+</span>295 <span style=''></span><span style='background: #AEF1AE'>      case None =&gt; Pull.output(emptyArray)
+</span>296 <span style=''></span><span style='background: #AEF1AE'>      case Some((hd, tl)) =&gt;
+</span>297 <span style=''></span><span style='background: #AEF1AE'>        Pull.output(
+</span>298 <span style=''></span><span style='background: #AEF1AE'>          Chunk.concat(Vector(CirceInstances.openBrace, fromJsonToChunk(printer)(hd)))
+</span>299 <span style=''></span><span style='background: #AEF1AE'>        ) &gt;&gt; // Output First Json As Chunk with leading `[`
+</span>300 <span style=''></span><span style='background: #AEF1AE'>          tl.repeatPull {
+</span>301 <span style=''></span><span style='background: #AEF1AE'>            _.uncons.flatMap {
+</span>302 <span style=''></span><span style='background: #AEF1AE'>              case None =&gt; Pull.pure(None)
+</span>303 <span style=''></span><span style='background: #AEF1AE'>              case Some((hd, tl)) =&gt;
+</span>304 <span style=''></span><span style='background: #AEF1AE'>                val interspersed = {
+</span>305 <span style=''></span><span style='background: #AEF1AE'>                  val bldr = Vector.newBuilder[Chunk[Byte]]
+</span>306 <span style=''></span><span style='background: #AEF1AE'>                  bldr.sizeHint(hd.size * 2)
+</span>307 <span style=''></span><span style='background: #AEF1AE'>                  hd.foreach { o =&gt;
+</span>308 <span style=''></span><span style='background: #AEF1AE'>                    bldr += CirceInstances.comma
+</span>309 <span style=''></span><span style='background: #AEF1AE'>                    bldr += fromJsonToChunk(printer)(o)
+</span>310 <span style=''></span><span style='background: #AEF1AE'>                  }
+</span>311 <span style=''></span><span style='background: #AEF1AE'>                  Chunk.concat(bldr.result())
+</span>312 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>313 <span style=''></span><span style='background: #AEF1AE'>                Pull.output(interspersed) &gt;&gt; Pull.pure(Some(tl))
+</span>314 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>315 <span style=''></span><span style='background: #AEF1AE'>          }.pull
+</span>316 <span style=''></span><span style='background: #AEF1AE'>            .echo &gt;&gt;
+</span>317 <span style=''></span><span style='background: #AEF1AE'>          Pull.output(closeBrace)
+</span>318 <span style=''></span><span style='background: #AEF1AE'>    }.stream</span><span style=''>
+</span>319 <span style=''>
+</span>320 <span style=''>  private final val openBrace: Chunk[Byte] =
+</span>321 <span style=''>    </span><span style='background: #AEF1AE'>Chunk.singleton('['.toByte)</span><span style=''>
+</span>322 <span style=''>
+</span>323 <span style=''>  private final val closeBrace: Chunk[Byte] =
+</span>324 <span style=''>    </span><span style='background: #AEF1AE'>Chunk.singleton(']'.toByte)</span><span style=''>
+</span>325 <span style=''>
+</span>326 <span style=''>  private final val emptyArray: Chunk[Byte] =
+</span>327 <span style=''>    </span><span style='background: #AEF1AE'>Chunk.array(Array('['.toByte, ']'.toByte))</span><span style=''>
+</span>328 <span style=''>
+</span>329 <span style=''>  private final val comma: Chunk[Byte] =
+</span>330 <span style=''>    </span><span style='background: #AEF1AE'>Chunk.singleton(','.toByte)</span><span style=''>
+</span>331 <span style=''>
+</span>332 <span style=''>  // Extension methods.
+</span>333 <span style=''>
+</span>334 <span style=''>  private[circe] final class MessageSyntax[F[_]](private val req: Message[F]) extends AnyVal {
+</span>335 <span style=''>    def asJson(implicit F: JsonDecoder[F]): F[Json] =
+</span>336 <span style=''>      </span><span style='background: #F0ADAD'>F.asJson(req)</span><span style=''>
+</span>337 <span style=''>
+</span>338 <span style=''>    def asJsonDecode[A](implicit F: JsonDecoder[F], decoder: Decoder[A]): F[A] =
+</span>339 <span style=''>      </span><span style='background: #F0ADAD'>F.asJsonDecode(req)</span><span style=''>
+</span>340 <span style=''>
+</span>341 <span style=''>    def decodeJson[A](implicit F: Concurrent[F], decoder: Decoder[A]): F[A] =
+</span>342 <span style=''>      </span><span style='background: #AEF1AE'>req.as(F, jsonOf[F, A])</span><span style=''>
+</span>343 <span style=''>
+</span>344 <span style=''>    def json(implicit F: Concurrent[F]): F[Json] =
+</span>345 <span style=''>      </span><span style='background: #F0ADAD'>req.as(F, jsonDecoder[F])</span><span style=''>
+</span>346 <span style=''>  }
+</span>347 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          5511
+        </td>
+        <td>
+          1154
+          -
+          1159
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          5629
+        </td>
+        <td>
+          1127
+          -
+          1131
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          5443
+        </td>
+        <td>
+          1089
+          -
+          1160
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.circe.jawn.CirceSupportParser.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new io.circe.jawn.CirceSupportParser(scala.None, false)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          5650
+        </td>
+        <td>
+          1240
+          -
+          1256
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Printer.noSpaces
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.Printer.noSpaces
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          5526
+        </td>
+        <td>
+          1605
+          -
+          1605
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.jawn.CirceSupportParser.facade
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.circeSupportParser.facade
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          5407
+        </td>
+        <td>
+          1589
+          -
+          1614
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.jawn.JawnInstances.jawnDecoder
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.jawnDecoder[F, io.circe.Json](evidence$1, CirceInstances.this.circeSupportParser.facade)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          5622
+        </td>
+        <td>
+          1692
+          -
+          1772
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], io.circe.Json](MediaType.application.json)(((m: org.http4s.Media[F]) =&gt; CirceInstances.this.jsonDecoderByteBufferImpl[F](m)(evidence$2)))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          5543
+        </td>
+        <td>
+          1874
+          -
+          2220
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.EitherT.subflatMap
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.collectBinary[[_]F[_]](m)(evidence$3).subflatMap[org.http4s.DecodeFailure, io.circe.Json](((chunk: fs2.Chunk[Byte]) =&gt; {
+  val bb: java.nio.ByteBuffer = java.nio.ByteBuffer.wrap(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])));
+  if (bb.hasRemaining())
+    cats.syntax.`package`.either.catsSyntaxEither[Throwable, io.circe.Json](CirceInstances.this.circeSupportParser.parseFromByteBuffer(bb).toEither).leftMap[org.http4s.DecodeFailure](((e: Throwable) =&gt; CirceInstances.this.circeParseExceptionMessage.apply(io.circe.ParsingFailure.apply(e.getMessage(), e))))
+  else
+    scala.`package`.Left.apply[org.http4s.DecodeFailure, Nothing](CirceInstances.this.jawnEmptyBodyMessage)
+}))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          5422
+        </td>
+        <td>
+          2354
+          -
+          2418
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonDecoderAdaptive
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonDecoderAdaptive[[_]F[_]](100000L, MediaType.application.json)(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          5631
+        </td>
+        <td>
+          2563
+          -
+          2811
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], io.circe.Json](r1, (rs: _*))(((msg: org.http4s.Media[[_]F[_]]) =&gt; msg.contentLength match {
+  case (value: Long): Some[Long]((contentLength @ _)) if contentLength.&lt;(cutoff) =&gt; CirceInstances.this.jsonDecoderByteBufferImpl[F](msg)(evidence$5)
+  case _ =&gt; this.jawnDecoderImpl[F, io.circe.Json](msg)(evidence$5, CirceInstances.this.circeSupportParser.facade)
+}))(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          5512
+        </td>
+        <td>
+          2883
+          -
+          2926
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonOfWithMedia
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonOfWithMedia[[_]F[_], A](MediaType.application.json)(evidence$6, evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          5456
+        </td>
+        <td>
+          3031
+          -
+          3091
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonOfWithSensitiveMedia
+        </td>
+        <td>
+          org.http4s.circe.circesensitivedataentitydecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonOfWithSensitiveMedia[[_]F[_], A](redact, MediaType.application.json)(evidence$8, evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          5643
+        </td>
+        <td>
+          3248
+          -
+          3304
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonOfWithMediaHelper
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonOfWithMediaHelper[F, A](r1, CirceInstances.this.jsonDecodeError, (rs: _*))(F, decoder)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5523
+        </td>
+        <td>
+          3500
+          -
+          3671
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonOfWithMediaHelper
+        </td>
+        <td>
+          org.http4s.circe.circesensitivedataentitydecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonOfWithMediaHelper[F, A](r1, ((json: io.circe.Json, nelDecodeFailures: cats.data.NonEmptyList[io.circe.DecodingFailure]) =&gt; CirceInstances.jsonDecodeErrorHelper(json, redact, nelDecodeFailures)), (rs: _*))(F, decoder)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          5409
+        </td>
+        <td>
+          3924
+          -
+          4198
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.flatMapR
+        </td>
+        <td>
+          org.http4s.circe.circesensitivedataentitydecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonDecoderAdaptive[F](100000L, r1, (rs: _*))(F).flatMapR[A](((json: io.circe.Json) =&gt; decoder.decodeJson(json).fold[org.http4s.DecodeResult[[_]F[_],A]](((failure: io.circe.DecodingFailure) =&gt; DecodeResult.failureT[[_]F[_], A](decodeErrorHandler.apply(json, cats.data.NonEmptyList.one[io.circe.DecodingFailure](failure)))(F)), ((x$1: A) =&gt; DecodeResult.successT[[_]F[_], A](x$1)(F)))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          5621
+        </td>
+        <td>
+          4602
+          -
+          4836
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.flatMapR
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonDecoder[F](F).flatMapR[A](((json: io.circe.Json) =&gt; decoder.decodeAccumulating(json.hcursor).fold[org.http4s.DecodeResult[[_]F[_],A]](((failures: cats.data.NonEmptyList[io.circe.DecodingFailure]) =&gt; DecodeResult.failureT[[_]F[_], A](CirceInstances.this.jsonDecodeError.apply(json, failures))(F)), ((x$2: A) =&gt; DecodeResult.successT[[_]F[_], A](x$2)(F)))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          5558
+        </td>
+        <td>
+          4924
+          -
+          4938
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.defaultPrinter
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.defaultPrinter
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          5434
+        </td>
+        <td>
+          4901
+          -
+          4939
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonEncoderWithPrinter
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonEncoderWithPrinter[[_]F[_]](CirceInstances.this.defaultPrinter)
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          5625
+        </td>
+        <td>
+          5037
+          -
+          5037
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.chunkEncoder
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.EntityEncoder.chunkEncoder[[_]F[_]]
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          5516
+        </td>
+        <td>
+          5077
+          -
+          5116
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.fromJsonToChunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.fromJsonToChunk(printer)(json)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          5648
+        </td>
+        <td>
+          5024
+          -
+          5184
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.withContentType
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.apply[F, fs2.Chunk[Byte]](http4s.this.EntityEncoder.chunkEncoder[[_]F[_]]).contramap[io.circe.Json](((json: io.circe.Json) =&gt; CirceInstances.fromJsonToChunk(printer)(json))).withContentType(org.http4s.headers.Content-Type.apply(MediaType.application.json))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          5384
+        </td>
+        <td>
+          5141
+          -
+          5183
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.apply
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Type.apply(MediaType.application.json)
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          5539
+        </td>
+        <td>
+          5251
+          -
+          5291
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonEncoderWithPrinterOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonEncoderWithPrinterOf[[_]F[_], A](CirceInstances.this.defaultPrinter)(evidence$10)
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          5410
+        </td>
+        <td>
+          5465
+          -
+          5478
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.circe.Encoder.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          encoder.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          5616
+        </td>
+        <td>
+          5417
+          -
+          5479
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.jsonEncoderWithPrinter[F](printer).contramap[A](((a: A) =&gt; encoder.apply(a)))
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          5559
+        </td>
+        <td>
+          5600
+          -
+          5614
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.defaultPrinter
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.defaultPrinter
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          5428
+        </td>
+        <td>
+          5566
+          -
+          5615
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.streamJsonArrayEncoderWithPrinter
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.streamJsonArrayEncoderWithPrinter[[_]F[_]](CirceInstances.this.defaultPrinter)
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          5639
+        </td>
+        <td>
+          5714
+          -
+          5853
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], fs2.Stream[[x]F[x],io.circe.Json]](MediaType.application.json)(((media: org.http4s.Media[[_]F[_]]) =&gt; DecodeResult.successT[[_]F[_], fs2.Stream[[x]F[x],io.circe.Json]](media.body.chunks.through[[x]F[x], io.circe.Json](org.typelevel.jawn.fs2.`package`.unwrapJsonArray[[_]F[_], fs2.Chunk[Byte], io.circe.Json](evidence$11, fs2.this.Absorbable.ByteChunkAbsorbable[fs2.Chunk[Byte]], CirceInstances.this.circeSupportParser.facade)))(evidence$11)))(evidence$11)
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          5517
+        </td>
+        <td>
+          6100
+          -
+          6100
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.chunkEncoder
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.EntityEncoder.chunkEncoder[[_]F[_]]
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          5649
+        </td>
+        <td>
+          6171
+          -
+          6235
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.chunks
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          stream.through[[x]F[x], Byte](((s: fs2.Stream[[_]F[_],io.circe.Json]) =&gt; CirceInstances.streamedJsonArray[[_]F[_]](printer)(s))).chunks
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          5398
+        </td>
+        <td>
+          6186
+          -
+          6227
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.streamedJsonArray
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.streamedJsonArray[[_]F[_]](printer)(s)
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          5406
+        </td>
+        <td>
+          6066
+          -
+          6310
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.withContentType
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.streamEncoder[F, fs2.Chunk[Byte]](http4s.this.EntityEncoder.chunkEncoder[[_]F[_]]).contramap[fs2.Stream[F,io.circe.Json]](((stream: fs2.Stream[F,io.circe.Json]) =&gt; stream.through[[x]F[x], Byte](((s: fs2.Stream[[_]F[_],io.circe.Json]) =&gt; CirceInstances.streamedJsonArray[[_]F[_]](printer)(s))).chunks)).withContentType(org.http4s.headers.Content-Type.apply(MediaType.application.json))
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          5540
+        </td>
+        <td>
+          6267
+          -
+          6309
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.apply
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Type.apply(MediaType.application.json)
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          5617
+        </td>
+        <td>
+          6399
+          -
+          6450
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.streamJsonArrayEncoderWithPrinterOf
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.streamJsonArrayEncoderWithPrinterOf[[_]F[_], A](CirceInstances.this.defaultPrinter)(evidence$12)
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          5547
+        </td>
+        <td>
+          6781
+          -
+          6794
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.circe.Encoder.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          encoder.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          5429
+        </td>
+        <td>
+          6775
+          -
+          6795
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.map
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$3.map[io.circe.Json](((a: A) =&gt; encoder.apply(a)))
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          5640
+        </td>
+        <td>
+          6705
+          -
+          6796
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.streamJsonArrayEncoderWithPrinter[F](printer).contramap[fs2.Stream[F,A]](((x$3: fs2.Stream[F,A]) =&gt; x$3.map[io.circe.Json](((a: A) =&gt; encoder.apply(a)))))
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          5508
+        </td>
+        <td>
+          6879
+          -
+          6889
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderable.toString
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.toString()
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          5399
+        </td>
+        <td>
+          6843
+          -
+          6890
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.circe.Encoder.contramap
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.Encoder.encodeString.contramap[org.http4s.Uri](((x$4: org.http4s.Uri) =&gt; x$4.toString()))
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          5607
+        </td>
+        <td>
+          6937
+          -
+          7023
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.circe.Decoder.emap
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.Decoder.decodeString.emap[org.http4s.Uri](((str: String) =&gt; cats.syntax.`package`.either.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Uri](Uri.fromString(str)).leftMap[String](((x$5: org.http4s.ParseFailure) =&gt; &quot;Uri&quot;))))
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          5645
+        </td>
+        <td>
+          6978
+          -
+          6997
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.fromString
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.fromString(str)
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          5408
+        </td>
+        <td>
+          6978
+          -
+          7017
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherOps.leftMap
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.either.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Uri](Uri.fromString(str)).leftMap[String](((x$5: org.http4s.ParseFailure) =&gt; &quot;Uri&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          5533
+        </td>
+        <td>
+          7011
+          -
+          7016
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;Uri&quot;
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          5485
+        </td>
+        <td>
+          7124
+          -
+          7161
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.MessageSyntax.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.circe.CirceInstances.MessageSyntax[[_]F[_]](req)
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          5646
+        </td>
+        <td>
+          7918
+          -
+          7918
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$6
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          5532
+        </td>
+        <td>
+          7913
+          -
+          7943
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy(pp, this.copy$default$2, this.copy$default$3, this.copy$default$4, this.copy$default$5, this.copy$default$6)
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          5430
+        </td>
+        <td>
+          7918
+          -
+          7918
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          5623
+        </td>
+        <td>
+          7918
+          -
+          7918
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          5509
+        </td>
+        <td>
+          7918
+          -
+          7918
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          5395
+        </td>
+        <td>
+          7918
+          -
+          7918
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$5
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          5505
+        </td>
+        <td>
+          8069
+          -
+          8099
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy(x$2, x$1, x$3, x$4, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          5403
+        </td>
+        <td>
+          8074
+          -
+          8074
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          5624
+        </td>
+        <td>
+          8074
+          -
+          8074
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$6
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          5498
+        </td>
+        <td>
+          8074
+          -
+          8074
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          5608
+        </td>
+        <td>
+          8074
+          -
+          8074
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          5425
+        </td>
+        <td>
+          8074
+          -
+          8074
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$5
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          5396
+        </td>
+        <td>
+          8207
+          -
+          8207
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          5584
+        </td>
+        <td>
+          8207
+          -
+          8207
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          5542
+        </td>
+        <td>
+          8207
+          -
+          8207
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          5497
+        </td>
+        <td>
+          8202
+          -
+          8242
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy(x$2, x$3, x$4, x$1, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          5605
+        </td>
+        <td>
+          8207
+          -
+          8207
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$6
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          5404
+        </td>
+        <td>
+          8207
+          -
+          8207
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$5
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          5439
+        </td>
+        <td>
+          8350
+          -
+          8350
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          5397
+        </td>
+        <td>
+          8350
+          -
+          8350
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$5
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          5642
+        </td>
+        <td>
+          8350
+          -
+          8350
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          5531
+        </td>
+        <td>
+          8345
+          -
+          8386
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy(x$2, x$3, x$1, x$4, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          5504
+        </td>
+        <td>
+          8350
+          -
+          8350
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          5602
+        </td>
+        <td>
+          8350
+          -
+          8350
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$6
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          5610
+        </td>
+        <td>
+          8468
+          -
+          8468
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          5418
+        </td>
+        <td>
+          8468
+          -
+          8468
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          5499
+        </td>
+        <td>
+          8468
+          -
+          8468
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          5636
+        </td>
+        <td>
+          8468
+          -
+          8468
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$6
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          5424
+        </td>
+        <td>
+          8468
+          -
+          8468
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          5518
+        </td>
+        <td>
+          8463
+          -
+          8499
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy(x$2, x$3, x$4, x$5, x$1, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          5601
+        </td>
+        <td>
+          8589
+          -
+          8589
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          5493
+        </td>
+        <td>
+          8584
+          -
+          8619
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy(x$2, x$3, x$4, x$5, x$6, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          5414
+        </td>
+        <td>
+          8589
+          -
+          8589
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          5390
+        </td>
+        <td>
+          8589
+          -
+          8589
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          5611
+        </td>
+        <td>
+          8589
+          -
+          8589
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$5
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          5527
+        </td>
+        <td>
+          8589
+          -
+          8589
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          5375
+        </td>
+        <td>
+          9182
+          -
+          9185
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          5604
+        </td>
+        <td>
+          9419
+          -
+          9422
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          5630
+        </td>
+        <td>
+          9500
+          -
+          9523
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.circeSupportParser
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstancesBuilder.this.circeSupportParser
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          5502
+        </td>
+        <td>
+          9569
+          -
+          9588
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.defaultPrinter
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstancesBuilder.this.defaultPrinter
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          5391
+        </td>
+        <td>
+          9690
+          -
+          9710
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.jsonDecodeError
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstancesBuilder.this.jsonDecodeError
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          5588
+        </td>
+        <td>
+          9800
+          -
+          9831
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.circeParseExceptionMessage
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstancesBuilder.this.circeParseExceptionMessage
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          5528
+        </td>
+        <td>
+          9920
+          -
+          9950
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.jawnParseExceptionMessage
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstancesBuilder.this.jawnParseExceptionMessage
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          5413
+        </td>
+        <td>
+          10008
+          -
+          10033
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.jawnEmptyBodyMessage
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstancesBuilder.this.jawnEmptyBodyMessage
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          5495
+        </td>
+        <td>
+          10127
+          -
+          10149
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstancesBuilder.withPrinter
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.builder.withPrinter(p)
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          5367
+        </td>
+        <td>
+          10190
+          -
+          10193
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          5632
+        </td>
+        <td>
+          10824
+          -
+          10842
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          jsonToString.apply(json)
+        </td>
+      </tr><tr>
+        <td>
+          282
+        </td>
+        <td>
+          5368
+        </td>
+        <td>
+          10848
+          -
+          11010
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.InvalidMessageBodyFailure.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          InvalidMessageBodyFailure.apply((&quot;Could not decode JSON: &quot;.+(str): String), if (failures.tail.isEmpty)
+  scala.Some.apply[io.circe.DecodingFailure](failures.head)
+else
+  scala.Some.apply[org.http4s.circe.DecodingFailures](DecodingFailures.apply(failures)))
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          5606
+        </td>
+        <td>
+          10971
+          -
+          11003
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.circe.DecodingFailures](DecodingFailures.apply(failures))
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          5492
+        </td>
+        <td>
+          10971
+          -
+          11003
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.circe.DecodingFailures](DecodingFailures.apply(failures))
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          5524
+        </td>
+        <td>
+          10946
+          -
+          10965
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[io.circe.DecodingFailure](failures.head)
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          5419
+        </td>
+        <td>
+          10976
+          -
+          11002
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.DecodingFailures.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DecodingFailures.apply(failures)
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          5503
+        </td>
+        <td>
+          10923
+          -
+          10944
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.immutable.List.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          failures.tail.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          5589
+        </td>
+        <td>
+          10946
+          -
+          10965
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[io.circe.DecodingFailure](failures.head)
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          5383
+        </td>
+        <td>
+          10951
+          -
+          10964
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyList.head
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          failures.head
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          5633
+        </td>
+        <td>
+          11182
+          -
+          11213
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.circe.Printer.printToByteBuffer
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          printer.printToByteBuffer(json)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          5519
+        </td>
+        <td>
+          11160
+          -
+          11214
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.ByteBuffer.view
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.ByteBuffer.view(printer.printToByteBuffer(json))
+        </td>
+      </tr><tr>
+        <td>
+          294
+        </td>
+        <td>
+          5593
+        </td>
+        <td>
+          11315
+          -
+          12240
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.InvariantOps[[_]F[_], io.circe.Json](s).pull.uncons1.flatMap[[x]F[x], Byte, Unit](((x0$1: Option[(io.circe.Json, fs2.Stream[[_]F[_],io.circe.Json])]) =&gt; x0$1 match {
+  case scala.None =&gt; fs2.Pull.output[[x]fs2.Pure[x], Byte](CirceInstances.this.emptyArray)
+  case (value: (io.circe.Json, fs2.Stream[[_]F[_],io.circe.Json])): Some[(io.circe.Json, fs2.Stream[[_]F[_],io.circe.Json])]((_1: io.circe.Json, _2: fs2.Stream[[_]F[_],io.circe.Json]): (io.circe.Json, fs2.Stream[[_]F[_],io.circe.Json])((hd @ _), (tl @ _))) =&gt; fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.concat[Byte](scala.`package`.Vector.apply[fs2.Chunk[Byte]](CirceInstances.openBrace, CirceInstances.this.fromJsonToChunk(printer)(hd)))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).&gt;&gt;[[_]F[_], Byte, Unit](fs2.this.Stream.InvariantOps[[_]F[_], Byte](fs2.this.Stream.InvariantOps[[_]F[_], io.circe.Json](tl).repeatPull[Byte](((x$7: fs2.Stream.ToPull[[_]F[_],io.circe.Json]) =&gt; x$7.uncons.flatMap[[x]F[x], Byte, Option[fs2.Stream[[_]F[_],io.circe.Json]]](((x0$2: Option[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]) =&gt; x0$2 match {
+  case scala.None =&gt; fs2.Pull.pure[Nothing, None.type](scala.None)
+  case (value: (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])): Some[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]((_1: fs2.Chunk[io.circe.Json], _2: fs2.Stream[[_]F[_],io.circe.Json]): (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])((hd @ _), (tl @ _))) =&gt; {
+    val interspersed: fs2.Chunk[Byte] = {
+      val bldr: scala.collection.mutable.ReusableBuilder[fs2.Chunk[Byte],scala.collection.immutable.Vector[fs2.Chunk[Byte]]] = scala.`package`.Vector.newBuilder[fs2.Chunk[Byte]];
+      bldr.sizeHint(hd.size.*(2));
+      hd.foreach(((o: io.circe.Json) =&gt; {
+        bldr.+=(CirceInstances.comma);
+        {
+          bldr.+=(CirceInstances.this.fromJsonToChunk(printer)(o));
+          ()
+        }
+      }));
+      fs2.Chunk.concat[Byte](bldr.result())((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+    };
+    fs2.Pull.output[[x]fs2.Pure[x], Byte](interspersed).&gt;&gt;[[x]fs2.Pure[x], Byte, Some[fs2.Stream[[_]F[_],io.circe.Json]]](fs2.Pull.pure[Nothing, Some[fs2.Stream[[_]F[_],io.circe.Json]]](scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl)))
+  }
+}))))).pull.echo).&gt;&gt;[[x]F[x], Byte, Unit](fs2.Pull.output[[x]fs2.Pure[x], Byte](CirceInstances.this.closeBrace))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          5385
+        </td>
+        <td>
+          11371
+          -
+          11381
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.emptyArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.emptyArray
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          5596
+        </td>
+        <td>
+          11359
+          -
+          11382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.output
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output[[x]fs2.Pure[x], Byte](CirceInstances.this.emptyArray)
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          5618
+        </td>
+        <td>
+          11456
+          -
+          11518
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Vector.apply[fs2.Chunk[Byte]](CirceInstances.openBrace, CirceInstances.this.fromJsonToChunk(printer)(hd))
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          5420
+        </td>
+        <td>
+          11489
+          -
+          11517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.fromJsonToChunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.fromJsonToChunk(printer)(hd)
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          5494
+        </td>
+        <td>
+          11443
+          -
+          11519
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.concat
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.concat[Byte](scala.`package`.Vector.apply[fs2.Chunk[Byte]](CirceInstances.openBrace, CirceInstances.this.fromJsonToChunk(printer)(hd)))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          5470
+        </td>
+        <td>
+          11463
+          -
+          11487
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.openBrace
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.openBrace
+        </td>
+      </tr><tr>
+        <td>
+          300
+        </td>
+        <td>
+          5487
+        </td>
+        <td>
+          11590
+          -
+          12174
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.InvariantOps.repeatPull
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.InvariantOps[[_]F[_], io.circe.Json](tl).repeatPull[Byte](((x$7: fs2.Stream.ToPull[[_]F[_],io.circe.Json]) =&gt; x$7.uncons.flatMap[[x]F[x], Byte, Option[fs2.Stream[[_]F[_],io.circe.Json]]](((x0$2: Option[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]) =&gt; x0$2 match {
+  case scala.None =&gt; fs2.Pull.pure[Nothing, None.type](scala.None)
+  case (value: (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])): Some[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]((_1: fs2.Chunk[io.circe.Json], _2: fs2.Stream[[_]F[_],io.circe.Json]): (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])((hd @ _), (tl @ _))) =&gt; {
+    val interspersed: fs2.Chunk[Byte] = {
+      val bldr: scala.collection.mutable.ReusableBuilder[fs2.Chunk[Byte],scala.collection.immutable.Vector[fs2.Chunk[Byte]]] = scala.`package`.Vector.newBuilder[fs2.Chunk[Byte]];
+      bldr.sizeHint(hd.size.*(2));
+      hd.foreach(((o: io.circe.Json) =&gt; {
+        bldr.+=(CirceInstances.comma);
+        {
+          bldr.+=(CirceInstances.this.fromJsonToChunk(printer)(o));
+          ()
+        }
+      }));
+      fs2.Chunk.concat[Byte](bldr.result())((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+    };
+    fs2.Pull.output[[x]fs2.Pure[x], Byte](interspersed).&gt;&gt;[[x]fs2.Pure[x], Byte, Some[fs2.Stream[[_]F[_],io.circe.Json]]](fs2.Pull.pure[Nothing, Some[fs2.Stream[[_]F[_],io.circe.Json]]](scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl)))
+  }
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          301
+        </td>
+        <td>
+          5613
+        </td>
+        <td>
+          11618
+          -
+          12162
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$7.uncons.flatMap[[x]F[x], Byte, Option[fs2.Stream[[_]F[_],io.circe.Json]]](((x0$2: Option[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]) =&gt; x0$2 match {
+  case scala.None =&gt; fs2.Pull.pure[Nothing, None.type](scala.None)
+  case (value: (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])): Some[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]((_1: fs2.Chunk[io.circe.Json], _2: fs2.Stream[[_]F[_],io.circe.Json]): (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])((hd @ _), (tl @ _))) =&gt; {
+    val interspersed: fs2.Chunk[Byte] = {
+      val bldr: scala.collection.mutable.ReusableBuilder[fs2.Chunk[Byte],scala.collection.immutable.Vector[fs2.Chunk[Byte]]] = scala.`package`.Vector.newBuilder[fs2.Chunk[Byte]];
+      bldr.sizeHint(hd.size.*(2));
+      hd.foreach(((o: io.circe.Json) =&gt; {
+        bldr.+=(CirceInstances.comma);
+        {
+          bldr.+=(CirceInstances.this.fromJsonToChunk(printer)(o));
+          ()
+        }
+      }));
+      fs2.Chunk.concat[Byte](bldr.result())((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+    };
+    fs2.Pull.output[[x]fs2.Pure[x], Byte](interspersed).&gt;&gt;[[x]fs2.Pure[x], Byte, Some[fs2.Stream[[_]F[_],io.circe.Json]]](fs2.Pull.pure[Nothing, Some[fs2.Stream[[_]F[_],io.circe.Json]]](scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl)))
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          302
+        </td>
+        <td>
+          5379
+        </td>
+        <td>
+          11674
+          -
+          11678
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          302
+        </td>
+        <td>
+          5641
+        </td>
+        <td>
+          11664
+          -
+          11679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.pure[Nothing, None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          305
+        </td>
+        <td>
+          5520
+        </td>
+        <td>
+          11783
+          -
+          11813
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.newBuilder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Vector.newBuilder[fs2.Chunk[Byte]]
+        </td>
+      </tr><tr>
+        <td>
+          306
+        </td>
+        <td>
+          5400
+        </td>
+        <td>
+          11846
+          -
+          11857
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.*
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hd.size.*(2)
+        </td>
+      </tr><tr>
+        <td>
+          306
+        </td>
+        <td>
+          5597
+        </td>
+        <td>
+          11832
+          -
+          11858
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Builder.sizeHint
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bldr.sizeHint(hd.size.*(2))
+        </td>
+      </tr><tr>
+        <td>
+          307
+        </td>
+        <td>
+          5577
+        </td>
+        <td>
+          11877
+          -
+          12019
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hd.foreach(((o: io.circe.Json) =&gt; {
+  bldr.+=(CirceInstances.comma);
+  {
+    bldr.+=(CirceInstances.this.fromJsonToChunk(printer)(o));
+    ()
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          5477
+        </td>
+        <td>
+          11923
+          -
+          11943
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.comma
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.comma
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          5417
+        </td>
+        <td>
+          11915
+          -
+          11943
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bldr.+=(CirceInstances.comma)
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          5486
+        </td>
+        <td>
+          11964
+          -
+          11999
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bldr.+=(CirceInstances.this.fromJsonToChunk(printer)(o))
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          5620
+        </td>
+        <td>
+          11972
+          -
+          11999
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.fromJsonToChunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.fromJsonToChunk(printer)(o)
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          5380
+        </td>
+        <td>
+          11969
+          -
+          11969
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          311
+        </td>
+        <td>
+          5513
+        </td>
+        <td>
+          12051
+          -
+          12064
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.ReusableBuilder.result
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bldr.result()
+        </td>
+      </tr><tr>
+        <td>
+          311
+        </td>
+        <td>
+          5387
+        </td>
+        <td>
+          12038
+          -
+          12065
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.concat
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.concat[Byte](bldr.result())((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          313
+        </td>
+        <td>
+          5469
+        </td>
+        <td>
+          12129
+          -
+          12148
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.pure[Nothing, Some[fs2.Stream[[_]F[_],io.circe.Json]]](scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl))
+        </td>
+      </tr><tr>
+        <td>
+          313
+        </td>
+        <td>
+          5411
+        </td>
+        <td>
+          12100
+          -
+          12148
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output[[x]fs2.Pure[x], Byte](interspersed).&gt;&gt;[[x]fs2.Pure[x], Byte, Some[fs2.Stream[[_]F[_],io.circe.Json]]](fs2.Pull.pure[Nothing, Some[fs2.Stream[[_]F[_],io.circe.Json]]](scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl)))
+        </td>
+      </tr><tr>
+        <td>
+          313
+        </td>
+        <td>
+          5598
+        </td>
+        <td>
+          12139
+          -
+          12147
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl)
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          5381
+        </td>
+        <td>
+          11590
+          -
+          12197
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.ToPull.echo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.InvariantOps[[_]F[_], Byte](fs2.this.Stream.InvariantOps[[_]F[_], io.circe.Json](tl).repeatPull[Byte](((x$7: fs2.Stream.ToPull[[_]F[_],io.circe.Json]) =&gt; x$7.uncons.flatMap[[x]F[x], Byte, Option[fs2.Stream[[_]F[_],io.circe.Json]]](((x0$2: Option[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]) =&gt; x0$2 match {
+  case scala.None =&gt; fs2.Pull.pure[Nothing, None.type](scala.None)
+  case (value: (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])): Some[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]((_1: fs2.Chunk[io.circe.Json], _2: fs2.Stream[[_]F[_],io.circe.Json]): (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])((hd @ _), (tl @ _))) =&gt; {
+    val interspersed: fs2.Chunk[Byte] = {
+      val bldr: scala.collection.mutable.ReusableBuilder[fs2.Chunk[Byte],scala.collection.immutable.Vector[fs2.Chunk[Byte]]] = scala.`package`.Vector.newBuilder[fs2.Chunk[Byte]];
+      bldr.sizeHint(hd.size.*(2));
+      hd.foreach(((o: io.circe.Json) =&gt; {
+        bldr.+=(CirceInstances.comma);
+        {
+          bldr.+=(CirceInstances.this.fromJsonToChunk(printer)(o));
+          ()
+        }
+      }));
+      fs2.Chunk.concat[Byte](bldr.result())((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+    };
+    fs2.Pull.output[[x]fs2.Pure[x], Byte](interspersed).&gt;&gt;[[x]fs2.Pure[x], Byte, Some[fs2.Stream[[_]F[_],io.circe.Json]]](fs2.Pull.pure[Nothing, Some[fs2.Stream[[_]F[_],io.circe.Json]]](scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl)))
+  }
+}))))).pull.echo
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          5386
+        </td>
+        <td>
+          11420
+          -
+          12234
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.concat[Byte](scala.`package`.Vector.apply[fs2.Chunk[Byte]](CirceInstances.openBrace, CirceInstances.this.fromJsonToChunk(printer)(hd)))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).&gt;&gt;[[_]F[_], Byte, Unit](fs2.this.Stream.InvariantOps[[_]F[_], Byte](fs2.this.Stream.InvariantOps[[_]F[_], io.circe.Json](tl).repeatPull[Byte](((x$7: fs2.Stream.ToPull[[_]F[_],io.circe.Json]) =&gt; x$7.uncons.flatMap[[x]F[x], Byte, Option[fs2.Stream[[_]F[_],io.circe.Json]]](((x0$2: Option[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]) =&gt; x0$2 match {
+  case scala.None =&gt; fs2.Pull.pure[Nothing, None.type](scala.None)
+  case (value: (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])): Some[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]((_1: fs2.Chunk[io.circe.Json], _2: fs2.Stream[[_]F[_],io.circe.Json]): (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])((hd @ _), (tl @ _))) =&gt; {
+    val interspersed: fs2.Chunk[Byte] = {
+      val bldr: scala.collection.mutable.ReusableBuilder[fs2.Chunk[Byte],scala.collection.immutable.Vector[fs2.Chunk[Byte]]] = scala.`package`.Vector.newBuilder[fs2.Chunk[Byte]];
+      bldr.sizeHint(hd.size.*(2));
+      hd.foreach(((o: io.circe.Json) =&gt; {
+        bldr.+=(CirceInstances.comma);
+        {
+          bldr.+=(CirceInstances.this.fromJsonToChunk(printer)(o));
+          ()
+        }
+      }));
+      fs2.Chunk.concat[Byte](bldr.result())((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+    };
+    fs2.Pull.output[[x]fs2.Pure[x], Byte](interspersed).&gt;&gt;[[x]fs2.Pure[x], Byte, Some[fs2.Stream[[_]F[_],io.circe.Json]]](fs2.Pull.pure[Nothing, Some[fs2.Stream[[_]F[_],io.circe.Json]]](scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl)))
+  }
+}))))).pull.echo).&gt;&gt;[[x]F[x], Byte, Unit](fs2.Pull.output[[x]fs2.Pure[x], Byte](CirceInstances.this.closeBrace))
+        </td>
+      </tr><tr>
+        <td>
+          317
+        </td>
+        <td>
+          5510
+        </td>
+        <td>
+          12211
+          -
+          12234
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.output
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output[[x]fs2.Pure[x], Byte](CirceInstances.this.closeBrace)
+        </td>
+      </tr><tr>
+        <td>
+          317
+        </td>
+        <td>
+          5572
+        </td>
+        <td>
+          12223
+          -
+          12233
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.closeBrace
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CirceInstances.this.closeBrace
+        </td>
+      </tr><tr>
+        <td>
+          318
+        </td>
+        <td>
+          5471
+        </td>
+        <td>
+          11315
+          -
+          12247
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.StreamPullOps.stream
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Pull.StreamPullOps[[x]F[x], Byte](fs2.this.Stream.InvariantOps[[_]F[_], io.circe.Json](s).pull.uncons1.flatMap[[x]F[x], Byte, Unit](((x0$1: Option[(io.circe.Json, fs2.Stream[[_]F[_],io.circe.Json])]) =&gt; x0$1 match {
+  case scala.None =&gt; fs2.Pull.output[[x]fs2.Pure[x], Byte](CirceInstances.this.emptyArray)
+  case (value: (io.circe.Json, fs2.Stream[[_]F[_],io.circe.Json])): Some[(io.circe.Json, fs2.Stream[[_]F[_],io.circe.Json])]((_1: io.circe.Json, _2: fs2.Stream[[_]F[_],io.circe.Json]): (io.circe.Json, fs2.Stream[[_]F[_],io.circe.Json])((hd @ _), (tl @ _))) =&gt; fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.concat[Byte](scala.`package`.Vector.apply[fs2.Chunk[Byte]](CirceInstances.openBrace, CirceInstances.this.fromJsonToChunk(printer)(hd)))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).&gt;&gt;[[_]F[_], Byte, Unit](fs2.this.Stream.InvariantOps[[_]F[_], Byte](fs2.this.Stream.InvariantOps[[_]F[_], io.circe.Json](tl).repeatPull[Byte](((x$7: fs2.Stream.ToPull[[_]F[_],io.circe.Json]) =&gt; x$7.uncons.flatMap[[x]F[x], Byte, Option[fs2.Stream[[_]F[_],io.circe.Json]]](((x0$2: Option[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]) =&gt; x0$2 match {
+  case scala.None =&gt; fs2.Pull.pure[Nothing, None.type](scala.None)
+  case (value: (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])): Some[(fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])]((_1: fs2.Chunk[io.circe.Json], _2: fs2.Stream[[_]F[_],io.circe.Json]): (fs2.Chunk[io.circe.Json], fs2.Stream[[_]F[_],io.circe.Json])((hd @ _), (tl @ _))) =&gt; {
+    val interspersed: fs2.Chunk[Byte] = {
+      val bldr: scala.collection.mutable.ReusableBuilder[fs2.Chunk[Byte],scala.collection.immutable.Vector[fs2.Chunk[Byte]]] = scala.`package`.Vector.newBuilder[fs2.Chunk[Byte]];
+      bldr.sizeHint(hd.size.*(2));
+      hd.foreach(((o: io.circe.Json) =&gt; {
+        bldr.+=(CirceInstances.comma);
+        {
+          bldr.+=(CirceInstances.this.fromJsonToChunk(printer)(o));
+          ()
+        }
+      }));
+      fs2.Chunk.concat[Byte](bldr.result())((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+    };
+    fs2.Pull.output[[x]fs2.Pure[x], Byte](interspersed).&gt;&gt;[[x]fs2.Pure[x], Byte, Some[fs2.Stream[[_]F[_],io.circe.Json]]](fs2.Pull.pure[Nothing, Some[fs2.Stream[[_]F[_],io.circe.Json]]](scala.Some.apply[fs2.Stream[[_]F[_],io.circe.Json]](tl)))
+  }
+}))))).pull.echo).&gt;&gt;[[x]F[x], Byte, Unit](fs2.Pull.output[[x]fs2.Pure[x], Byte](CirceInstances.this.closeBrace))
+}))).stream
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          5619
+        </td>
+        <td>
+          12314
+          -
+          12324
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Char.toByte
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          '['.toByte
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          5405
+        </td>
+        <td>
+          12314
+          -
+          12317
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          '['
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          5489
+        </td>
+        <td>
+          12298
+          -
+          12325
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.singleton
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.singleton[Byte]('['.toByte)
+        </td>
+      </tr><tr>
+        <td>
+          324
+        </td>
+        <td>
+          5573
+        </td>
+        <td>
+          12393
+          -
+          12403
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Char.toByte
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ']'.toByte
+        </td>
+      </tr><tr>
+        <td>
+          324
+        </td>
+        <td>
+          5363
+        </td>
+        <td>
+          12393
+          -
+          12396
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ']'
+        </td>
+      </tr><tr>
+        <td>
+          324
+        </td>
+        <td>
+          5506
+        </td>
+        <td>
+          12377
+          -
+          12404
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.singleton
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.singleton[Byte](']'.toByte)
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          5595
+        </td>
+        <td>
+          12474
+          -
+          12484
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Char.toByte
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          '['.toByte
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          5463
+        </td>
+        <td>
+          12486
+          -
+          12489
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ']'
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          5612
+        </td>
+        <td>
+          12468
+          -
+          12497
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Array.apply('['.toByte, ']'.toByte)
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          5669
+        </td>
+        <td>
+          12486
+          -
+          12496
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Char.toByte
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ']'.toByte
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          5500
+        </td>
+        <td>
+          12456
+          -
+          12498
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.array[Byte](scala.Array.apply('['.toByte, ']'.toByte))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          5401
+        </td>
+        <td>
+          12474
+          -
+          12477
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          '['
+        </td>
+      </tr><tr>
+        <td>
+          330
+        </td>
+        <td>
+          5565
+        </td>
+        <td>
+          12561
+          -
+          12571
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Char.toByte
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ','.toByte
+        </td>
+      </tr><tr>
+        <td>
+          330
+        </td>
+        <td>
+          5514
+        </td>
+        <td>
+          12545
+          -
+          12572
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.singleton
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.singleton[Byte](','.toByte)
+        </td>
+      </tr><tr>
+        <td>
+          330
+        </td>
+        <td>
+          5364
+        </td>
+        <td>
+          12561
+          -
+          12564
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ','
+        </td>
+      </tr><tr>
+        <td>
+          336
+        </td>
+        <td>
+          5592
+        </td>
+        <td>
+          12754
+          -
+          12767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.JsonDecoder.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.asJson(MessageSyntax.this.req)
+        </td>
+      </tr><tr>
+        <td>
+          336
+        </td>
+        <td>
+          5402
+        </td>
+        <td>
+          12763
+          -
+          12766
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.MessageSyntax.req
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          MessageSyntax.this.req
+        </td>
+      </tr><tr>
+        <td>
+          339
+        </td>
+        <td>
+          5464
+        </td>
+        <td>
+          12856
+          -
+          12875
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.JsonDecoder.asJsonDecode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.asJsonDecode[A](MessageSyntax.this.req)(decoder)
+        </td>
+      </tr><tr>
+        <td>
+          342
+        </td>
+        <td>
+          5664
+        </td>
+        <td>
+          12971
+          -
+          12983
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonOf
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.`package`.jsonOf[F, A](F, decoder)
+        </td>
+      </tr><tr>
+        <td>
+          342
+        </td>
+        <td>
+          5614
+        </td>
+        <td>
+          12961
+          -
+          12984
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Media.as
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          MessageSyntax.this.req.as[A](F, circe.this.`package`.jsonOf[F, A](F, decoder))
+        </td>
+      </tr><tr>
+        <td>
+          345
+        </td>
+        <td>
+          5376
+        </td>
+        <td>
+          13043
+          -
+          13068
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Media.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          MessageSyntax.this.req.as[io.circe.Json](F, circe.this.`package`.jsonDecoder[F](F))
+        </td>
+      </tr><tr>
+        <td>
+          345
+        </td>
+        <td>
+          5501
+        </td>
+        <td>
+          13053
+          -
+          13067
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonDecoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          circe.this.`package`.jsonDecoder[F](F)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,2508 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/EntityDecoder.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Applicative
+</span>20 <span style=''>import cats.Functor
+</span>21 <span style=''>import cats.Monad
+</span>22 <span style=''>import cats.SemigroupK
+</span>23 <span style=''>import cats.effect.Concurrent
+</span>24 <span style=''>import cats.effect.Resource
+</span>25 <span style=''>import cats.syntax.all._
+</span>26 <span style=''>import fs2._
+</span>27 <span style=''>import fs2.io.file.Files
+</span>28 <span style=''>import fs2.io.file.Path
+</span>29 <span style=''>import org.http4s.Charset.`UTF-8`
+</span>30 <span style=''>import org.http4s.multipart.Multipart
+</span>31 <span style=''>import org.http4s.multipart.MultipartDecoder
+</span>32 <span style=''>import scodec.bits.ByteVector
+</span>33 <span style=''>
+</span>34 <span style=''>import java.io.File
+</span>35 <span style=''>import scala.annotation.implicitNotFound
+</span>36 <span style=''>
+</span>37 <span style=''>/** A type that can be used to decode a [[Message]]
+</span>38 <span style=''>  * EntityDecoder is used to attempt to decode a [[Message]] returning the
+</span>39 <span style=''>  * entire resulting A. If an error occurs it will result in a failed effect.
+</span>40 <span style=''>  * The default decoders provided here are not streaming, but one could implement
+</span>41 <span style=''>  * a streaming decoder by having the value of A be some kind of streaming construct.
+</span>42 <span style=''>  *
+</span>43 <span style=''>  * @tparam T result type produced by the decoder
+</span>44 <span style=''>  */
+</span>45 <span style=''>@implicitNotFound(
+</span>46 <span style=''>  &quot;Cannot decode into a value of type ${T}, because no EntityDecoder[${F}, ${T}] instance could be found.&quot;
+</span>47 <span style=''>)
+</span>48 <span style=''>trait EntityDecoder[F[_], T] { self =&gt;
+</span>49 <span style=''>
+</span>50 <span style=''>  /** Attempt to decode the body of the [[Message]] */
+</span>51 <span style=''>  def decode(m: Media[F], strict: Boolean): DecodeResult[F, T]
+</span>52 <span style=''>
+</span>53 <span style=''>  /** The [[MediaRange]]s this [[EntityDecoder]] knows how to handle */
+</span>54 <span style=''>  def consumes: Set[MediaRange]
+</span>55 <span style=''>
+</span>56 <span style=''>  /** Make a new [[EntityDecoder]] by mapping the output result */
+</span>57 <span style=''>  def map[T2](f: T =&gt; T2)(implicit F: Functor[F]): EntityDecoder[F, T2] =
+</span>58 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityDecoder[F, T2] {
+</span>59 <span style=''>      override def consumes: Set[MediaRange] = </span><span style='background: #F0ADAD'>self.consumes</span><span style=''>
+</span>60 <span style=''>
+</span>61 <span style=''>      override def decode(m: Media[F], strict: Boolean): DecodeResult[F, T2] =
+</span>62 <span style=''>        </span><span style='background: #AEF1AE'>self.decode(m, strict).map(f)</span><span style=''>
+</span>63 <span style=''>    }
+</span>64 <span style=''>
+</span>65 <span style=''>  def flatMapR[T2](f: T =&gt; DecodeResult[F, T2])(implicit F: Monad[F]): EntityDecoder[F, T2] =
+</span>66 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityDecoder[F, T2] {
+</span>67 <span style=''>      override def decode(m: Media[F], strict: Boolean): DecodeResult[F, T2] =
+</span>68 <span style=''>        </span><span style='background: #AEF1AE'>self.decode(m, strict).flatMap(f)</span><span style=''>
+</span>69 <span style=''>
+</span>70 <span style=''>      override def consumes: Set[MediaRange] = </span><span style='background: #F0ADAD'>self.consumes</span><span style=''>
+</span>71 <span style=''>    }
+</span>72 <span style=''>
+</span>73 <span style=''>  def handleError(f: DecodeFailure =&gt; T)(implicit F: Functor[F]): EntityDecoder[F, T] =
+</span>74 <span style=''>    </span><span style='background: #AEF1AE'>transform {
+</span>75 <span style=''></span><span style='background: #AEF1AE'>      case Left(e) =&gt; Right(f(e))
+</span>76 <span style=''></span><span style='background: #AEF1AE'>      case r @ Right(_) =&gt; r
+</span>77 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>  def handleErrorWith(
+</span>80 <span style=''>      f: DecodeFailure =&gt; DecodeResult[F, T]
+</span>81 <span style=''>  )(implicit F: Monad[F]): EntityDecoder[F, T] =
+</span>82 <span style=''>    </span><span style='background: #AEF1AE'>transformWith {
+</span>83 <span style=''></span><span style='background: #AEF1AE'>      case Left(e) =&gt; f(e)
+</span>84 <span style=''></span><span style='background: #AEF1AE'>      case Right(r) =&gt; DecodeResult.successT(r)
+</span>85 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>86 <span style=''>
+</span>87 <span style=''>  def bimap[T2](f: DecodeFailure =&gt; DecodeFailure, s: T =&gt; T2)(implicit
+</span>88 <span style=''>      F: Functor[F]
+</span>89 <span style=''>  ): EntityDecoder[F, T2] =
+</span>90 <span style=''>    </span><span style='background: #AEF1AE'>transform {
+</span>91 <span style=''></span><span style='background: #AEF1AE'>      case Left(e) =&gt; Left(f(e))
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      case Right(r) =&gt; Right(s(r))
+</span>93 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>94 <span style=''>
+</span>95 <span style=''>  def transform[T2](
+</span>96 <span style=''>      t: Either[DecodeFailure, T] =&gt; Either[DecodeFailure, T2]
+</span>97 <span style=''>  )(implicit F: Functor[F]): EntityDecoder[F, T2] =
+</span>98 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityDecoder[F, T2] {
+</span>99 <span style=''>      override def consumes: Set[MediaRange] = </span><span style='background: #F0ADAD'>self.consumes</span><span style=''>
+</span>100 <span style=''>
+</span>101 <span style=''>      override def decode(m: Media[F], strict: Boolean): DecodeResult[F, T2] =
+</span>102 <span style=''>        </span><span style='background: #AEF1AE'>self.decode(m, strict).transform(t)</span><span style=''>
+</span>103 <span style=''>    }
+</span>104 <span style=''>
+</span>105 <span style=''>  def biflatMap[T2](f: DecodeFailure =&gt; DecodeResult[F, T2], s: T =&gt; DecodeResult[F, T2])(implicit
+</span>106 <span style=''>      F: Monad[F]
+</span>107 <span style=''>  ): EntityDecoder[F, T2] =
+</span>108 <span style=''>    </span><span style='background: #AEF1AE'>transformWith {
+</span>109 <span style=''></span><span style='background: #AEF1AE'>      case Left(e) =&gt; f(e)
+</span>110 <span style=''></span><span style='background: #AEF1AE'>      case Right(r) =&gt; s(r)
+</span>111 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>112 <span style=''>
+</span>113 <span style=''>  def transformWith[T2](
+</span>114 <span style=''>      f: Either[DecodeFailure, T] =&gt; DecodeResult[F, T2]
+</span>115 <span style=''>  )(implicit F: Monad[F]): EntityDecoder[F, T2] =
+</span>116 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityDecoder[F, T2] {
+</span>117 <span style=''>      override def consumes: Set[MediaRange] = </span><span style='background: #F0ADAD'>self.consumes</span><span style=''>
+</span>118 <span style=''>
+</span>119 <span style=''>      override def decode(m: Media[F], strict: Boolean): DecodeResult[F, T2] =
+</span>120 <span style=''>        </span><span style='background: #AEF1AE'>DecodeResult(
+</span>121 <span style=''></span><span style='background: #AEF1AE'>          F.flatMap(self.decode(m, strict).value)(r =&gt; f(r).value)
+</span>122 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''>
+</span>123 <span style=''>    }
+</span>124 <span style=''>
+</span>125 <span style=''>  /** Combine two [[EntityDecoder]]'s
+</span>126 <span style=''>    *
+</span>127 <span style=''>    * The new [[EntityDecoder]] will first attempt to determine if it can perform the decode,
+</span>128 <span style=''>    * and if not, defer to the second [[EntityDecoder]]
+</span>129 <span style=''>    *
+</span>130 <span style=''>    * @param other backup [[EntityDecoder]]
+</span>131 <span style=''>    */
+</span>132 <span style=''>  def orElse[T2 &gt;: T](other: EntityDecoder[F, T2])(implicit F: Functor[F]): EntityDecoder[F, T2] =
+</span>133 <span style=''>    </span><span style='background: #AEF1AE'>widen[T2] &lt;+&gt; other</span><span style=''>
+</span>134 <span style=''>
+</span>135 <span style=''>  /** true if this [[EntityDecoder]] knows how to decode the provided [[MediaType]] */
+</span>136 <span style=''>  def matchesMediaType(mediaType: MediaType): Boolean =
+</span>137 <span style=''>    </span><span style='background: #AEF1AE'>consumes.exists(_.satisfiedBy(mediaType))</span><span style=''>
+</span>138 <span style=''>
+</span>139 <span style=''>  def widen[T2 &gt;: T]: EntityDecoder[F, T2] =
+</span>140 <span style=''>    </span><span style='background: #AEF1AE'>this.asInstanceOf[EntityDecoder[F, T2]]</span><span style=''>
+</span>141 <span style=''>}
+</span>142 <span style=''>
+</span>143 <span style=''>/** EntityDecoder is used to attempt to decode an [[EntityBody]]
+</span>144 <span style=''>  * This companion object provides a way to create `new EntityDecoder`s along
+</span>145 <span style=''>  * with some commonly used instances which can be resolved implicitly.
+</span>146 <span style=''>  */
+</span>147 <span style=''>object EntityDecoder {
+</span>148 <span style=''>  // This is not a real media type but will still be matched by `*/*`
+</span>149 <span style=''>  private val UndefinedMediaType = </span><span style='background: #AEF1AE'>new MediaType(&quot;UNKNOWN&quot;, &quot;UNKNOWN&quot;)</span><span style=''>
+</span>150 <span style=''>
+</span>151 <span style=''>  /** summon an implicit [[EntityDecoder]] */
+</span>152 <span style=''>  def apply[F[_], T](implicit ev: EntityDecoder[F, T]): EntityDecoder[F, T] = ev
+</span>153 <span style=''>
+</span>154 <span style=''>  implicit def semigroupKForEntityDecoder[F[_]: Functor]: SemigroupK[EntityDecoder[F, *]] =
+</span>155 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> SemigroupK[EntityDecoder[F, *]] {
+</span>156 <span style=''>      override def combineK[T](
+</span>157 <span style=''>          a: EntityDecoder[F, T],
+</span>158 <span style=''>          b: EntityDecoder[F, T],
+</span>159 <span style=''>      ): EntityDecoder[F, T] =
+</span>160 <span style=''>        </span><span style='background: #AEF1AE'>new</span><span style=''> EntityDecoder[F, T] {
+</span>161 <span style=''>          override def decode(m: Media[F], strict: Boolean): DecodeResult[F, T] = {
+</span>162 <span style=''>            val mediaType = </span><span style='background: #AEF1AE'>m.contentType.fold(UndefinedMediaType)(_.mediaType)</span><span style=''>
+</span>163 <span style=''>
+</span>164 <span style=''>            if (</span><span style='background: #AEF1AE'>a.matchesMediaType(mediaType)</span><span style=''>)
+</span>165 <span style=''>              </span><span style='background: #AEF1AE'>a.decode(m, strict)</span><span style=''>
+</span>166 <span style=''>            else
+</span>167 <span style=''>              </span><span style='background: #AEF1AE'>b.decode(m, strict).leftMap {
+</span>168 <span style=''></span><span style='background: #AEF1AE'>                case MediaTypeMismatch(actual, expected) =&gt;
+</span>169 <span style=''></span><span style='background: #AEF1AE'>                  MediaTypeMismatch(actual, expected ++ a.consumes)
+</span>170 <span style=''></span><span style='background: #AEF1AE'>                case MediaTypeMissing(expected) =&gt;
+</span>171 <span style=''></span><span style='background: #AEF1AE'>                  MediaTypeMissing(expected ++ a.consumes)
+</span>172 <span style=''></span><span style='background: #AEF1AE'>                case other =&gt; other
+</span>173 <span style=''></span><span style='background: #AEF1AE'>              }</span><span style=''>
+</span>174 <span style=''>          }
+</span>175 <span style=''>
+</span>176 <span style=''>          override def consumes: Set[MediaRange] = </span><span style='background: #AEF1AE'>a.consumes ++ b.consumes</span><span style=''>
+</span>177 <span style=''>        }
+</span>178 <span style=''>    }
+</span>179 <span style=''>
+</span>180 <span style=''>  /** Create a new [[EntityDecoder]]
+</span>181 <span style=''>    *
+</span>182 <span style=''>    * The new [[EntityDecoder]] will attempt to decode messages of type `T`
+</span>183 <span style=''>    * only if the [[Message]] satisfies the provided [[MediaRange]].
+</span>184 <span style=''>    *
+</span>185 <span style=''>    * Exceptions thrown by `f` are not caught.  Care should be taken that
+</span>186 <span style=''>    * recoverable errors are returned as a [[DecodeResult#failure]], or that
+</span>187 <span style=''>    * system errors are raised in `F`.
+</span>188 <span style=''>    */
+</span>189 <span style=''>  def decodeBy[F[_]: Applicative, T](r1: MediaRange, rs: MediaRange*)(
+</span>190 <span style=''>      f: Media[F] =&gt; DecodeResult[F, T]
+</span>191 <span style=''>  ): EntityDecoder[F, T] =
+</span>192 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityDecoder[F, T] {
+</span>193 <span style=''>      override def decode(m: Media[F], strict: Boolean): DecodeResult[F, T] =
+</span>194 <span style=''>        if (strict)
+</span>195 <span style=''>          </span><span style='background: #AEF1AE'>m.contentType match {
+</span>196 <span style=''></span><span style='background: #AEF1AE'>            case Some(c) if matchesMediaType(c.mediaType) =&gt; f(m)
+</span>197 <span style=''></span><span style='background: #AEF1AE'>            case Some(c) =&gt; DecodeResult.failureT(MediaTypeMismatch(c.mediaType, consumes))
+</span>198 <span style=''></span><span style='background: #AEF1AE'>            case None if matchesMediaType(UndefinedMediaType) =&gt; f(m)
+</span>199 <span style=''></span><span style='background: #AEF1AE'>            case None =&gt; DecodeResult.failureT(MediaTypeMissing(consumes))
+</span>200 <span style=''></span><span style='background: #AEF1AE'>          }</span><span style=''>
+</span>201 <span style=''>        else
+</span>202 <span style=''>          </span><span style='background: #AEF1AE'>f(m)</span><span style=''>
+</span>203 <span style=''>
+</span>204 <span style=''>      override val consumes: Set[MediaRange] = </span><span style='background: #AEF1AE'>(r1 +: rs).toSet</span><span style=''>
+</span>205 <span style=''>    }
+</span>206 <span style=''>
+</span>207 <span style=''>  /** Helper method which simply gathers the body into a single Chunk */
+</span>208 <span style=''>  def collectBinary[F[_]: Concurrent](m: Media[F]): DecodeResult[F, Chunk[Byte]] =
+</span>209 <span style=''>    </span><span style='background: #AEF1AE'>DecodeResult.success(m.body.chunks.compile.to(Chunk).map(_.flatten))</span><span style=''>
+</span>210 <span style=''>
+</span>211 <span style=''>  /** Helper method which simply gathers the body into a single ByteVector */
+</span>212 <span style=''>  private def collectByteVector[F[_]: Concurrent](m: Media[F]): DecodeResult[F, ByteVector] =
+</span>213 <span style=''>    </span><span style='background: #F0ADAD'>DecodeResult.success(m.body.compile.to(ByteVector))</span><span style=''>
+</span>214 <span style=''>
+</span>215 <span style=''>  /** Decodes a message to a String */
+</span>216 <span style=''>  def decodeText[F[_]](
+</span>217 <span style=''>      m: Media[F]
+</span>218 <span style=''>  )(implicit F: Concurrent[F], defaultCharset: Charset = `UTF-8`): F[String] =
+</span>219 <span style=''>    </span><span style='background: #AEF1AE'>m.bodyText.compile.string</span><span style=''>
+</span>220 <span style=''>
+</span>221 <span style=''>  // ///////////////// Instances //////////////////////////////////////////////
+</span>222 <span style=''>
+</span>223 <span style=''>  /** Provides a mechanism to fail decoding */
+</span>224 <span style=''>  def error[F[_], T](t: Throwable)(implicit F: Concurrent[F]): EntityDecoder[F, T] =
+</span>225 <span style=''>    </span><span style='background: #F0ADAD'>new</span><span style=''> EntityDecoder[F, T] {
+</span>226 <span style=''>      override def decode(m: Media[F], strict: Boolean): DecodeResult[F, T] =
+</span>227 <span style=''>        </span><span style='background: #F0ADAD'>DecodeResult(m.body.compile.drain *&gt; F.raiseError(t))</span><span style=''>
+</span>228 <span style=''>      override def consumes: Set[MediaRange] = </span><span style='background: #F0ADAD'>Set.empty</span><span style=''>
+</span>229 <span style=''>    }
+</span>230 <span style=''>
+</span>231 <span style=''>  implicit def binary[F[_]: Concurrent]: EntityDecoder[F, Chunk[Byte]] =
+</span>232 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaRange.`*/*`)(collectBinary[F])</span><span style=''>
+</span>233 <span style=''>
+</span>234 <span style=''>  implicit def byteArrayDecoder[F[_]: Concurrent]: EntityDecoder[F, Array[Byte]] =
+</span>235 <span style=''>    </span><span style='background: #AEF1AE'>binary.map(_.toArray)</span><span style=''>
+</span>236 <span style=''>
+</span>237 <span style=''>  implicit def byteVector[F[_]: Concurrent]: EntityDecoder[F, ByteVector] =
+</span>238 <span style=''>    </span><span style='background: #F0ADAD'>EntityDecoder.decodeBy(MediaRange.`*/*`)(collectByteVector[F])</span><span style=''>
+</span>239 <span style=''>
+</span>240 <span style=''>  implicit def text[F[_]](implicit
+</span>241 <span style=''>      F: Concurrent[F],
+</span>242 <span style=''>      defaultCharset: Charset = `UTF-8`,
+</span>243 <span style=''>  ): EntityDecoder[F, String] =
+</span>244 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaRange.`text/*`)(msg =&gt;
+</span>245 <span style=''></span><span style='background: #AEF1AE'>      collectBinary(msg).map(chunk =&gt;
+</span>246 <span style=''></span><span style='background: #AEF1AE'>        new String(chunk.toArray, msg.charset.getOrElse(defaultCharset).nioCharset)
+</span>247 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>248 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>249 <span style=''>
+</span>250 <span style=''>  implicit def charArrayDecoder[F[_]: Concurrent]: EntityDecoder[F, Array[Char]] =
+</span>251 <span style=''>    </span><span style='background: #AEF1AE'>text.map(_.toArray)</span><span style=''>
+</span>252 <span style=''>
+</span>253 <span style=''>  // File operations
+</span>254 <span style=''>  @deprecated(&quot;Use overload with fs2.io.file.Path&quot;, &quot;0.23.5&quot;)
+</span>255 <span style=''>  def binFile[F[_]: Files: Concurrent](file: File): EntityDecoder[F, File] =
+</span>256 <span style=''>    </span><span style='background: #F0ADAD'>binFile(Path.fromNioPath(file.toPath())).map(_ =&gt; file)</span><span style=''>
+</span>257 <span style=''>
+</span>258 <span style=''>  @deprecated(&quot;Use overload with fs2.io.file.Path&quot;, &quot;0.23.5&quot;)
+</span>259 <span style=''>  def textFile[F[_]: Files: Concurrent](file: File): EntityDecoder[F, File] =
+</span>260 <span style=''>    </span><span style='background: #F0ADAD'>textFile(Path.fromNioPath(file.toPath())).map(_ =&gt; file)</span><span style=''>
+</span>261 <span style=''>
+</span>262 <span style=''>  def binFile[F[_]: Files: Concurrent](path: Path): EntityDecoder[F, Path] =
+</span>263 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaRange.`*/*`) { msg =&gt;
+</span>264 <span style=''></span><span style='background: #AEF1AE'>      val pipe = Files[F].writeAll(path)
+</span>265 <span style=''></span><span style='background: #AEF1AE'>      DecodeResult.success(msg.body.through(pipe).compile.drain).map(_ =&gt; path)
+</span>266 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>267 <span style=''>
+</span>268 <span style=''>  def textFile[F[_]: Files: Concurrent](path: Path): EntityDecoder[F, Path] =
+</span>269 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaRange.`text/*`) { msg =&gt;
+</span>270 <span style=''></span><span style='background: #AEF1AE'>      val pipe = Files[F].writeAll(path)
+</span>271 <span style=''></span><span style='background: #AEF1AE'>      DecodeResult.success(msg.body.through(pipe).compile.drain).map(_ =&gt; path)
+</span>272 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>273 <span style=''>
+</span>274 <span style=''>  implicit def multipart[F[_]: Concurrent]: EntityDecoder[F, Multipart[F]] =
+</span>275 <span style=''>    </span><span style='background: #AEF1AE'>MultipartDecoder.decoder</span><span style=''>
+</span>276 <span style=''>
+</span>277 <span style=''>  /** Multipart decoder that streams all parts past a threshold
+</span>278 <span style=''>    * (anything above `maxSizeBeforeWrite`) into a temporary file.
+</span>279 <span style=''>    * The decoder is only valid inside the `Resource` scope; once
+</span>280 <span style=''>    * the `Resource` is released, all the created files are deleted.
+</span>281 <span style=''>    *
+</span>282 <span style=''>    * Note that no files are deleted until the `Resource` is released.
+</span>283 <span style=''>    * Thus, sharing and reusing the resulting `EntityDecoder` is not
+</span>284 <span style=''>    * recommended, and can lead to disk space leaks.
+</span>285 <span style=''>    *
+</span>286 <span style=''>    * The intended way to use this is as follows:
+</span>287 <span style=''>    *
+</span>288 <span style=''>    * {{{
+</span>289 <span style=''>    * mixedMultipartResource[F]()
+</span>290 <span style=''>    *   .flatTap(request.decodeWith(_, strict = true))
+</span>291 <span style=''>    *   .use { multipart =&gt;
+</span>292 <span style=''>    *     // Use the decoded entity
+</span>293 <span style=''>    *   }
+</span>294 <span style=''>    * }}}
+</span>295 <span style=''>    *
+</span>296 <span style=''>    * @param headerLimit the max size for the headers, in bytes. This is required as
+</span>297 <span style=''>    *                    headers are strictly evaluated and parsed.
+</span>298 <span style=''>    * @param maxSizeBeforeWrite the maximum size of a particular part before writing to a file is triggered
+</span>299 <span style=''>    * @param maxParts the maximum number of parts this decoder accepts. NOTE: this also may mean that a body that doesn't
+</span>300 <span style=''>    *                 conform perfectly to the spec (i.e isn't terminated properly) but has a lot of parts might
+</span>301 <span style=''>    *                 be parsed correctly, despite the total body being malformed due to not conforming to the multipart
+</span>302 <span style=''>    *                 spec. You can control this by `failOnLimit`, by setting it to true if you want to raise
+</span>303 <span style=''>    *                 an error if sending too many parts to a particular endpoint
+</span>304 <span style=''>    * @param failOnLimit Fail if `maxParts` is exceeded _during_ multipart parsing.
+</span>305 <span style=''>    * @param chunkSize the size of chunks created when reading data from temporary files.
+</span>306 <span style=''>    * @return A supervised multipart decoder.
+</span>307 <span style=''>    */
+</span>308 <span style=''>  def mixedMultipartResource[F[_]: Concurrent: Files](
+</span>309 <span style=''>      headerLimit: Int = 1024,
+</span>310 <span style=''>      maxSizeBeforeWrite: Int = 52428800,
+</span>311 <span style=''>      maxParts: Int = 50,
+</span>312 <span style=''>      failOnLimit: Boolean = false,
+</span>313 <span style=''>      chunkSize: Int = 8192,
+</span>314 <span style=''>  ): Resource[F, EntityDecoder[F, Multipart[F]]] =
+</span>315 <span style=''>    </span><span style='background: #AEF1AE'>MultipartDecoder.mixedMultipartResource(
+</span>316 <span style=''></span><span style='background: #AEF1AE'>      headerLimit,
+</span>317 <span style=''></span><span style='background: #AEF1AE'>      maxSizeBeforeWrite,
+</span>318 <span style=''></span><span style='background: #AEF1AE'>      maxParts,
+</span>319 <span style=''></span><span style='background: #AEF1AE'>      failOnLimit,
+</span>320 <span style=''></span><span style='background: #AEF1AE'>      chunkSize,
+</span>321 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>322 <span style=''>
+</span>323 <span style=''>  /** Multipart decoder that streams all parts past a threshold
+</span>324 <span style=''>    * (anything above maxSizeBeforeWrite) into a temporary file.
+</span>325 <span style=''>    *
+</span>326 <span style=''>    * Note: (BIG NOTE) Using this decoder for multipart decoding is good for the sake of
+</span>327 <span style=''>    * not holding all information in memory, as it will never have more than
+</span>328 <span style=''>    * `maxSizeBeforeWrite` in memory before writing to a temporary file. On top of this,
+</span>329 <span style=''>    * you can gate the # of parts to further stop the quantity of parts you can have.
+</span>330 <span style=''>    * That said, because after a threshold it writes into a temporary file, given
+</span>331 <span style=''>    * bincompat reasons on 0.18.x, there is no way to make a distinction about which `Part[F]`
+</span>332 <span style=''>    * is a stream reference to a file or not. Thus, consumers using this decoder
+</span>333 <span style=''>    * should drain all `Part[F]` bodies if they were decoded correctly. That said,
+</span>334 <span style=''>    * this decoder gives you more control about how many part bodies it parses in the first place, thus you can have
+</span>335 <span style=''>    * more fine-grained control about how many parts you accept.
+</span>336 <span style=''>    *
+</span>337 <span style=''>    * @param headerLimit the max size for the headers, in bytes. This is required as
+</span>338 <span style=''>    *                    headers are strictly evaluated and parsed.
+</span>339 <span style=''>    * @param maxSizeBeforeWrite the maximum size of a particular part before writing to a file is triggered
+</span>340 <span style=''>    * @param maxParts the maximum number of parts this decoder accepts. NOTE: this also may mean that a body that doesn't
+</span>341 <span style=''>    *                 conform perfectly to the spec (i.e isn't terminated properly) but has a lot of parts might
+</span>342 <span style=''>    *                 be parsed correctly, despite the total body being malformed due to not conforming to the multipart
+</span>343 <span style=''>    *                 spec. You can control this by `failOnLimit`, by setting it to true if you want to raise
+</span>344 <span style=''>    *                 an error if sending too many parts to a particular endpoint
+</span>345 <span style=''>    * @param failOnLimit Fail if `maxParts` is exceeded _during_ multipart parsing.
+</span>346 <span style=''>    * @return A multipart/form-data encoded vector of parts with some part bodies held in
+</span>347 <span style=''>    *         temporary files.
+</span>348 <span style=''>    */
+</span>349 <span style=''>  @deprecated(&quot;Use mixedMultipartResource&quot;, &quot;0.23&quot;)
+</span>350 <span style=''>  def mixedMultipart[F[_]: Concurrent: Files](
+</span>351 <span style=''>      headerLimit: Int = 1024,
+</span>352 <span style=''>      maxSizeBeforeWrite: Int = 52428800,
+</span>353 <span style=''>      maxParts: Int = 50,
+</span>354 <span style=''>      failOnLimit: Boolean = false,
+</span>355 <span style=''>  ): EntityDecoder[F, Multipart[F]] =
+</span>356 <span style=''>    </span><span style='background: #AEF1AE'>MultipartDecoder.mixedMultipart(headerLimit, maxSizeBeforeWrite, maxParts, failOnLimit)</span><span style=''>
+</span>357 <span style=''>
+</span>358 <span style=''>  implicit def eventStream[F[_]: Applicative]: EntityDecoder[F, EventStream[F]] =
+</span>359 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaType.`text/event-stream`) { msg =&gt;
+</span>360 <span style=''></span><span style='background: #AEF1AE'>      DecodeResult.successT(msg.body.through(ServerSentEvent.decoder))
+</span>361 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>362 <span style=''>
+</span>363 <span style=''>  /** An entity decoder that ignores the content and returns unit. */
+</span>364 <span style=''>  implicit def void[F[_]: Concurrent]: EntityDecoder[F, Unit] =
+</span>365 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaRange.`*/*`) { msg =&gt;
+</span>366 <span style=''></span><span style='background: #AEF1AE'>      DecodeResult.success(msg.body.compile.drain)
+</span>367 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>368 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          15063
+        </td>
+        <td>
+          2024
+          -
+          2027
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.entitycodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          21137
+        </td>
+        <td>
+          2098
+          -
+          2111
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityDecoder.consumes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityDecoder.this.consumes
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          16772
+        </td>
+        <td>
+          2200
+          -
+          2229
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.EitherT.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.decode(m, strict).map[T2](f)(F)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          14050
+        </td>
+        <td>
+          2335
+          -
+          2338
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.circe.circesensitivedataentitydecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          21667
+        </td>
+        <td>
+          2449
+          -
+          2482
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.EitherT.flatMap
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.circe.circesensitivedataentitydecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.decode(m, strict).flatMap[org.http4s.DecodeFailure, T2](f)(F)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          17846
+        </td>
+        <td>
+          2531
+          -
+          2544
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityDecoder.consumes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityDecoder.this.consumes
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          22164
+        </td>
+        <td>
+          2644
+          -
+          2724
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.transform
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.transform[T](((x0$1: Either[org.http4s.DecodeFailure,T]) =&gt; x0$1 match {
+  case (value: org.http4s.DecodeFailure): scala.util.Left[org.http4s.DecodeFailure,T]((e @ _)) =&gt; scala.`package`.Right.apply[Nothing, T](f.apply(e))
+  case (r @ (value: T): scala.util.Right[org.http4s.DecodeFailure,T](_)) =&gt; r
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          18307
+        </td>
+        <td>
+          2847
+          -
+          2943
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.transformWith
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.transformWith[T](((x0$1: Either[org.http4s.DecodeFailure,T]) =&gt; x0$1 match {
+  case (value: org.http4s.DecodeFailure): scala.util.Left[org.http4s.DecodeFailure,T]((e @ _)) =&gt; f.apply(e)
+  case (value: T): scala.util.Right[org.http4s.DecodeFailure,T]((r @ _)) =&gt; DecodeResult.successT[[_]F[_], T](r)(F)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          14298
+        </td>
+        <td>
+          3069
+          -
+          3154
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.transform
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.transform[T2](((x0$1: Either[org.http4s.DecodeFailure,T]) =&gt; x0$1 match {
+  case (value: org.http4s.DecodeFailure): scala.util.Left[org.http4s.DecodeFailure,T]((e @ _)) =&gt; scala.`package`.Left.apply[org.http4s.DecodeFailure, Nothing](f.apply(e))
+  case (value: T): scala.util.Right[org.http4s.DecodeFailure,T]((r @ _)) =&gt; scala.`package`.Right.apply[Nothing, T2](s.apply(r))
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          15080
+        </td>
+        <td>
+          3296
+          -
+          3299
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          21027
+        </td>
+        <td>
+          3370
+          -
+          3383
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityDecoder.consumes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityDecoder.this.consumes
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          17281
+        </td>
+        <td>
+          3472
+          -
+          3507
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.EitherT.transform
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.decode(m, strict).transform[org.http4s.DecodeFailure, T2](t)(F)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          21534
+        </td>
+        <td>
+          3664
+          -
+          3740
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.transformWith
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.transformWith[T2](((x0$1: Either[org.http4s.DecodeFailure,T]) =&gt; x0$1 match {
+  case (value: org.http4s.DecodeFailure): scala.util.Left[org.http4s.DecodeFailure,T]((e @ _)) =&gt; f.apply(e)
+  case (value: T): scala.util.Right[org.http4s.DecodeFailure,T]((r @ _)) =&gt; s.apply(r)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          20764
+        </td>
+        <td>
+          3878
+          -
+          3881
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          17551
+        </td>
+        <td>
+          3952
+          -
+          3965
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityDecoder.consumes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityDecoder.this.consumes
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          14839
+        </td>
+        <td>
+          4054
+          -
+          4144
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.DecodeResult.apply
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          DecodeResult.apply[F, T2](F.flatMap[Either[org.http4s.DecodeFailure,T], Either[org.http4s.DecodeFailure,T2]](EntityDecoder.this.decode(m, strict).value)(((r: Either[org.http4s.DecodeFailure,T]) =&gt; f.apply(r).value)))
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          20221
+        </td>
+        <td>
+          4123
+          -
+          4133
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.EitherT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(r).value
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          18328
+        </td>
+        <td>
+          4078
+          -
+          4134
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.flatMap
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.flatMap[Either[org.http4s.DecodeFailure,T], Either[org.http4s.DecodeFailure,T2]](EntityDecoder.this.decode(m, strict).value)(((r: Either[org.http4s.DecodeFailure,T]) =&gt; f.apply(r).value))
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          14075
+        </td>
+        <td>
+          4088
+          -
+          4116
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.EitherT.value
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.decode(m, strict).value
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          17028
+        </td>
+        <td>
+          4506
+          -
+          4525
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.SemigroupK.Ops.&lt;+&gt;
+        </td>
+        <td>
+          org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toSemigroupKOps[[T]org.http4s.EntityDecoder[F,T], T2](EntityDecoder.this.widen[T2])(http4s.this.EntityDecoder.semigroupKForEntityDecoder[[_]F[_]](F)).&lt;+&gt;(other)
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          14982
+        </td>
+        <td>
+          4690
+          -
+          4714
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.MediaRange.satisfiedBy
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.satisfiedBy(mediaType)
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          21282
+        </td>
+        <td>
+          4674
+          -
+          4715
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.exists
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.consumes.exists(((x$1: org.http4s.MediaRange) =&gt; x$1.satisfiedBy(mediaType)))
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          17569
+        </td>
+        <td>
+          4766
+          -
+          4805
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.asInstanceOf[org.http4s.EntityDecoder[F,T2]]
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          20243
+        </td>
+        <td>
+          5182
+          -
+          5191
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;UNKNOWN&quot;
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          14991
+        </td>
+        <td>
+          5157
+          -
+          5192
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.MediaType.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new MediaType(&quot;UNKNOWN&quot;, &quot;UNKNOWN&quot;, http4s.this.MediaType.&lt;init&gt;$default$3, http4s.this.MediaType.&lt;init&gt;$default$4, http4s.this.MediaType.&lt;init&gt;$default$5, http4s.this.MediaType.&lt;init&gt;$default$6)
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          14201
+        </td>
+        <td>
+          5157
+          -
+          5157
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.MediaType.&lt;init&gt;$default$4
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.MediaType.&lt;init&gt;$default$4
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          17254
+        </td>
+        <td>
+          5157
+          -
+          5157
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.MediaType.&lt;init&gt;$default$6
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.MediaType.&lt;init&gt;$default$6
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          20780
+        </td>
+        <td>
+          5157
+          -
+          5157
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.MediaType.&lt;init&gt;$default$5
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.MediaType.&lt;init&gt;$default$5
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          18211
+        </td>
+        <td>
+          5157
+          -
+          5157
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.MediaType.&lt;init&gt;$default$3
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.MediaType.&lt;init&gt;$default$3
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          13673
+        </td>
+        <td>
+          5171
+          -
+          5180
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;UNKNOWN&quot;
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          13923
+        </td>
+        <td>
+          5418
+          -
+          5421
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          17456
+        </td>
+        <td>
+          5595
+          -
+          5598
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.$anon.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          162
+        </td>
+        <td>
+          14043
+        </td>
+        <td>
+          5733
+          -
+          5784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          m.contentType.fold[org.http4s.MediaType](EntityDecoder.this.UndefinedMediaType)(((x$2: org.http4s.headers.Content-Type) =&gt; x$2.mediaType))
+        </td>
+      </tr><tr>
+        <td>
+          162
+        </td>
+        <td>
+          17440
+        </td>
+        <td>
+          5772
+          -
+          5783
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.mediaType
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.mediaType
+        </td>
+      </tr><tr>
+        <td>
+          162
+        </td>
+        <td>
+          21826
+        </td>
+        <td>
+          5752
+          -
+          5770
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityDecoder.UndefinedMediaType
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.UndefinedMediaType
+        </td>
+      </tr><tr>
+        <td>
+          164
+        </td>
+        <td>
+          20483
+        </td>
+        <td>
+          5802
+          -
+          5831
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.matchesMediaType
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          a.matchesMediaType(mediaType)
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          18226
+        </td>
+        <td>
+          5847
+          -
+          5866
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decode
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          a.decode(m, strict)
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          14217
+        </td>
+        <td>
+          5847
+          -
+          5866
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decode
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          a.decode(m, strict)
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          20649
+        </td>
+        <td>
+          5898
+          -
+          6217
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.EitherT.leftMap
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.decode(m, strict).leftMap[org.http4s.DecodeFailure](((x0$1: org.http4s.DecodeFailure) =&gt; x0$1 match {
+  case (messageType: org.http4s.MediaType, expected: Set[org.http4s.MediaRange]): org.http4s.MediaTypeMismatch((actual @ _), (expected @ _)) =&gt; MediaTypeMismatch.apply(actual, expected.++(a.consumes))
+  case (expected: Set[org.http4s.MediaRange]): org.http4s.MediaTypeMissing((expected @ _)) =&gt; MediaTypeMissing.apply(expected.++(a.consumes))
+  case (other @ _) =&gt; other
+}))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          17275
+        </td>
+        <td>
+          5898
+          -
+          6217
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.EitherT.leftMap
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.decode(m, strict).leftMap[org.http4s.DecodeFailure](((x0$1: org.http4s.DecodeFailure) =&gt; x0$1 match {
+  case (messageType: org.http4s.MediaType, expected: Set[org.http4s.MediaRange]): org.http4s.MediaTypeMismatch((actual @ _), (expected @ _)) =&gt; MediaTypeMismatch.apply(actual, expected.++(a.consumes))
+  case (expected: Set[org.http4s.MediaRange]): org.http4s.MediaTypeMissing((expected @ _)) =&gt; MediaTypeMissing.apply(expected.++(a.consumes))
+  case (other @ _) =&gt; other
+}))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          21842
+        </td>
+        <td>
+          6282
+          -
+          6306
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SetOps.++
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          a.consumes.++(b.consumes)
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          13413
+        </td>
+        <td>
+          6296
+          -
+          6306
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityDecoder.consumes
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.consumes
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          13145
+        </td>
+        <td>
+          6857
+          -
+          6860
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          20503
+        </td>
+        <td>
+          6991
+          -
+          7004
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Media.contentType
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          m.contentType
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          20372
+        </td>
+        <td>
+          6991
+          -
+          7327
+        </td>
+        <td>
+          Match
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          m.contentType match {
+  case (value: org.http4s.headers.Content-Type): Some[org.http4s.headers.Content-Type]((c @ _)) if $anon.this.matchesMediaType(c.mediaType) =&gt; f.apply(m)
+  case (value: org.http4s.headers.Content-Type): Some[org.http4s.headers.Content-Type]((c @ _)) =&gt; DecodeResult.failureT[[_]F[_], T](MediaTypeMismatch.apply(c.mediaType, $anon.this.consumes))(evidence$2)
+  case scala.None if $anon.this.matchesMediaType(EntityDecoder.this.UndefinedMediaType) =&gt; f.apply(m)
+  case scala.None =&gt; DecodeResult.failureT[[_]F[_], T](MediaTypeMissing.apply($anon.this.consumes))(evidence$2)
+}
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          21044
+        </td>
+        <td>
+          7074
+          -
+          7078
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(m)
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          18316
+        </td>
+        <td>
+          7058
+          -
+          7069
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.mediaType
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.mediaType
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          14765
+        </td>
+        <td>
+          7041
+          -
+          7070
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.matchesMediaType
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.server.middleware.httpmethodoverridersuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          $anon.this.matchesMediaType(c.mediaType)
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          17143
+        </td>
+        <td>
+          7107
+          -
+          7170
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.DecodeResult.failureT
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          DecodeResult.failureT[[_]F[_], T](MediaTypeMismatch.apply(c.mediaType, $anon.this.consumes))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          21544
+        </td>
+        <td>
+          7196
+          -
+          7232
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.matchesMediaType
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          $anon.this.matchesMediaType(EntityDecoder.this.UndefinedMediaType)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          17994
+        </td>
+        <td>
+          7236
+          -
+          7240
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(m)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          13434
+        </td>
+        <td>
+          7213
+          -
+          7231
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityDecoder.UndefinedMediaType
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.UndefinedMediaType
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          13941
+        </td>
+        <td>
+          7266
+          -
+          7315
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.DecodeResult.failureT
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          DecodeResult.failureT[[_]F[_], T](MediaTypeMissing.apply($anon.this.consumes))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          202
+        </td>
+        <td>
+          14482
+        </td>
+        <td>
+          7351
+          -
+          7355
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(m)
+        </td>
+      </tr><tr>
+        <td>
+          202
+        </td>
+        <td>
+          16391
+        </td>
+        <td>
+          7351
+          -
+          7355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(m)
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          17165
+        </td>
+        <td>
+          7404
+          -
+          7420
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toSet
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.MediaRange = r1;
+  rs.+:[org.http4s.MediaRange](rassoc$1)
+}.toSet[org.http4s.MediaRange]
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          20938
+        </td>
+        <td>
+          7408
+          -
+          7413
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.+:
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          rs.+:[org.http4s.MediaRange](rassoc$1)
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          21413
+        </td>
+        <td>
+          7588
+          -
+          7656
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.DecodeResult.success
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.server.middleware.urlformliftersuite,org.http4s.entitydecodersuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          DecodeResult.success[F, fs2.Chunk[Byte]](cats.syntax.`package`.all.toFunctorOps[F, fs2.Chunk[fs2.Chunk[Byte]]](m.body.chunks.compile[[x]F[x], [x]F[x], fs2.Chunk[Byte]](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$3))).to(fs2.this.CollectorK.toCollector[fs2.Chunk[Byte], [+O]fs2.Chunk[O]](fs2.Chunk)))(evidence$3).map[fs2.Chunk[Byte]](((x$3: fs2.Chunk[fs2.Chunk[Byte]]) =&gt; cats.syntax.`package`.all.catsSyntaxFlatten[fs2.Chunk, Byte](x$3)(fs2.this.Chunk.instance).flatten(fs2.this.Chunk.instance))))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          17428
+        </td>
+        <td>
+          7834
+          -
+          7885
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.DecodeResult.success
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DecodeResult.success[F, scodec.bits.ByteVector](m.body.compile[[x]F[x], [x]F[x], Byte](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$4))).to(fs2.this.Collector.supportsByteVector(scodec.bits.ByteVector)))(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          20392
+        </td>
+        <td>
+          8062
+          -
+          8062
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](F)
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          13834
+        </td>
+        <td>
+          8053
+          -
+          8053
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.RaiseThrowable.fromApplicativeError
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          16411
+        </td>
+        <td>
+          8062
+          -
+          8062
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          14344
+        </td>
+        <td>
+          8070
+          -
+          8070
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[String]
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          20639
+        </td>
+        <td>
+          8051
+          -
+          8076
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.CompileOps.string
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          m.bodyText(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F), defaultCharset).compile[[x]F[x], [x]F[x], String](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).string(scala.this.&lt;:&lt;.refl[String])
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          14757
+        </td>
+        <td>
+          8295
+          -
+          8298
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          17049
+        </td>
+        <td>
+          8427
+          -
+          8427
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Compiler.this.Target.forConcurrent[[x]F[x]](F)
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          17970
+        </td>
+        <td>
+          8444
+          -
+          8459
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.raiseError[Either[org.http4s.DecodeFailure,T]](t)
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          13023
+        </td>
+        <td>
+          8427
+          -
+          8427
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          21429
+        </td>
+        <td>
+          8420
+          -
+          8440
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.CompileOps.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          m.body.compile[[x]F[x], [x]F[x], Byte](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          20142
+        </td>
+        <td>
+          8407
+          -
+          8460
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.DecodeResult.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DecodeResult.apply[F, T](cats.syntax.`package`.all.catsSyntaxApply[F, Unit](m.body.compile[[x]F[x], [x]F[x], Byte](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).*&gt;[Either[org.http4s.DecodeFailure,T]](F.raiseError[Either[org.http4s.DecodeFailure,T]](t)))
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          13556
+        </td>
+        <td>
+          8420
+          -
+          8459
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApply[F, Unit](m.body.compile[[x]F[x], [x]F[x], Byte](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).*&gt;[Either[org.http4s.DecodeFailure,T]](F.raiseError[Either[org.http4s.DecodeFailure,T]](t))
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          16279
+        </td>
+        <td>
+          8508
+          -
+          8517
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Set.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.Set.empty[org.http4s.MediaRange]
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          21152
+        </td>
+        <td>
+          8602
+          -
+          8660
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], fs2.Chunk[Byte]](MediaRange.*/*)(((m: org.http4s.Media[F]) =&gt; EntityDecoder.this.collectBinary[F](m)(evidence$5)))(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          16791
+        </td>
+        <td>
+          8749
+          -
+          8770
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.map
+        </td>
+        <td>
+          org.http4s.entitycodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.binary[[_]F[_]](evidence$6).map[Array[Byte]](((x$4: fs2.Chunk[Byte]) =&gt; x$4.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))))(evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          13041
+        </td>
+        <td>
+          8852
+          -
+          8914
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityDecoder.decodeBy[[_]F[_], scodec.bits.ByteVector](MediaRange.*/*)(((m: org.http4s.Media[F]) =&gt; EntityDecoder.this.collectByteVector[F](m)(evidence$7)))(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          19531
+        </td>
+        <td>
+          9052
+          -
+          9238
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.server.middleware.urlformliftersuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], String](MediaRange.text/*)(((msg: org.http4s.Media[[_]F[_]]) =&gt; EntityDecoder.this.collectBinary[[_]F[_]](msg)(F).map[String](((chunk: fs2.Chunk[Byte]) =&gt; new scala.Predef.String(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])), msg.charset.getOrElse[org.http4s.Charset](defaultCharset).nioCharset)))(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          251
+        </td>
+        <td>
+          17985
+        </td>
+        <td>
+          9327
+          -
+          9346
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.map
+        </td>
+        <td>
+          org.http4s.entitycodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.this.text[[_]F[_]](evidence$8, EntityDecoder.this.text$default$2[[_]F[_]]).map[Array[Char]](((x$5: String) =&gt; scala.Predef.augmentString(x$5).toArray[Char]((ClassTag.Char: scala.reflect.ClassTag[Char]))))(evidence$8)
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          13574
+        </td>
+        <td>
+          9512
+          -
+          9567
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityDecoder.this.binFile[[_]F[_]](fs2.io.file.Path.fromNioPath(file.toPath()))(evidence$9, evidence$10).map[java.io.File](((x$6: fs2.io.file.Path) =&gt; file))(evidence$10)
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          20367
+        </td>
+        <td>
+          9713
+          -
+          9769
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityDecoder.this.textFile[[_]F[_]](fs2.io.file.Path.fromNioPath(file.toPath()))(evidence$11, evidence$12).map[java.io.File](((x$7: fs2.io.file.Path) =&gt; file))(evidence$12)
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          16302
+        </td>
+        <td>
+          9852
+          -
+          10028
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], fs2.io.file.Path](MediaRange.*/*)(((msg: org.http4s.Media[[_]F[_]]) =&gt; {
+  val pipe: fs2.Pipe[F,Byte,fs2.INothing] = fs2.io.file.Files.apply[F](evidence$13).writeAll(path);
+  DecodeResult.success[F, Unit](msg.body.through[[x]F[x], fs2.INothing](pipe).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$14))).drain)(evidence$14).map[fs2.io.file.Path](((x$8: Unit) =&gt; path))(evidence$14)
+}))(evidence$14)
+        </td>
+      </tr><tr>
+        <td>
+          269
+        </td>
+        <td>
+          14658
+        </td>
+        <td>
+          10112
+          -
+          10291
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], fs2.io.file.Path](MediaRange.text/*)(((msg: org.http4s.Media[[_]F[_]]) =&gt; {
+  val pipe: fs2.Pipe[F,Byte,fs2.INothing] = fs2.io.file.Files.apply[F](evidence$15).writeAll(path);
+  DecodeResult.success[F, Unit](msg.body.through[[x]F[x], fs2.INothing](pipe).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$16))).drain)(evidence$16).map[fs2.io.file.Path](((x$9: Unit) =&gt; path))(evidence$16)
+}))(evidence$16)
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          21175
+        </td>
+        <td>
+          10374
+          -
+          10398
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.multipart.MultipartDecoder.decoder
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite,org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.multipart.MultipartDecoder.decoder[[_]F[_]](evidence$17)
+        </td>
+      </tr><tr>
+        <td>
+          315
+        </td>
+        <td>
+          17157
+        </td>
+        <td>
+          12426
+          -
+          12569
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.multipart.MultipartDecoder.mixedMultipartResource
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.multipart.MultipartDecoder.mixedMultipartResource[[_]F[_]](headerLimit, maxSizeBeforeWrite, maxParts, failOnLimit, chunkSize)(evidence$18, evidence$19)
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          13291
+        </td>
+        <td>
+          14873
+          -
+          14960
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.multipart.MultipartDecoder.mixedMultipart
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.multipart.MultipartDecoder.mixedMultipart[[_]F[_]](headerLimit, maxSizeBeforeWrite, maxParts, failOnLimit)(evidence$20, evidence$21)
+        </td>
+      </tr><tr>
+        <td>
+          359
+        </td>
+        <td>
+          19556
+        </td>
+        <td>
+          15048
+          -
+          15187
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], fs2.Stream[[x]F[x],org.http4s.ServerSentEvent]](MediaType.text/event-stream)(((msg: org.http4s.Media[[_]F[_]]) =&gt; DecodeResult.successT[[_]F[_], fs2.Stream[[x]F[x],org.http4s.ServerSentEvent]](msg.body.through[[x]F[x], org.http4s.ServerSentEvent](ServerSentEvent.decoder[[_]F[_]]))(evidence$22)))(evidence$22)
+        </td>
+      </tr><tr>
+        <td>
+          365
+        </td>
+        <td>
+          17884
+        </td>
+        <td>
+          15327
+          -
+          15433
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.entitycodecsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], Unit](MediaRange.*/*)(((msg: org.http4s.Media[[_]F[_]]) =&gt; DecodeResult.success[F, Unit](msg.body.compile[[x]F[x], [x]F[x], Byte](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$23))).drain)(evidence$23)))(evidence$23)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

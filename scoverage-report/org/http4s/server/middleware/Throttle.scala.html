@@ -1,0 +1,1603 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/Throttle.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server.middleware
+</span>18 <span style=''>
+</span>19 <span style=''>import cats._
+</span>20 <span style=''>import cats.data.Kleisli
+</span>21 <span style=''>import cats.data.OptionT
+</span>22 <span style=''>import cats.effect.kernel.Temporal
+</span>23 <span style=''>import cats.implicits._
+</span>24 <span style=''>import org.http4s.Http
+</span>25 <span style=''>import org.http4s.HttpApp
+</span>26 <span style=''>import org.http4s.HttpRoutes
+</span>27 <span style=''>import org.http4s.Response
+</span>28 <span style=''>import org.http4s.Status
+</span>29 <span style=''>
+</span>30 <span style=''>import scala.annotation.nowarn
+</span>31 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>32 <span style=''>import scala.concurrent.duration._
+</span>33 <span style=''>
+</span>34 <span style=''>/** Transform a service to reject any calls the go over a given rate.
+</span>35 <span style=''>  */
+</span>36 <span style=''>object Throttle {
+</span>37 <span style=''>  sealed abstract class TokenAvailability extends Product with Serializable
+</span>38 <span style=''>  case object TokenAvailable extends TokenAvailability
+</span>39 <span style=''>  final case class TokenUnavailable(retryAfter: Option[FiniteDuration]) extends TokenAvailability
+</span>40 <span style=''>
+</span>41 <span style=''>  /** A token bucket for use with the [[Throttle]] middleware.  Consumers can take tokens which will be refilled over time.
+</span>42 <span style=''>    * Implementations are required to provide their own refill mechanism.
+</span>43 <span style=''>    *
+</span>44 <span style=''>    * Possible implementations include a remote TokenBucket service to coordinate between different application instances.
+</span>45 <span style=''>    */
+</span>46 <span style=''>  trait TokenBucket[F[_]] {
+</span>47 <span style=''>    def takeToken: F[TokenAvailability]
+</span>48 <span style=''>    def mapK[G[_]](fk: F ~&gt; G): TokenBucket[G] = </span><span style='background: #AEF1AE'>new TokenBucket.Translated[F, G](this, fk)</span><span style=''>
+</span>49 <span style=''>  }
+</span>50 <span style=''>
+</span>51 <span style=''>  object TokenBucket {
+</span>52 <span style=''>    private class Translated[F[_], G[_]](t: TokenBucket[F], fk: F ~&gt; G) extends TokenBucket[G] {
+</span>53 <span style=''>      def takeToken: G[TokenAvailability] = </span><span style='background: #AEF1AE'>fk(t.takeToken)</span><span style=''>
+</span>54 <span style=''>    }
+</span>55 <span style=''>
+</span>56 <span style=''>    /** Creates an in-memory [[TokenBucket]].
+</span>57 <span style=''>      *
+</span>58 <span style=''>      * @param capacity the number of tokens the bucket can hold and starts with.
+</span>59 <span style=''>      * @param refillEvery the frequency with which to add another token if there is capacity spare.
+</span>60 <span style=''>      * @return A task to create the [[TokenBucket]].
+</span>61 <span style=''>      */
+</span>62 <span style=''>    def local[F[_]](capacity: Int, refillEvery: FiniteDuration)(implicit
+</span>63 <span style=''>        F: Temporal[F]
+</span>64 <span style=''>    ): F[TokenBucket[F]] = {
+</span>65 <span style=''>      def getTime = </span><span style='background: #AEF1AE'>F.monotonic.map(_.toNanos)</span><span style=''>
+</span>66 <span style=''>      val bucket = </span><span style='background: #AEF1AE'>getTime.flatMap(time =&gt; F.ref((capacity.toDouble, time)))</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>      </span><span style='background: #AEF1AE'>bucket.map { counter =&gt;
+</span>69 <span style=''></span><span style='background: #AEF1AE'>        new TokenBucket[F] {
+</span>70 <span style=''></span><span style='background: #AEF1AE'>          override def takeToken: F[TokenAvailability] =
+</span>71 <span style=''></span><span style='background: #AEF1AE'>            counter.access.flatMap { case ((previousTokens, previousTime), setter) =&gt;
+</span>72 <span style=''></span><span style='background: #AEF1AE'>              getTime.flatMap { currentTime =&gt;
+</span>73 <span style=''></span><span style='background: #AEF1AE'>                val timeDifference = currentTime - previousTime
+</span>74 <span style=''></span><span style='background: #AEF1AE'>                val tokensToAdd = timeDifference.toDouble / refillEvery.toNanos.toDouble
+</span>75 <span style=''></span><span style='background: #AEF1AE'>                val newTokenTotal = Math.min(previousTokens + tokensToAdd, capacity.toDouble)
+</span>76 <span style=''></span><span style='background: #AEF1AE'>                def unavailable = {
+</span>77 <span style=''></span><span style='background: #AEF1AE'>                  val timeToNextToken = refillEvery.toNanos - timeDifference
+</span>78 <span style=''></span><span style='background: #AEF1AE'>                  TokenUnavailable(timeToNextToken.nanos.some)
+</span>79 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>80 <span style=''></span><span style='background: #AEF1AE'>
+</span>81 <span style=''></span><span style='background: #AEF1AE'>                // If setter fails (yields the value false), then retry with recursive call
+</span>82 <span style=''></span><span style='background: #AEF1AE'>                if (newTokenTotal &gt;= 1)
+</span>83 <span style=''></span><span style='background: #AEF1AE'>                  setter((newTokenTotal - 1, currentTime)).ifM(F.pure(TokenAvailable), takeToken)
+</span>84 <span style=''></span><span style='background: #AEF1AE'>                else
+</span>85 <span style=''></span><span style='background: #AEF1AE'>                  setter((newTokenTotal, currentTime)).ifM(F.pure(unavailable), takeToken)
+</span>86 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>87 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>88 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>89 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>90 <span style=''>    }
+</span>91 <span style=''>  }
+</span>92 <span style=''>
+</span>93 <span style=''>  private def createBucket[F[_]](amount: Int, per: FiniteDuration)(implicit F: Temporal[F]) = {
+</span>94 <span style=''>    val refillFrequency = </span><span style='background: #F0ADAD'>per / amount.toLong</span><span style=''>
+</span>95 <span style=''>    </span><span style='background: #F0ADAD'>TokenBucket.local(amount, refillFrequency)</span><span style=''>
+</span>96 <span style=''>  }
+</span>97 <span style=''>
+</span>98 <span style=''>  /** Limits the supplied service to a given rate of calls using an in-memory [[TokenBucket]]
+</span>99 <span style=''>    *
+</span>100 <span style=''>    * @param amount the number of calls to the service to permit within the given time period.
+</span>101 <span style=''>    * @param per the time period over which a given number of calls is permitted.
+</span>102 <span style=''>    * @param http the service to transform.
+</span>103 <span style=''>    * @return a task containing the transformed service.
+</span>104 <span style=''>    */
+</span>105 <span style=''>  def apply[F[_], G[_]](amount: Int, per: FiniteDuration)(
+</span>106 <span style=''>      http: Http[F, G]
+</span>107 <span style=''>  )(implicit F: Temporal[F]): F[Http[F, G]] =
+</span>108 <span style=''>    </span><span style='background: #F0ADAD'>createBucket(amount, per).map(bucket =&gt; apply(bucket, defaultResponse[G] _)(http))</span><span style=''>
+</span>109 <span style=''>
+</span>110 <span style=''>  /** As [[[apply[F[_],G[_]](amount:Int,per:scala\.concurrent\.duration\.FiniteDuration* apply(amount,per)]]], but for HttpRoutes[F]
+</span>111 <span style=''>    */
+</span>112 <span style=''>  def httpRoutes[F[_]](amount: Int, per: FiniteDuration)(
+</span>113 <span style=''>      httpRoutes: HttpRoutes[F]
+</span>114 <span style=''>  )(implicit F: Temporal[F]): F[HttpRoutes[F]] =
+</span>115 <span style=''>    </span><span style='background: #F0ADAD'>createBucket(amount, per).map(bucket =&gt;
+</span>116 <span style=''></span><span style='background: #F0ADAD'>      Throttle.httpRoutes(bucket, defaultResponse[F] _)(httpRoutes)
+</span>117 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>118 <span style=''>
+</span>119 <span style=''>  /** As [[[apply[F[_],G[_]](amount:Int,per:scala\.concurrent\.duration\.FiniteDuration* apply(amount,per)]]], but for HttpApp[F]
+</span>120 <span style=''>    */
+</span>121 <span style=''>  def httpAapp[F[_]](amount: Int, per: FiniteDuration)(httpApp: HttpApp[F])(implicit
+</span>122 <span style=''>      F: Temporal[F]
+</span>123 <span style=''>  ): F[HttpApp[F]] =
+</span>124 <span style=''>    </span><span style='background: #F0ADAD'>apply(amount, per)(httpApp)</span><span style=''>
+</span>125 <span style=''>
+</span>126 <span style=''>  def defaultResponse[F[_]](@nowarn retryAfter: Option[FiniteDuration]): Response[F] =
+</span>127 <span style=''>    </span><span style='background: #AEF1AE'>Response[F](Status.TooManyRequests)</span><span style=''>
+</span>128 <span style=''>
+</span>129 <span style=''>  /** Limits the supplied service using a provided [[TokenBucket]]
+</span>130 <span style=''>    *
+</span>131 <span style=''>    * @param bucket a [[TokenBucket]] to use to track the rate of incoming requests.
+</span>132 <span style=''>    * @param throttleResponse a function that defines the response when throttled, may be supplied a suggested retry time depending on bucket implementation.
+</span>133 <span style=''>    * @param http the service to transform.
+</span>134 <span style=''>    * @return a task containing the transformed service.
+</span>135 <span style=''>    */
+</span>136 <span style=''>  def apply[F[_], G[_]](
+</span>137 <span style=''>      bucket: TokenBucket[F],
+</span>138 <span style=''>      throttleResponse: Option[FiniteDuration] =&gt; Response[G] = defaultResponse[G] _,
+</span>139 <span style=''>  )(http: Http[F, G])(implicit F: Monad[F]): Http[F, G] =
+</span>140 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>141 <span style=''></span><span style='background: #AEF1AE'>      bucket.takeToken.flatMap {
+</span>142 <span style=''></span><span style='background: #AEF1AE'>        case TokenAvailable =&gt; http(req)
+</span>143 <span style=''></span><span style='background: #AEF1AE'>        case TokenUnavailable(retryAfter) =&gt; throttleResponse(retryAfter).pure[F]
+</span>144 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>145 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>146 <span style=''>
+</span>147 <span style=''>  /** As [[[apply[F[_],G[_]](bucket:org\.http4s\.server\.middleware\.Throttle\.TokenBucket[F],throttleResponse:Option[scala\.concurrent\.duration\.FiniteDuration]=&gt;org\.http4s\.Response[G]* apply(bucket,throttleResponse)]]], but for HttpRoutes[F]
+</span>148 <span style=''>    */
+</span>149 <span style=''>  def httpRoutes[F[_]: Monad](
+</span>150 <span style=''>      bucket: TokenBucket[F],
+</span>151 <span style=''>      throttleResponse: Option[FiniteDuration] =&gt; Response[F] = defaultResponse[F] _,
+</span>152 <span style=''>  )(httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>153 <span style=''>    </span><span style='background: #AEF1AE'>apply(bucket.mapK(OptionT.liftK), throttleResponse)(httpRoutes)</span><span style=''>
+</span>154 <span style=''>
+</span>155 <span style=''>  /** As [[[apply[F[_],G[_]](bucket:org\.http4s\.server\.middleware\.Throttle\.TokenBucket[F],throttleResponse:Option[scala\.concurrent\.duration\.FiniteDuration]=&gt;org\.http4s\.Response[G]* apply(bucket,throttleResponse)]]], but for HttpApp[F]
+</span>156 <span style=''>    */
+</span>157 <span style=''>  def httpApp[F[_]: Monad](
+</span>158 <span style=''>      bucket: TokenBucket[F],
+</span>159 <span style=''>      throttleResponse: Option[FiniteDuration] =&gt; Response[F] = defaultResponse[F] _,
+</span>160 <span style=''>  )(httpApp: HttpApp[F]): HttpApp[F] =
+</span>161 <span style=''>    </span><span style='background: #AEF1AE'>apply(bucket, throttleResponse)(httpApp)</span><span style=''>
+</span>162 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          9823
+        </td>
+        <td>
+          1776
+          -
+          1818
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.TokenBucket.Translated.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.middleware.Throttle.TokenBucket.Translated[F,G](this, fk)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8136
+        </td>
+        <td>
+          1988
+          -
+          2003
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Translated.this.fk.apply[org.http4s.server.middleware.Throttle.TokenAvailability](Translated.this.t.takeToken)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8810
+        </td>
+        <td>
+          1991
+          -
+          2002
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.TokenBucket.takeToken
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Translated.this.t.takeToken
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          9016
+        </td>
+        <td>
+          2472
+          -
+          2481
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.toNanos
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.toNanos
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          7831
+        </td>
+        <td>
+          2456
+          -
+          2482
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFunctorOps[F, scala.concurrent.duration.FiniteDuration](F.monotonic)(F).map[Long](((x$1: scala.concurrent.duration.FiniteDuration) =&gt; x$1.toNanos))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          10028
+        </td>
+        <td>
+          2456
+          -
+          2467
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.Clock.monotonic
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.monotonic
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          8026
+        </td>
+        <td>
+          2526
+          -
+          2558
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.GenConcurrent.ref
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.ref[(Double, Long)](scala.Tuple2.apply[Double, Long](capacity.toDouble, time))
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          9066
+        </td>
+        <td>
+          2532
+          -
+          2557
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[Double, Long](capacity.toDouble, time)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          9631
+        </td>
+        <td>
+          2533
+          -
+          2550
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toDouble
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          capacity.toDouble
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          9917
+        </td>
+        <td>
+          2502
+          -
+          2559
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, Long](getTime)(F).flatMap[cats.effect.kernel.Ref[F,(Double, Long)]](((time: Long) =&gt; F.ref[(Double, Long)](scala.Tuple2.apply[Double, Long](capacity.toDouble, time))))
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          7713
+        </td>
+        <td>
+          2567
+          -
+          3641
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFunctorOps[F, cats.effect.kernel.Ref[F,(Double, Long)]](bucket)(F).map[org.http4s.server.middleware.Throttle.TokenBucket[F]](((counter: cats.effect.kernel.Ref[F,(Double, Long)]) =&gt; {
+  final class $anon extends AnyRef with org.http4s.server.middleware.Throttle.TokenBucket[F] {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.server.middleware.Throttle.TokenBucket[F]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    override def takeToken: F[org.http4s.server.middleware.Throttle.TokenAvailability] = cats.implicits.toFlatMapOps[F, ((Double, Long), ((Double, Long)) =&gt; F[Boolean])](counter.access)(F).flatMap[org.http4s.server.middleware.Throttle.TokenAvailability](((x0$1: ((Double, Long), ((Double, Long)) =&gt; F[Boolean])) =&gt; x0$1 match {
+      case (_1: (Double, Long), _2: ((Double, Long)) =&gt; F[Boolean]): ((Double, Long), ((Double, Long)) =&gt; F[Boolean])((_1: Double, _2: Long): (Double, Long)((previousTokens @ _), (previousTime @ _)), (setter @ _)) =&gt; cats.implicits.toFlatMapOps[F, Long](getTime)(F).flatMap[org.http4s.server.middleware.Throttle.TokenAvailability](((currentTime: Long) =&gt; {
+        val timeDifference: Long = currentTime.-(previousTime);
+        val tokensToAdd: Double = timeDifference.toDouble./(refillEvery.toNanos.toDouble);
+        val newTokenTotal: Double = java.lang.Math.min(previousTokens.+(tokensToAdd), capacity.toDouble);
+        def unavailable: org.http4s.server.middleware.Throttle.TokenUnavailable = {
+          val timeToNextToken: Long = refillEvery.toNanos.-(timeDifference);
+          Throttle.this.TokenUnavailable.apply(cats.implicits.catsSyntaxOptionId[scala.concurrent.duration.FiniteDuration](scala.concurrent.duration.`package`.DurationLong(timeToNextToken).nanos).some)
+        };
+        if (newTokenTotal.&gt;=(1))
+          cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal.-(1), currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](Throttle.this.TokenAvailable), $anon.this.takeToken)(F)
+        else
+          cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal, currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](unavailable), $anon.this.takeToken)(F)
+      }))
+    }))
+  };
+  new $anon()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          8752
+        </td>
+        <td>
+          2599
+          -
+          2602
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.TokenBucket.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          9747
+        </td>
+        <td>
+          2689
+          -
+          3623
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, ((Double, Long), ((Double, Long)) =&gt; F[Boolean])](counter.access)(F).flatMap[org.http4s.server.middleware.Throttle.TokenAvailability](((x0$1: ((Double, Long), ((Double, Long)) =&gt; F[Boolean])) =&gt; x0$1 match {
+  case (_1: (Double, Long), _2: ((Double, Long)) =&gt; F[Boolean]): ((Double, Long), ((Double, Long)) =&gt; F[Boolean])((_1: Double, _2: Long): (Double, Long)((previousTokens @ _), (previousTime @ _)), (setter @ _)) =&gt; cats.implicits.toFlatMapOps[F, Long](getTime)(F).flatMap[org.http4s.server.middleware.Throttle.TokenAvailability](((currentTime: Long) =&gt; {
+    val timeDifference: Long = currentTime.-(previousTime);
+    val tokensToAdd: Double = timeDifference.toDouble./(refillEvery.toNanos.toDouble);
+    val newTokenTotal: Double = java.lang.Math.min(previousTokens.+(tokensToAdd), capacity.toDouble);
+    def unavailable: org.http4s.server.middleware.Throttle.TokenUnavailable = {
+      val timeToNextToken: Long = refillEvery.toNanos.-(timeDifference);
+      Throttle.this.TokenUnavailable.apply(cats.implicits.catsSyntaxOptionId[scala.concurrent.duration.FiniteDuration](scala.concurrent.duration.`package`.DurationLong(timeToNextToken).nanos).some)
+    };
+    if (newTokenTotal.&gt;=(1))
+      cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal.-(1), currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](Throttle.this.TokenAvailable), $anon.this.takeToken)(F)
+    else
+      cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal, currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](unavailable), $anon.this.takeToken)(F)
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          8763
+        </td>
+        <td>
+          2689
+          -
+          2703
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.Ref.access
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          counter.access
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          8073
+        </td>
+        <td>
+          2777
+          -
+          3609
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, Long](getTime)(F).flatMap[org.http4s.server.middleware.Throttle.TokenAvailability](((currentTime: Long) =&gt; {
+  val timeDifference: Long = currentTime.-(previousTime);
+  val tokensToAdd: Double = timeDifference.toDouble./(refillEvery.toNanos.toDouble);
+  val newTokenTotal: Double = java.lang.Math.min(previousTokens.+(tokensToAdd), capacity.toDouble);
+  def unavailable: org.http4s.server.middleware.Throttle.TokenUnavailable = {
+    val timeToNextToken: Long = refillEvery.toNanos.-(timeDifference);
+    Throttle.this.TokenUnavailable.apply(cats.implicits.catsSyntaxOptionId[scala.concurrent.duration.FiniteDuration](scala.concurrent.duration.`package`.DurationLong(timeToNextToken).nanos).some)
+  };
+  if (newTokenTotal.&gt;=(1))
+    cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal.-(1), currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](Throttle.this.TokenAvailable), $anon.this.takeToken)(F)
+  else
+    cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal, currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](unavailable), $anon.this.takeToken)(F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          7650
+        </td>
+        <td>
+          2847
+          -
+          2873
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          currentTime.-(previousTime)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          8839
+        </td>
+        <td>
+          2908
+          -
+          2962
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Double./
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          timeDifference.toDouble./(refillEvery.toNanos.toDouble)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          9978
+        </td>
+        <td>
+          2934
+          -
+          2962
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Long.toDouble
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          refillEvery.toNanos.toDouble
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9076
+        </td>
+        <td>
+          2999
+          -
+          3056
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Math.min
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.Math.min(previousTokens.+(tokensToAdd), capacity.toDouble)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9589
+        </td>
+        <td>
+          3038
+          -
+          3055
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toDouble
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          capacity.toDouble
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          7758
+        </td>
+        <td>
+          3008
+          -
+          3036
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Double.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          previousTokens.+(tokensToAdd)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          8068
+        </td>
+        <td>
+          3133
+          -
+          3169
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          refillEvery.toNanos.-(timeDifference)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9744
+        </td>
+        <td>
+          3205
+          -
+          3226
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.DurationConversions.nanos
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.concurrent.duration.`package`.DurationLong(timeToNextToken).nanos
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7603
+        </td>
+        <td>
+          3188
+          -
+          3232
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.TokenUnavailable.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Throttle.this.TokenUnavailable.apply(cats.implicits.catsSyntaxOptionId[scala.concurrent.duration.FiniteDuration](scala.concurrent.duration.`package`.DurationLong(timeToNextToken).nanos).some)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8801
+        </td>
+        <td>
+          3205
+          -
+          3231
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.OptionIdOps.some
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxOptionId[scala.concurrent.duration.FiniteDuration](scala.concurrent.duration.`package`.DurationLong(timeToNextToken).nanos).some
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          9987
+        </td>
+        <td>
+          3364
+          -
+          3382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Double.&gt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          newTokenTotal.&gt;=(1)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          7741
+        </td>
+        <td>
+          3402
+          -
+          3481
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.IfMOps.ifM
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal.-(1), currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](Throttle.this.TokenAvailable), $anon.this.takeToken)(F)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          8972
+        </td>
+        <td>
+          3402
+          -
+          3481
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.IfMOps.ifM
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal.-(1), currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](Throttle.this.TokenAvailable), $anon.this.takeToken)(F)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          9027
+        </td>
+        <td>
+          3521
+          -
+          3593
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.IfMOps.ifM
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal, currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](unavailable), $anon.this.takeToken)(F)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          9712
+        </td>
+        <td>
+          3521
+          -
+          3593
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.IfMOps.ifM
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxIfM[F](setter.apply(scala.Tuple2.apply[Double, Long](newTokenTotal, currentTime)))(F).ifM[org.http4s.server.middleware.Throttle.TokenAvailability](F.pure[org.http4s.server.middleware.Throttle.TokenAvailability](unavailable), $anon.this.takeToken)(F)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          10059
+        </td>
+        <td>
+          3781
+          -
+          3794
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toLong
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          amount.toLong
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          8981
+        </td>
+        <td>
+          3775
+          -
+          3794
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration./
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          per./(amount.toLong)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          7828
+        </td>
+        <td>
+          3799
+          -
+          3841
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.TokenBucket.local
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Throttle.this.TokenBucket.local[[_]F[_]](amount, refillFrequency)(F)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          8077
+        </td>
+        <td>
+          4364
+          -
+          4446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.implicits.toFunctorOps[F, org.http4s.server.middleware.Throttle.TokenBucket[[_]F[_]]](Throttle.this.createBucket[[_]F[_]](amount, per)(F))(F).map[org.http4s.Http[[_]F[_],[_]G[_]]](((bucket: org.http4s.server.middleware.Throttle.TokenBucket[[_]F[_]]) =&gt; Throttle.this.apply[[_]F[_], [_]G[_]](bucket, ((retryAfter: Option[scala.concurrent.duration.FiniteDuration]) =&gt; Throttle.this.defaultResponse[G](retryAfter)))(http)(F)))
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          8609
+        </td>
+        <td>
+          4404
+          -
+          4445
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Throttle.this.apply[[_]F[_], [_]G[_]](bucket, ((retryAfter: Option[scala.concurrent.duration.FiniteDuration]) =&gt; Throttle.this.defaultResponse[G](retryAfter)))(http)(F)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          9679
+        </td>
+        <td>
+          4364
+          -
+          4389
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.createBucket
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Throttle.this.createBucket[[_]F[_]](amount, per)(F)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          9883
+        </td>
+        <td>
+          4731
+          -
+          4756
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.createBucket
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Throttle.this.createBucket[[_]F[_]](amount, per)(F)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          7689
+        </td>
+        <td>
+          4731
+          -
+          4844
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.implicits.toFunctorOps[F, org.http4s.server.middleware.Throttle.TokenBucket[[_]F[_]]](Throttle.this.createBucket[[_]F[_]](amount, per)(F))(F).map[org.http4s.HttpRoutes[[_]F[_]]](((bucket: org.http4s.server.middleware.Throttle.TokenBucket[[_]F[_]]) =&gt; Throttle.httpRoutes[[_]F[_]](bucket, ((retryAfter: Option[scala.concurrent.duration.FiniteDuration]) =&gt; Throttle.this.defaultResponse[F](retryAfter)))(httpRoutes)(F)))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          8761
+        </td>
+        <td>
+          4777
+          -
+          4838
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.httpRoutes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Throttle.httpRoutes[[_]F[_]](bucket, ((retryAfter: Option[scala.concurrent.duration.FiniteDuration]) =&gt; Throttle.this.defaultResponse[F](retryAfter)))(httpRoutes)(F)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          9975
+        </td>
+        <td>
+          5114
+          -
+          5141
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Throttle.this.apply[[_]F[_], [_]F[_]](amount, per)(httpApp)(F)
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          8986
+        </td>
+        <td>
+          5246
+          -
+          5268
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.TooManyRequests
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Status.TooManyRequests
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          8516
+        </td>
+        <td>
+          5242
+          -
+          5242
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply$default$4[F]
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          7987
+        </td>
+        <td>
+          5242
+          -
+          5242
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply$default$5[F]
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          9685
+        </td>
+        <td>
+          5242
+          -
+          5242
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply$default$3[F]
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          7785
+        </td>
+        <td>
+          5242
+          -
+          5242
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply$default$2[F]
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          9890
+        </td>
+        <td>
+          5234
+          -
+          5269
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply[F](org.http4s.Status.TooManyRequests, org.http4s.Response.apply$default$2[F], org.http4s.Response.apply$default$3[F], org.http4s.Response.apply$default$4[F], org.http4s.Response.apply$default$5[F])
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          7789
+        </td>
+        <td>
+          5898
+          -
+          6084
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; cats.implicits.toFlatMapOps[F, org.http4s.server.middleware.Throttle.TokenAvailability](bucket.takeToken)(F).flatMap[org.http4s.Response[G]](((x0$1: org.http4s.server.middleware.Throttle.TokenAvailability) =&gt; x0$1 match {
+  case Throttle.this.TokenAvailable =&gt; http.apply(req)
+  case (retryAfter: Option[scala.concurrent.duration.FiniteDuration]): org.http4s.server.middleware.Throttle.TokenUnavailable((retryAfter @ _)) =&gt; cats.implicits.catsSyntaxApplicativeId[org.http4s.Response[G]](throttleResponse.apply(retryAfter)).pure[F](F)
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          8886
+        </td>
+        <td>
+          5921
+          -
+          6078
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, org.http4s.server.middleware.Throttle.TokenAvailability](bucket.takeToken)(F).flatMap[org.http4s.Response[G]](((x0$1: org.http4s.server.middleware.Throttle.TokenAvailability) =&gt; x0$1 match {
+  case Throttle.this.TokenAvailable =&gt; http.apply(req)
+  case (retryAfter: Option[scala.concurrent.duration.FiniteDuration]): org.http4s.server.middleware.Throttle.TokenUnavailable((retryAfter @ _)) =&gt; cats.implicits.catsSyntaxApplicativeId[org.http4s.Response[G]](throttleResponse.apply(retryAfter)).pure[F](F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          8706
+        </td>
+        <td>
+          5921
+          -
+          5937
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.TokenBucket.takeToken
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          bucket.takeToken
+        </td>
+      </tr><tr>
+        <td>
+          142
+        </td>
+        <td>
+          7694
+        </td>
+        <td>
+          5979
+          -
+          5988
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          9985
+        </td>
+        <td>
+          6034
+          -
+          6070
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxApplicativeId[org.http4s.Response[G]](throttleResponse.apply(retryAfter)).pure[F](F)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          7993
+        </td>
+        <td>
+          6590
+          -
+          6590
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances1.catsDataMonadErrorMonadForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorMonadForOptionT[[_]F[_]](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          9874
+        </td>
+        <td>
+          6539
+          -
+          6602
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Throttle.this.apply[[β$0$]cats.data.OptionT[[_]F[_],β$0$], [_]F[_]](bucket.mapK[[β$0$]cats.data.OptionT[[_]F[_],β$0$]](cats.data.OptionT.liftK[[_]F[_]](evidence$1)), throttleResponse)(httpRoutes)(data.this.OptionT.catsDataMonadErrorMonadForOptionT[[_]F[_]](evidence$1))
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          8524
+        </td>
+        <td>
+          6545
+          -
+          6571
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.TokenBucket.mapK
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          bucket.mapK[[β$0$]cats.data.OptionT[[_]F[_],β$0$]](cats.data.OptionT.liftK[[_]F[_]](evidence$1))
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          9639
+        </td>
+        <td>
+          6557
+          -
+          6570
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftK
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftK[[_]F[_]](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          8711
+        </td>
+        <td>
+          7042
+          -
+          7082
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Throttle.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.throttlesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Throttle.this.apply[[_]F[_], [_]F[_]](bucket, throttleResponse)(httpApp)(evidence$2)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

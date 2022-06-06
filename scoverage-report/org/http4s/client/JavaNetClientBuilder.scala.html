@@ -1,0 +1,5482 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/JavaNetClientBuilder.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package client
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.effect.Async
+</span>21 <span style=''>import cats.effect.Resource
+</span>22 <span style=''>import cats.effect.Sync
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import fs2.Stream
+</span>25 <span style=''>import fs2.io.readInputStream
+</span>26 <span style=''>import fs2.io.writeOutputStream
+</span>27 <span style=''>import org.http4s.internal.BackendBuilder
+</span>28 <span style=''>import org.http4s.internal.CollectionCompat.CollectionConverters._
+</span>29 <span style=''>import org.typelevel.ci.CIString
+</span>30 <span style=''>
+</span>31 <span style=''>import java.io.IOException
+</span>32 <span style=''>import java.net.HttpURLConnection
+</span>33 <span style=''>import java.net.Proxy
+</span>34 <span style=''>import java.net.URL
+</span>35 <span style=''>import javax.net.ssl.HostnameVerifier
+</span>36 <span style=''>import javax.net.ssl.HttpsURLConnection
+</span>37 <span style=''>import javax.net.ssl.SSLSocketFactory
+</span>38 <span style=''>import scala.concurrent.duration.Duration
+</span>39 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>40 <span style=''>
+</span>41 <span style=''>/** Builder for a [[Client]] backed by on `java.net.HttpUrlConnection`.
+</span>42 <span style=''>  *
+</span>43 <span style=''>  * The java.net client adds no dependencies beyond `http4s-client`.
+</span>44 <span style=''>  * This client is generally not production grade, but convenient for
+</span>45 <span style=''>  * exploration in a REPL.
+</span>46 <span style=''>  *
+</span>47 <span style=''>  * All I/O operations in this client are blocking.
+</span>48 <span style=''>  *
+</span>49 <span style=''>  * @define WHYNOSHUTDOWN Creation of the client allocates no
+</span>50 <span style=''>  * resources, and any resources allocated while using this client
+</span>51 <span style=''>  * are reclaimed by the JVM at its own leisure.
+</span>52 <span style=''>  */
+</span>53 <span style=''>sealed abstract class JavaNetClientBuilder[F[_]] private (
+</span>54 <span style=''>    val connectTimeout: Duration,
+</span>55 <span style=''>    val readTimeout: Duration,
+</span>56 <span style=''>    val proxy: Option[Proxy],
+</span>57 <span style=''>    val hostnameVerifier: Option[HostnameVerifier],
+</span>58 <span style=''>    val sslSocketFactory: Option[SSLSocketFactory],
+</span>59 <span style=''>)(implicit protected val F: Async[F])
+</span>60 <span style=''>    extends BackendBuilder[F, Client[F]] {
+</span>61 <span style=''>  private def copy(
+</span>62 <span style=''>      connectTimeout: Duration = connectTimeout,
+</span>63 <span style=''>      readTimeout: Duration = readTimeout,
+</span>64 <span style=''>      proxy: Option[Proxy] = proxy,
+</span>65 <span style=''>      hostnameVerifier: Option[HostnameVerifier] = hostnameVerifier,
+</span>66 <span style=''>      sslSocketFactory: Option[SSLSocketFactory] = sslSocketFactory,
+</span>67 <span style=''>  ): JavaNetClientBuilder[F] =
+</span>68 <span style=''>    </span><span style='background: #F0ADAD'>new</span><span style=''> JavaNetClientBuilder[F](
+</span>69 <span style=''>      connectTimeout = connectTimeout,
+</span>70 <span style=''>      readTimeout = readTimeout,
+</span>71 <span style=''>      proxy = proxy,
+</span>72 <span style=''>      hostnameVerifier = hostnameVerifier,
+</span>73 <span style=''>      sslSocketFactory = sslSocketFactory,
+</span>74 <span style=''>    ) {}
+</span>75 <span style=''>
+</span>76 <span style=''>  def withConnectTimeout(connectTimeout: Duration): JavaNetClientBuilder[F] =
+</span>77 <span style=''>    </span><span style='background: #F0ADAD'>copy(connectTimeout = connectTimeout)</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>  def withReadTimeout(readTimeout: Duration): JavaNetClientBuilder[F] =
+</span>80 <span style=''>    </span><span style='background: #F0ADAD'>copy(readTimeout = readTimeout)</span><span style=''>
+</span>81 <span style=''>
+</span>82 <span style=''>  def withProxyOption(proxy: Option[Proxy]): JavaNetClientBuilder[F] =
+</span>83 <span style=''>    </span><span style='background: #F0ADAD'>copy(proxy = proxy)</span><span style=''>
+</span>84 <span style=''>  def withProxy(proxy: Proxy): JavaNetClientBuilder[F] =
+</span>85 <span style=''>    </span><span style='background: #F0ADAD'>withProxyOption(Some(proxy))</span><span style=''>
+</span>86 <span style=''>  def withoutProxy: JavaNetClientBuilder[F] =
+</span>87 <span style=''>    </span><span style='background: #F0ADAD'>withProxyOption(None)</span><span style=''>
+</span>88 <span style=''>
+</span>89 <span style=''>  def withHostnameVerifierOption(
+</span>90 <span style=''>      hostnameVerifier: Option[HostnameVerifier]
+</span>91 <span style=''>  ): JavaNetClientBuilder[F] =
+</span>92 <span style=''>    </span><span style='background: #F0ADAD'>copy(hostnameVerifier = hostnameVerifier)</span><span style=''>
+</span>93 <span style=''>  def withHostnameVerifier(hostnameVerifier: HostnameVerifier): JavaNetClientBuilder[F] =
+</span>94 <span style=''>    </span><span style='background: #F0ADAD'>withHostnameVerifierOption(Some(hostnameVerifier))</span><span style=''>
+</span>95 <span style=''>  def withoutHostnameVerifier: JavaNetClientBuilder[F] =
+</span>96 <span style=''>    </span><span style='background: #F0ADAD'>withHostnameVerifierOption(None)</span><span style=''>
+</span>97 <span style=''>
+</span>98 <span style=''>  def withSslSocketFactoryOption(
+</span>99 <span style=''>      sslSocketFactory: Option[SSLSocketFactory]
+</span>100 <span style=''>  ): JavaNetClientBuilder[F] =
+</span>101 <span style=''>    </span><span style='background: #F0ADAD'>copy(sslSocketFactory = sslSocketFactory)</span><span style=''>
+</span>102 <span style=''>  def withSslSocketFactory(sslSocketFactory: SSLSocketFactory): JavaNetClientBuilder[F] =
+</span>103 <span style=''>    </span><span style='background: #F0ADAD'>withSslSocketFactoryOption(Some(sslSocketFactory))</span><span style=''>
+</span>104 <span style=''>  def withoutSslSocketFactory: JavaNetClientBuilder[F] =
+</span>105 <span style=''>    </span><span style='background: #F0ADAD'>withSslSocketFactoryOption(None)</span><span style=''>
+</span>106 <span style=''>
+</span>107 <span style=''>  /** Creates a [[Client]].
+</span>108 <span style=''>    *
+</span>109 <span style=''>    * The shutdown of this client is a no-op. $WHYNOSHUTDOWN
+</span>110 <span style=''>    */
+</span>111 <span style=''>  def create: Client[F] =
+</span>112 <span style=''>    </span><span style='background: #AEF1AE'>Client { (req: Request[F]) =&gt;
+</span>113 <span style=''></span><span style='background: #AEF1AE'>      def respond(conn: HttpURLConnection): F[Response[F]] =
+</span>114 <span style=''></span><span style='background: #AEF1AE'>        for {
+</span>115 <span style=''></span><span style='background: #AEF1AE'>          _ &lt;- configureSsl(conn)
+</span>116 <span style=''></span><span style='background: #AEF1AE'>          _ &lt;- F.delay(conn.setConnectTimeout(timeoutMillis(connectTimeout)))
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          _ &lt;- F.delay(conn.setReadTimeout(timeoutMillis(readTimeout)))
+</span>118 <span style=''></span><span style='background: #AEF1AE'>          _ &lt;- F.delay(conn.setRequestMethod(req.method.renderString))
+</span>119 <span style=''></span><span style='background: #AEF1AE'>          _ &lt;- F.delay(req.headers.foreach { case Header.Raw(name, value) =&gt;
+</span>120 <span style=''></span><span style='background: #AEF1AE'>            conn.setRequestProperty(name.toString, value)
+</span>121 <span style=''></span><span style='background: #AEF1AE'>          })
+</span>122 <span style=''></span><span style='background: #AEF1AE'>          _ &lt;- F.delay(conn.setInstanceFollowRedirects(false))
+</span>123 <span style=''></span><span style='background: #AEF1AE'>          _ &lt;- F.delay(conn.setDoInput(true))
+</span>124 <span style=''></span><span style='background: #AEF1AE'>          // TODO: fix the blocking here
+</span>125 <span style=''></span><span style='background: #AEF1AE'>          resp &lt;- fetchResponse(req, conn)
+</span>126 <span style=''></span><span style='background: #AEF1AE'>        } yield resp
+</span>127 <span style=''></span><span style='background: #AEF1AE'>
+</span>128 <span style=''></span><span style='background: #AEF1AE'>      for {
+</span>129 <span style=''></span><span style='background: #AEF1AE'>        url &lt;- Resource.eval(F.delay(new URL(req.uri.toString)))
+</span>130 <span style=''></span><span style='background: #AEF1AE'>        conn &lt;- Resource.make(openConnection(url)) { conn =&gt;
+</span>131 <span style=''></span><span style='background: #AEF1AE'>          F.delay(conn.getInputStream().close()).recoverWith { case _: IOException =&gt;
+</span>132 <span style=''></span><span style='background: #AEF1AE'>            F.delay(Option(conn.getErrorStream()).foreach(_.close()))
+</span>133 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>134 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>135 <span style=''></span><span style='background: #AEF1AE'>        resp &lt;- Resource.eval(respond(conn))
+</span>136 <span style=''></span><span style='background: #AEF1AE'>      } yield resp
+</span>137 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>138 <span style=''>
+</span>139 <span style=''>  def resource: Resource[F, Client[F]] =
+</span>140 <span style=''>    </span><span style='background: #AEF1AE'>Resource.eval(F.delay(create))</span><span style=''>
+</span>141 <span style=''>
+</span>142 <span style=''>  private def fetchResponse(req: Request[F], conn: HttpURLConnection) =
+</span>143 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>144 <span style=''></span><span style='background: #AEF1AE'>      _ &lt;- writeBody(req, conn)
+</span>145 <span style=''></span><span style='background: #AEF1AE'>      code &lt;- F.blocking(conn.getResponseCode)
+</span>146 <span style=''></span><span style='background: #AEF1AE'>      status &lt;- F.fromEither(Status.fromInt(code))
+</span>147 <span style=''></span><span style='background: #AEF1AE'>      headers &lt;- F.blocking(
+</span>148 <span style=''></span><span style='background: #AEF1AE'>        Headers(
+</span>149 <span style=''></span><span style='background: #AEF1AE'>          conn.getHeaderFields.asScala
+</span>150 <span style=''></span><span style='background: #AEF1AE'>            .filter(_._1 != null)
+</span>151 <span style=''></span><span style='background: #AEF1AE'>            .flatMap { case (k, vs) =&gt; vs.asScala.map(Header.Raw(CIString(k), _)) }
+</span>152 <span style=''></span><span style='background: #AEF1AE'>            .toList
+</span>153 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>154 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>155 <span style=''></span><span style='background: #AEF1AE'>    } yield Response(status = status, headers = headers, body = readBody(conn))</span><span style=''>
+</span>156 <span style=''>
+</span>157 <span style=''>  private def timeoutMillis(d: Duration): Int =
+</span>158 <span style=''>    d match {
+</span>159 <span style=''>      case d: FiniteDuration if </span><span style='background: #AEF1AE'>d &gt; Duration.Zero</span><span style=''> =&gt; </span><span style='background: #AEF1AE'>d.toMillis.max(0).min(Int.MaxValue).toInt</span><span style=''>
+</span>160 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>0</span><span style=''>
+</span>161 <span style=''>    }
+</span>162 <span style=''>
+</span>163 <span style=''>  private def openConnection(url: URL)(implicit F: Sync[F]) =
+</span>164 <span style=''>    </span><span style='background: #AEF1AE'>proxy</span><span style=''> match {
+</span>165 <span style=''>      case Some(p) =&gt;
+</span>166 <span style=''>        </span><span style='background: #F0ADAD'>F.delay(url.openConnection(p).asInstanceOf[HttpURLConnection])</span><span style=''>
+</span>167 <span style=''>      case None =&gt;
+</span>168 <span style=''>        </span><span style='background: #AEF1AE'>F.delay(url.openConnection().asInstanceOf[HttpURLConnection])</span><span style=''>
+</span>169 <span style=''>    }
+</span>170 <span style=''>
+</span>171 <span style=''>  private def writeBody(req: Request[F], conn: HttpURLConnection): F[Unit] =
+</span>172 <span style=''>    if (</span><span style='background: #AEF1AE'>req.isChunked</span><span style=''>)
+</span>173 <span style=''>      </span><span style='background: #AEF1AE'>F.delay(conn.setDoOutput(true)) *&gt;
+</span>174 <span style=''></span><span style='background: #AEF1AE'>        F.delay(conn.setChunkedStreamingMode(4096)) *&gt;
+</span>175 <span style=''></span><span style='background: #AEF1AE'>        req.body
+</span>176 <span style=''></span><span style='background: #AEF1AE'>          .through(writeOutputStream(F.delay(conn.getOutputStream), false))
+</span>177 <span style=''></span><span style='background: #AEF1AE'>          .compile
+</span>178 <span style=''></span><span style='background: #AEF1AE'>          .drain</span><span style=''>
+</span>179 <span style=''>    else
+</span>180 <span style=''>      </span><span style='background: #AEF1AE'>req.contentLength match {
+</span>181 <span style=''></span><span style='background: #AEF1AE'>        case Some(len) if len &gt;= 0L =&gt;
+</span>182 <span style=''></span><span style='background: #AEF1AE'>          F.delay(conn.setDoOutput(true)) *&gt;
+</span>183 <span style=''></span><span style='background: #AEF1AE'>            F.delay(conn.setFixedLengthStreamingMode(len)) *&gt;
+</span>184 <span style=''></span><span style='background: #AEF1AE'>            req.body
+</span>185 <span style=''></span><span style='background: #AEF1AE'>              .through(writeOutputStream(F.delay(conn.getOutputStream), false))
+</span>186 <span style=''></span><span style='background: #AEF1AE'>              .compile
+</span>187 <span style=''></span><span style='background: #AEF1AE'>              .drain
+</span>188 <span style=''></span><span style='background: #AEF1AE'>        case _ =&gt;
+</span>189 <span style=''></span><span style='background: #AEF1AE'>          F.delay(conn.setDoOutput(false))
+</span>190 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>191 <span style=''>
+</span>192 <span style=''>  private def readBody(conn: HttpURLConnection): Stream[F, Byte] = {
+</span>193 <span style=''>    def inputStream =
+</span>194 <span style=''>      </span><span style='background: #AEF1AE'>F.delay(Option(conn.getInputStream)).recoverWith {
+</span>195 <span style=''></span><span style='background: #AEF1AE'>        case _: IOException if conn.getResponseCode &gt; 0 =&gt;
+</span>196 <span style=''></span><span style='background: #AEF1AE'>          F.delay(Option(conn.getErrorStream))
+</span>197 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>198 <span style=''>    </span><span style='background: #AEF1AE'>Stream.eval(inputStream).flatMap {
+</span>199 <span style=''></span><span style='background: #AEF1AE'>      case Some(in) =&gt; readInputStream(F.pure(in), 4096, false)
+</span>200 <span style=''></span><span style='background: #AEF1AE'>      case None =&gt; Stream.empty
+</span>201 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>202 <span style=''>  }
+</span>203 <span style=''>
+</span>204 <span style=''>  private def configureSsl(conn: HttpURLConnection) =
+</span>205 <span style=''>    conn match {
+</span>206 <span style=''>      case connSsl: HttpsURLConnection =&gt;
+</span>207 <span style=''>        </span><span style='background: #F0ADAD'>for {
+</span>208 <span style=''></span><span style='background: #F0ADAD'>          _ &lt;- hostnameVerifier.fold(F.unit)(hv =&gt; F.delay(connSsl.setHostnameVerifier(hv)))
+</span>209 <span style=''></span><span style='background: #F0ADAD'>          _ &lt;- sslSocketFactory.fold(F.unit)(sslf =&gt; F.delay(connSsl.setSSLSocketFactory(sslf)))
+</span>210 <span style=''></span><span style='background: #F0ADAD'>        } yield ()</span><span style=''>
+</span>211 <span style=''>      case _ =&gt; </span><span style='background: #AEF1AE'>F.unit</span><span style=''>
+</span>212 <span style=''>    }
+</span>213 <span style=''>}
+</span>214 <span style=''>
+</span>215 <span style=''>/** Builder for a [[Client]] backed by on `java.net.HttpUrlConnection`. */
+</span>216 <span style=''>object JavaNetClientBuilder {
+</span>217 <span style=''>  def apply[F[_]: Async]: JavaNetClientBuilder[F] =
+</span>218 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> JavaNetClientBuilder[F](
+</span>219 <span style=''>      connectTimeout = defaults.ConnectTimeout,
+</span>220 <span style=''>      readTimeout = defaults.RequestTimeout,
+</span>221 <span style=''>      proxy = None,
+</span>222 <span style=''>      hostnameVerifier = None,
+</span>223 <span style=''>      sslSocketFactory = None,
+</span>224 <span style=''>    ) {}
+</span>225 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          11677
+        </td>
+        <td>
+          2410
+          -
+          2413
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          11962
+        </td>
+        <td>
+          2710
+          -
+          2710
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          11543
+        </td>
+        <td>
+          2710
+          -
+          2710
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          11270
+        </td>
+        <td>
+          2710
+          -
+          2710
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          12038
+        </td>
+        <td>
+          2710
+          -
+          2747
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy(connectTimeout, JavaNetClientBuilder.this.copy$default$2, JavaNetClientBuilder.this.copy$default$3, JavaNetClientBuilder.this.copy$default$4, JavaNetClientBuilder.this.copy$default$5)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          11293
+        </td>
+        <td>
+          2710
+          -
+          2710
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11657
+        </td>
+        <td>
+          2825
+          -
+          2825
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11223
+        </td>
+        <td>
+          2825
+          -
+          2856
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy(x$2, x$1, x$3, x$4, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11940
+        </td>
+        <td>
+          2825
+          -
+          2825
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11596
+        </td>
+        <td>
+          2825
+          -
+          2825
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11170
+        </td>
+        <td>
+          2825
+          -
+          2825
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11588
+        </td>
+        <td>
+          2933
+          -
+          2952
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy(x$2, x$3, x$1, x$4, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11545
+        </td>
+        <td>
+          2933
+          -
+          2933
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11341
+        </td>
+        <td>
+          2933
+          -
+          2933
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11966
+        </td>
+        <td>
+          2933
+          -
+          2933
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          12019
+        </td>
+        <td>
+          2933
+          -
+          2933
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          11944
+        </td>
+        <td>
+          3014
+          -
+          3042
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.withProxyOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.withProxyOption(scala.Some.apply[java.net.Proxy](proxy))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          11175
+        </td>
+        <td>
+          3030
+          -
+          3041
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[java.net.Proxy](proxy)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          11268
+        </td>
+        <td>
+          3093
+          -
+          3114
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.withProxyOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.withProxyOption(scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          11705
+        </td>
+        <td>
+          3109
+          -
+          3113
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          11561
+        </td>
+        <td>
+          3234
+          -
+          3234
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          11640
+        </td>
+        <td>
+          3234
+          -
+          3275
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy(x$2, x$3, x$4, x$1, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          11068
+        </td>
+        <td>
+          3234
+          -
+          3234
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          11950
+        </td>
+        <td>
+          3234
+          -
+          3234
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          12031
+        </td>
+        <td>
+          3234
+          -
+          3234
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          11178
+        </td>
+        <td>
+          3397
+          -
+          3419
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[javax.net.ssl.HostnameVerifier](hostnameVerifier)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          11918
+        </td>
+        <td>
+          3370
+          -
+          3420
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.withHostnameVerifierOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.withHostnameVerifierOption(scala.Some.apply[javax.net.ssl.HostnameVerifier](hostnameVerifier))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          11245
+        </td>
+        <td>
+          3482
+          -
+          3514
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.withHostnameVerifierOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.withHostnameVerifierOption(scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          11708
+        </td>
+        <td>
+          3509
+          -
+          3513
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          11642
+        </td>
+        <td>
+          3634
+          -
+          3675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy(x$2, x$3, x$4, x$5, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          12036
+        </td>
+        <td>
+          3634
+          -
+          3634
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          12003
+        </td>
+        <td>
+          3634
+          -
+          3634
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          11120
+        </td>
+        <td>
+          3634
+          -
+          3634
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          11565
+        </td>
+        <td>
+          3634
+          -
+          3634
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          11923
+        </td>
+        <td>
+          3770
+          -
+          3820
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.withSslSocketFactoryOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.withSslSocketFactoryOption(scala.Some.apply[javax.net.ssl.SSLSocketFactory](sslSocketFactory))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          11166
+        </td>
+        <td>
+          3797
+          -
+          3819
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[javax.net.ssl.SSLSocketFactory](sslSocketFactory)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          11670
+        </td>
+        <td>
+          3909
+          -
+          3913
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          11248
+        </td>
+        <td>
+          3882
+          -
+          3914
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.withSslSocketFactoryOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.withSslSocketFactoryOption(scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          11072
+        </td>
+        <td>
+          4048
+          -
+          5156
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Client.apply[[_]F[_]](((req: org.http4s.Request[F]) =&gt; {
+  def respond(conn: java.net.HttpURLConnection): F[org.http4s.Response[F]] = cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.configureSsl(conn))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$7: Unit) =&gt; (x$7: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setConnectTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.connectTimeout))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+      case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setReadTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.readTimeout))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$5: Unit) =&gt; (x$5: Unit @unchecked) match {
+        case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setRequestMethod(req.method.renderString)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$4: Unit) =&gt; (x$4: Unit @unchecked) match {
+          case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](req.headers.foreach(((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw((name @ _), (value @ _)) =&gt; conn.setRequestProperty(name.toString, value)
+}))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$3: Unit) =&gt; (x$3: Unit @unchecked) match {
+            case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setInstanceFollowRedirects(false)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+              case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$1: Unit) =&gt; (x$1: Unit @unchecked) match {
+                case _ =&gt; JavaNetClientBuilder.this.fetchResponse(req, conn)
+              }))
+            }))
+          }))
+        }))
+      }))
+    }))
+  }));
+  cats.effect.`package`.Resource.eval[F, java.net.URL](JavaNetClientBuilder.this.F.delay[java.net.URL](new java.net.URL(req.uri.toString()))).flatMap[org.http4s.Response[F]](((url: java.net.URL) =&gt; cats.effect.`package`.Resource.make[F, java.net.HttpURLConnection](JavaNetClientBuilder.this.openConnection(url)(JavaNetClientBuilder.this.F))(((conn: java.net.HttpURLConnection) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.getInputStream().close()))(JavaNetClientBuilder.this.F).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,F[Unit]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; F[Unit]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: F[Unit]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) =&gt; JavaNetClientBuilder.this.F.delay[Unit](scala.Option.apply[java.io.InputStream](conn.getErrorStream()).foreach[Unit](((x$8: java.io.InputStream) =&gt; x$8.close())))
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,F[Unit]]))(JavaNetClientBuilder.this.F)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((conn: java.net.HttpURLConnection) =&gt; cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](respond(conn))))))
+}))(JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          11514
+        </td>
+        <td>
+          4055
+          -
+          4055
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          11495
+        </td>
+        <td>
+          4147
+          -
+          4769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.configureSsl(conn))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$7: Unit) =&gt; (x$7: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setConnectTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.connectTimeout))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setReadTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.readTimeout))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$5: Unit) =&gt; (x$5: Unit @unchecked) match {
+      case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setRequestMethod(req.method.renderString)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$4: Unit) =&gt; (x$4: Unit @unchecked) match {
+        case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](req.headers.foreach(((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw((name @ _), (value @ _)) =&gt; conn.setRequestProperty(name.toString, value)
+}))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$3: Unit) =&gt; (x$3: Unit @unchecked) match {
+          case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setInstanceFollowRedirects(false)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+            case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$1: Unit) =&gt; (x$1: Unit @unchecked) match {
+              case _ =&gt; JavaNetClientBuilder.this.fetchResponse(req, conn)
+            }))
+          }))
+        }))
+      }))
+    }))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          12005
+        </td>
+        <td>
+          4168
+          -
+          4186
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.configureSsl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.configureSsl(conn)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          11529
+        </td>
+        <td>
+          4180
+          -
+          4180
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          12025
+        </td>
+        <td>
+          4233
+          -
+          4262
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.timeoutMillis
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.connectTimeout)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11884
+        </td>
+        <td>
+          4209
+          -
+          4209
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11127
+        </td>
+        <td>
+          4247
+          -
+          4261
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.connectTimeout
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.connectTimeout
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11620
+        </td>
+        <td>
+          4210
+          -
+          4263
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.setConnectTimeout
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setConnectTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.connectTimeout))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11171
+        </td>
+        <td>
+          4202
+          -
+          4264
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setConnectTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.connectTimeout)))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11900
+        </td>
+        <td>
+          4197
+          -
+          4769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setConnectTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.connectTimeout))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setReadTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.readTimeout))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$5: Unit) =&gt; (x$5: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setRequestMethod(req.method.renderString)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$4: Unit) =&gt; (x$4: Unit @unchecked) match {
+      case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](req.headers.foreach(((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw((name @ _), (value @ _)) =&gt; conn.setRequestProperty(name.toString, value)
+}))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$3: Unit) =&gt; (x$3: Unit @unchecked) match {
+        case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setInstanceFollowRedirects(false)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+          case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$1: Unit) =&gt; (x$1: Unit @unchecked) match {
+            case _ =&gt; JavaNetClientBuilder.this.fetchResponse(req, conn)
+          }))
+        }))
+      }))
+    }))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          11534
+        </td>
+        <td>
+          4280
+          -
+          4336
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setReadTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.readTimeout)))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          11214
+        </td>
+        <td>
+          4275
+          -
+          4769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setReadTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.readTimeout))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$5: Unit) =&gt; (x$5: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setRequestMethod(req.method.renderString)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$4: Unit) =&gt; (x$4: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](req.headers.foreach(((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw((name @ _), (value @ _)) =&gt; conn.setRequestProperty(name.toString, value)
+}))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$3: Unit) =&gt; (x$3: Unit @unchecked) match {
+      case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setInstanceFollowRedirects(false)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+        case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$1: Unit) =&gt; (x$1: Unit @unchecked) match {
+          case _ =&gt; JavaNetClientBuilder.this.fetchResponse(req, conn)
+        }))
+      }))
+    }))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          11948
+        </td>
+        <td>
+          4288
+          -
+          4335
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.setReadTimeout
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setReadTimeout(JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.readTimeout))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          11251
+        </td>
+        <td>
+          4308
+          -
+          4334
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.timeoutMillis
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.timeoutMillis(JavaNetClientBuilder.this.readTimeout)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          11110
+        </td>
+        <td>
+          4287
+          -
+          4287
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          11445
+        </td>
+        <td>
+          4322
+          -
+          4333
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.readTimeout
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.readTimeout
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          11621
+        </td>
+        <td>
+          4360
+          -
+          4406
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.HttpURLConnection.setRequestMethod
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setRequestMethod(req.method.renderString)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          11151
+        </td>
+        <td>
+          4352
+          -
+          4407
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setRequestMethod(req.method.renderString))
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          11887
+        </td>
+        <td>
+          4359
+          -
+          4359
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          11617
+        </td>
+        <td>
+          4347
+          -
+          4769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setRequestMethod(req.method.renderString)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$4: Unit) =&gt; (x$4: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](req.headers.foreach(((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw((name @ _), (value @ _)) =&gt; conn.setRequestProperty(name.toString, value)
+}))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$3: Unit) =&gt; (x$3: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setInstanceFollowRedirects(false)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+      case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$1: Unit) =&gt; (x$1: Unit @unchecked) match {
+        case _ =&gt; JavaNetClientBuilder.this.fetchResponse(req, conn)
+      }))
+    }))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          12026
+        </td>
+        <td>
+          4382
+          -
+          4405
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.method.renderString
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          11513
+        </td>
+        <td>
+          4423
+          -
+          4555
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](req.headers.foreach(((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw((name @ _), (value @ _)) =&gt; conn.setRequestProperty(name.toString, value)
+})))
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          11856
+        </td>
+        <td>
+          4418
+          -
+          4769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](req.headers.foreach(((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw((name @ _), (value @ _)) =&gt; conn.setRequestProperty(name.toString, value)
+}))))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$3: Unit) =&gt; (x$3: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setInstanceFollowRedirects(false)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$1: Unit) =&gt; (x$1: Unit @unchecked) match {
+      case _ =&gt; JavaNetClientBuilder.this.fetchResponse(req, conn)
+    }))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          11117
+        </td>
+        <td>
+          4430
+          -
+          4430
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          11951
+        </td>
+        <td>
+          4431
+          -
+          4554
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.foreach(((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw((name @ _), (value @ _)) =&gt; conn.setRequestProperty(name.toString, value)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11232
+        </td>
+        <td>
+          4497
+          -
+          4542
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.setRequestProperty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setRequestProperty(name.toString, value)
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11484
+        </td>
+        <td>
+          4521
+          -
+          4534
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          name.toString
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          11653
+        </td>
+        <td>
+          4571
+          -
+          4618
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setInstanceFollowRedirects(false))
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          11793
+        </td>
+        <td>
+          4579
+          -
+          4617
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.HttpURLConnection.setInstanceFollowRedirects
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setInstanceFollowRedirects(false)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          11126
+        </td>
+        <td>
+          4566
+          -
+          4769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setInstanceFollowRedirects(false)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$1: Unit) =&gt; (x$1: Unit @unchecked) match {
+    case _ =&gt; JavaNetClientBuilder.this.fetchResponse(req, conn)
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          11155
+        </td>
+        <td>
+          4578
+          -
+          4578
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          11875
+        </td>
+        <td>
+          4642
+          -
+          4663
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.setDoInput
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setDoInput(true)
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          11286
+        </td>
+        <td>
+          4641
+          -
+          4641
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          11515
+        </td>
+        <td>
+          4629
+          -
+          4769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((x$1: Unit) =&gt; (x$1: Unit @unchecked) match {
+  case _ =&gt; JavaNetClientBuilder.this.fetchResponse(req, conn)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          11487
+        </td>
+        <td>
+          4634
+          -
+          4664
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setDoInput(true))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          12012
+        </td>
+        <td>
+          4716
+          -
+          4769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.fetchResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.fetchResponse(req, conn)
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          11987
+        </td>
+        <td>
+          4820
+          -
+          4845
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URL.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new java.net.URL(req.uri.toString())
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          11969
+        </td>
+        <td>
+          4777
+          -
+          5150
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.eval[F, java.net.URL](JavaNetClientBuilder.this.F.delay[java.net.URL](new java.net.URL(req.uri.toString()))).flatMap[org.http4s.Response[F]](((url: java.net.URL) =&gt; cats.effect.`package`.Resource.make[F, java.net.HttpURLConnection](JavaNetClientBuilder.this.openConnection(url)(JavaNetClientBuilder.this.F))(((conn: java.net.HttpURLConnection) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.getInputStream().close()))(JavaNetClientBuilder.this.F).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,F[Unit]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; F[Unit]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: F[Unit]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) =&gt; JavaNetClientBuilder.this.F.delay[Unit](scala.Option.apply[java.io.InputStream](conn.getErrorStream()).foreach[Unit](((x$8: java.io.InputStream) =&gt; x$8.close())))
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,F[Unit]]))(JavaNetClientBuilder.this.F)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((conn: java.net.HttpURLConnection) =&gt; cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](respond(conn))))))
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          11571
+        </td>
+        <td>
+          4812
+          -
+          4846
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[java.net.URL](new java.net.URL(req.uri.toString()))
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          11230
+        </td>
+        <td>
+          4828
+          -
+          4844
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderable.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.toString()
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          11007
+        </td>
+        <td>
+          4856
+          -
+          5150
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.make[F, java.net.HttpURLConnection](JavaNetClientBuilder.this.openConnection(url)(JavaNetClientBuilder.this.F))(((conn: java.net.HttpURLConnection) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.getInputStream().close()))(JavaNetClientBuilder.this.F).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,F[Unit]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; F[Unit]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: F[Unit]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) =&gt; JavaNetClientBuilder.this.F.delay[Unit](scala.Option.apply[java.io.InputStream](conn.getErrorStream()).foreach[Unit](((x$8: java.io.InputStream) =&gt; x$8.close())))
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,F[Unit]]))(JavaNetClientBuilder.this.F)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[F]](((conn: java.net.HttpURLConnection) =&gt; cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](respond(conn))))
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          11858
+        </td>
+        <td>
+          4878
+          -
+          4897
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.openConnection
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.openConnection(url)(JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          11194
+        </td>
+        <td>
+          4899
+          -
+          4899
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          11098
+        </td>
+        <td>
+          4892
+          -
+          4892
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          11597
+        </td>
+        <td>
+          4927
+          -
+          4956
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.InputStream.close
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getInputStream().close()
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          11193
+        </td>
+        <td>
+          4919
+          -
+          4957
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.getInputStream().close())
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          11600
+        </td>
+        <td>
+          4919
+          -
+          5076
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recoverWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.getInputStream().close()))(JavaNetClientBuilder.this.F).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,F[Unit]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; F[Unit]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: F[Unit]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) =&gt; JavaNetClientBuilder.this.F.delay[Unit](scala.Option.apply[java.io.InputStream](conn.getErrorStream()).foreach[Unit](((x$8: java.io.InputStream) =&gt; x$8.close())))
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,F[Unit]]))(JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          11102
+        </td>
+        <td>
+          4970
+          -
+          4970
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          11903
+        </td>
+        <td>
+          4926
+          -
+          4926
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          11798
+        </td>
+        <td>
+          4970
+          -
+          4970
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          11029
+        </td>
+        <td>
+          5053
+          -
+          5062
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.InputStream.close
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$8.close()
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          11510
+        </td>
+        <td>
+          5007
+          -
+          5064
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](scala.Option.apply[java.io.InputStream](conn.getErrorStream()).foreach[Unit](((x$8: java.io.InputStream) =&gt; x$8.close())))
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          11967
+        </td>
+        <td>
+          5015
+          -
+          5063
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[java.io.InputStream](conn.getErrorStream()).foreach[Unit](((x$8: java.io.InputStream) =&gt; x$8.close()))
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          11469
+        </td>
+        <td>
+          5022
+          -
+          5043
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.HttpURLConnection.getErrorStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getErrorStream()
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          11474
+        </td>
+        <td>
+          5095
+          -
+          5150
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.eval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](respond(conn))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          11871
+        </td>
+        <td>
+          5117
+          -
+          5130
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.respond
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          respond(conn)
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          11800
+        </td>
+        <td>
+          5225
+          -
+          5231
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.create
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.create
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          11210
+        </td>
+        <td>
+          5203
+          -
+          5233
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.eval
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.eval[F, org.http4s.client.Client[F]](JavaNetClientBuilder.this.F.delay[org.http4s.client.Client[F]](JavaNetClientBuilder.this.create))
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          11589
+        </td>
+        <td>
+          5217
+          -
+          5232
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[org.http4s.client.Client[F]](JavaNetClientBuilder.this.create)
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          11462
+        </td>
+        <td>
+          5337
+          -
+          5337
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          11876
+        </td>
+        <td>
+          5328
+          -
+          5348
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.writeBody
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.writeBody(req, conn)
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          11179
+        </td>
+        <td>
+          5311
+          -
+          5767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.writeBody(req, conn))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[[_]F[_]]](((x$11: Unit) =&gt; (x$11: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Int](JavaNetClientBuilder.this.F.blocking[Int](conn.getResponseCode()))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[[_]F[_]]](((code: Int) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Status](JavaNetClientBuilder.this.F.fromEither[org.http4s.Status](Status.fromInt(code)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[[_]F[_]]](((status: org.http4s.Status) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Headers](JavaNetClientBuilder.this.F.blocking[org.http4s.Headers](Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](org.http4s.internal.CollectionCompat.CollectionConverters.MapHasAsScala[String, java.util.List[String]](conn.getHeaderFields()).asScala.filter(((x$9: (String, java.util.List[String])) =&gt; x$9._1.!=(null))).flatMap[org.http4s.Header.Raw](((x0$1: (String, java.util.List[String])) =&gt; x0$1 match {
+  case (_1: String, _2: java.util.List[String]): (String, java.util.List[String])((k @ _), (vs @ _)) =&gt; org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+})).toList)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))))(JavaNetClientBuilder.this.F).map[org.http4s.Response[[_]F[_]]](((headers: org.http4s.Headers) =&gt; {
+    &lt;artifact&gt; val x$3: org.http4s.Status = status;
+    &lt;artifact&gt; val x$4: org.http4s.Headers = headers;
+    &lt;artifact&gt; val x$5: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = JavaNetClientBuilder.this.readBody(conn);
+    &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+    &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+    Response.apply[[_]F[_]](x$3, x$6, x$4, x$5, x$7)
+  }))))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          11379
+        </td>
+        <td>
+          5355
+          -
+          5767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Int](JavaNetClientBuilder.this.F.blocking[Int](conn.getResponseCode()))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[[_]F[_]]](((code: Int) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Status](JavaNetClientBuilder.this.F.fromEither[org.http4s.Status](Status.fromInt(code)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[[_]F[_]]](((status: org.http4s.Status) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Headers](JavaNetClientBuilder.this.F.blocking[org.http4s.Headers](Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](org.http4s.internal.CollectionCompat.CollectionConverters.MapHasAsScala[String, java.util.List[String]](conn.getHeaderFields()).asScala.filter(((x$9: (String, java.util.List[String])) =&gt; x$9._1.!=(null))).flatMap[org.http4s.Header.Raw](((x0$1: (String, java.util.List[String])) =&gt; x0$1 match {
+  case (_1: String, _2: java.util.List[String]): (String, java.util.List[String])((k @ _), (vs @ _)) =&gt; org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+})).toList)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))))(JavaNetClientBuilder.this.F).map[org.http4s.Response[[_]F[_]]](((headers: org.http4s.Headers) =&gt; {
+  &lt;artifact&gt; val x$3: org.http4s.Status = status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = headers;
+  &lt;artifact&gt; val x$5: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = JavaNetClientBuilder.this.readBody(conn);
+  &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+  Response.apply[[_]F[_]](x$3, x$6, x$4, x$5, x$7)
+}))))))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          11010
+        </td>
+        <td>
+          5374
+          -
+          5394
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.HttpURLConnection.getResponseCode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getResponseCode()
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          11972
+        </td>
+        <td>
+          5363
+          -
+          5395
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.blocking
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.blocking[Int](conn.getResponseCode())
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          11568
+        </td>
+        <td>
+          5373
+          -
+          5373
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          11074
+        </td>
+        <td>
+          5425
+          -
+          5445
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Status.fromInt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Status.fromInt(code)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          11833
+        </td>
+        <td>
+          5412
+          -
+          5446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.fromEither
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.fromEither[org.http4s.Status](Status.fromInt(code))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          11844
+        </td>
+        <td>
+          5402
+          -
+          5767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Status](JavaNetClientBuilder.this.F.fromEither[org.http4s.Status](Status.fromInt(code)))(JavaNetClientBuilder.this.F).flatMap[org.http4s.Response[[_]F[_]]](((status: org.http4s.Status) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Headers](JavaNetClientBuilder.this.F.blocking[org.http4s.Headers](Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](org.http4s.internal.CollectionCompat.CollectionConverters.MapHasAsScala[String, java.util.List[String]](conn.getHeaderFields()).asScala.filter(((x$9: (String, java.util.List[String])) =&gt; x$9._1.!=(null))).flatMap[org.http4s.Header.Raw](((x0$1: (String, java.util.List[String])) =&gt; x0$1 match {
+  case (_1: String, _2: java.util.List[String]): (String, java.util.List[String])((k @ _), (vs @ _)) =&gt; org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+})).toList)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))))(JavaNetClientBuilder.this.F).map[org.http4s.Response[[_]F[_]]](((headers: org.http4s.Headers) =&gt; {
+  &lt;artifact&gt; val x$3: org.http4s.Status = status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = headers;
+  &lt;artifact&gt; val x$5: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = JavaNetClientBuilder.this.readBody(conn);
+  &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+  Response.apply[[_]F[_]](x$3, x$6, x$4, x$5, x$7)
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          11386
+        </td>
+        <td>
+          5424
+          -
+          5424
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          11088
+        </td>
+        <td>
+          5453
+          -
+          5767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Headers](JavaNetClientBuilder.this.F.blocking[org.http4s.Headers](Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](org.http4s.internal.CollectionCompat.CollectionConverters.MapHasAsScala[String, java.util.List[String]](conn.getHeaderFields()).asScala.filter(((x$9: (String, java.util.List[String])) =&gt; x$9._1.!=(null))).flatMap[org.http4s.Header.Raw](((x0$1: (String, java.util.List[String])) =&gt; x0$1 match {
+  case (_1: String, _2: java.util.List[String]): (String, java.util.List[String])((k @ _), (vs @ _)) =&gt; org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+})).toList)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))))(JavaNetClientBuilder.this.F).map[org.http4s.Response[[_]F[_]]](((headers: org.http4s.Headers) =&gt; {
+  &lt;artifact&gt; val x$3: org.http4s.Status = status;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = headers;
+  &lt;artifact&gt; val x$5: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = JavaNetClientBuilder.this.readBody(conn);
+  &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+  &lt;artifact&gt; val x$7: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+  Response.apply[[_]F[_]](x$3, x$6, x$4, x$5, x$7)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          11206
+        </td>
+        <td>
+          5464
+          -
+          5687
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.blocking
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.blocking[org.http4s.Headers](Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](org.http4s.internal.CollectionCompat.CollectionConverters.MapHasAsScala[String, java.util.List[String]](conn.getHeaderFields()).asScala.filter(((x$9: (String, java.util.List[String])) =&gt; x$9._1.!=(null))).flatMap[org.http4s.Header.Raw](((x0$1: (String, java.util.List[String])) =&gt; x0$1 match {
+  case (_1: String, _2: java.util.List[String]): (String, java.util.List[String])((k @ _), (vs @ _)) =&gt; org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+})).toList)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))))
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          11932
+        </td>
+        <td>
+          5474
+          -
+          5474
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          11424
+        </td>
+        <td>
+          5484
+          -
+          5679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](org.http4s.internal.CollectionCompat.CollectionConverters.MapHasAsScala[String, java.util.List[String]](conn.getHeaderFields()).asScala.filter(((x$9: (String, java.util.List[String])) =&gt; x$9._1.!=(null))).flatMap[org.http4s.Header.Raw](((x0$1: (String, java.util.List[String])) =&gt; x0$1 match {
+  case (_1: String, _2: java.util.List[String]): (String, java.util.List[String])((k @ _), (vs @ _)) =&gt; org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+})).toList)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          11215
+        </td>
+        <td>
+          5503
+          -
+          5523
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.getHeaderFields
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getHeaderFields()
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          11930
+        </td>
+        <td>
+          5552
+          -
+          5564
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.!=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$9._1.!=(null)
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          12007
+        </td>
+        <td>
+          5605
+          -
+          5647
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          11049
+        </td>
+        <td>
+          5620
+          -
+          5646
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          11466
+        </td>
+        <td>
+          5631
+          -
+          5642
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIString.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.CIString.apply(k)
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          11839
+        </td>
+        <td>
+          5503
+          -
+          5669
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](org.http4s.internal.CollectionCompat.CollectionConverters.MapHasAsScala[String, java.util.List[String]](conn.getHeaderFields()).asScala.filter(((x$9: (String, java.util.List[String])) =&gt; x$9._1.!=(null))).flatMap[org.http4s.Header.Raw](((x0$1: (String, java.util.List[String])) =&gt; x0$1 match {
+  case (_1: String, _2: java.util.List[String]): (String, java.util.List[String])((k @ _), (vs @ _)) =&gt; org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+})).toList)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          11133
+        </td>
+        <td>
+          5663
+          -
+          5663
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          11573
+        </td>
+        <td>
+          5503
+          -
+          5669
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.CollectionCompat.CollectionConverters.MapHasAsScala[String, java.util.List[String]](conn.getHeaderFields()).asScala.filter(((x$9: (String, java.util.List[String])) =&gt; x$9._1.!=(null))).flatMap[org.http4s.Header.Raw](((x0$1: (String, java.util.List[String])) =&gt; x0$1 match {
+  case (_1: String, _2: java.util.List[String]): (String, java.util.List[String])((k @ _), (vs @ _)) =&gt; org.http4s.internal.CollectionCompat.CollectionConverters.ListHasAsScala[String](vs).asScala.map[org.http4s.Header.Raw](((x$10: String) =&gt; Header.Raw.apply(org.typelevel.ci.CIString.apply(k), x$10)))
+})).toList
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          11555
+        </td>
+        <td>
+          5700
+          -
+          5767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[[_]F[_]](x$3, x$6, x$4, x$5, x$7)
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          11052
+        </td>
+        <td>
+          5700
+          -
+          5700
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          11771
+        </td>
+        <td>
+          5700
+          -
+          5700
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          11448
+        </td>
+        <td>
+          5752
+          -
+          5766
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.readBody
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.readBody(conn)
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          11056
+        </td>
+        <td>
+          5884
+          -
+          5901
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.runtime.RichLong.max
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.longWrapper(d.toMillis).max(0L)
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          11907
+        </td>
+        <td>
+          5867
+          -
+          5880
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.Duration.Zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.concurrent.duration.Duration.Zero
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          11751
+        </td>
+        <td>
+          5906
+          -
+          5918
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          2147483647L
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          11535
+        </td>
+        <td>
+          5884
+          -
+          5925
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Long.toInt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.longWrapper(scala.Predef.longWrapper(d.toMillis).max(0L)).min(2147483647L).toInt
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          11451
+        </td>
+        <td>
+          5863
+          -
+          5880
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.math.Ordered.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          d.&gt;(scala.concurrent.duration.Duration.Zero)
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          11084
+        </td>
+        <td>
+          5942
+          -
+          5943
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          164
+        </td>
+        <td>
+          11821
+        </td>
+        <td>
+          6017
+          -
+          6022
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.proxy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.proxy
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          11384
+        </td>
+        <td>
+          6069
+          -
+          6122
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          url.openConnection(p).asInstanceOf[java.net.HttpURLConnection]
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          11156
+        </td>
+        <td>
+          6061
+          -
+          6123
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.delay[java.net.HttpURLConnection](url.openConnection(p).asInstanceOf[java.net.HttpURLConnection])
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          11455
+        </td>
+        <td>
+          6151
+          -
+          6212
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.delay[java.net.HttpURLConnection](url.openConnection().asInstanceOf[java.net.HttpURLConnection])
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          11927
+        </td>
+        <td>
+          6159
+          -
+          6211
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          url.openConnection().asInstanceOf[java.net.HttpURLConnection]
+        </td>
+      </tr><tr>
+        <td>
+          172
+        </td>
+        <td>
+          10995
+        </td>
+        <td>
+          6305
+          -
+          6318
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Message.isChunked
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.isChunked
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          11755
+        </td>
+        <td>
+          6334
+          -
+          6356
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.setDoOutput
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setDoOutput(true)
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          12114
+        </td>
+        <td>
+          6326
+          -
+          6412
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApply[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(true)))(JavaNetClientBuilder.this.F).*&gt;[Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setChunkedStreamingMode(4096)))
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          11904
+        </td>
+        <td>
+          6358
+          -
+          6358
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          11131
+        </td>
+        <td>
+          6333
+          -
+          6333
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          11517
+        </td>
+        <td>
+          6326
+          -
+          6357
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(true))
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          11824
+        </td>
+        <td>
+          6377
+          -
+          6411
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.HttpURLConnection.setChunkedStreamingMode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setChunkedStreamingMode(4096)
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          11033
+        </td>
+        <td>
+          6326
+          -
+          6544
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApply[F, Unit](cats.syntax.`package`.all.catsSyntaxApply[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(true)))(JavaNetClientBuilder.this.F).*&gt;[Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setChunkedStreamingMode(4096))))(JavaNetClientBuilder.this.F).*&gt;[Unit](req.body.through[[x]F[x], fs2.INothing](fs2.io.`package`.writeOutputStream[F](JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream()), false)(JavaNetClientBuilder.this.F)).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F))).drain)
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          11499
+        </td>
+        <td>
+          6326
+          -
+          6544
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApply[F, Unit](cats.syntax.`package`.all.catsSyntaxApply[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(true)))(JavaNetClientBuilder.this.F).*&gt;[Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setChunkedStreamingMode(4096))))(JavaNetClientBuilder.this.F).*&gt;[Unit](req.body.through[[x]F[x], fs2.INothing](fs2.io.`package`.writeOutputStream[F](JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream()), false)(JavaNetClientBuilder.this.F)).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F))).drain)
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          11364
+        </td>
+        <td>
+          6369
+          -
+          6412
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setChunkedStreamingMode(4096))
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          11498
+        </td>
+        <td>
+          6478
+          -
+          6498
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.getOutputStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getOutputStream()
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          10998
+        </td>
+        <td>
+          6470
+          -
+          6499
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream())
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          11554
+        </td>
+        <td>
+          6469
+          -
+          6469
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          11135
+        </td>
+        <td>
+          6452
+          -
+          6507
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.writeOutputStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.`package`.writeOutputStream[F](JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream()), false)(JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          11729
+        </td>
+        <td>
+          6501
+          -
+          6506
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          11366
+        </td>
+        <td>
+          6520
+          -
+          6520
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          11817
+        </td>
+        <td>
+          6520
+          -
+          6520
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          12091
+        </td>
+        <td>
+          6520
+          -
+          6520
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F))
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          11908
+        </td>
+        <td>
+          6424
+          -
+          6544
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.CompileOps.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.body.through[[x]F[x], fs2.INothing](fs2.io.`package`.writeOutputStream[F](JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream()), false)(JavaNetClientBuilder.this.F)).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F))).drain
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          11805
+        </td>
+        <td>
+          6560
+          -
+          6945
+        </td>
+        <td>
+          Match
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.contentLength match {
+  case (value: Long): Some[Long]((len @ _)) if len.&gt;=(0L) =&gt; cats.syntax.`package`.all.catsSyntaxApply[F, Unit](cats.syntax.`package`.all.catsSyntaxApply[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(true)))(JavaNetClientBuilder.this.F).*&gt;[Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setFixedLengthStreamingMode(len))))(JavaNetClientBuilder.this.F).*&gt;[Unit](req.body.through[[x]F[x], fs2.INothing](fs2.io.`package`.writeOutputStream[F](JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream()), false)(JavaNetClientBuilder.this.F)).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F))).drain)
+  case _ =&gt; JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(false))
+}
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          11736
+        </td>
+        <td>
+          6560
+          -
+          6577
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Media.contentLength
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.contentLength
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          11557
+        </td>
+        <td>
+          6612
+          -
+          6621
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          len.&gt;=(0L)
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          11408
+        </td>
+        <td>
+          6642
+          -
+          6642
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          11037
+        </td>
+        <td>
+          6667
+          -
+          6667
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          11105
+        </td>
+        <td>
+          6643
+          -
+          6665
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.setDoOutput
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setDoOutput(true)
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          11822
+        </td>
+        <td>
+          6635
+          -
+          6666
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(true))
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          11439
+        </td>
+        <td>
+          6635
+          -
+          6728
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApply[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(true)))(JavaNetClientBuilder.this.F).*&gt;[Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setFixedLengthStreamingMode(len)))
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          11728
+        </td>
+        <td>
+          6635
+          -
+          6876
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApply[F, Unit](cats.syntax.`package`.all.catsSyntaxApply[F, Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(true)))(JavaNetClientBuilder.this.F).*&gt;[Unit](JavaNetClientBuilder.this.F.delay[Unit](conn.setFixedLengthStreamingMode(len))))(JavaNetClientBuilder.this.F).*&gt;[Unit](req.body.through[[x]F[x], fs2.INothing](fs2.io.`package`.writeOutputStream[F](JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream()), false)(JavaNetClientBuilder.this.F)).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F))).drain)
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          11910
+        </td>
+        <td>
+          6682
+          -
+          6728
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setFixedLengthStreamingMode(len))
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          12127
+        </td>
+        <td>
+          6690
+          -
+          6727
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.HttpURLConnection.setFixedLengthStreamingMode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setFixedLengthStreamingMode(len)
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          11773
+        </td>
+        <td>
+          6802
+          -
+          6822
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.getOutputStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getOutputStream()
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          11803
+        </td>
+        <td>
+          6793
+          -
+          6793
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          11409
+        </td>
+        <td>
+          6776
+          -
+          6831
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.writeOutputStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.`package`.writeOutputStream[F](JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream()), false)(JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          11331
+        </td>
+        <td>
+          6794
+          -
+          6823
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream())
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          11107
+        </td>
+        <td>
+          6825
+          -
+          6830
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          11441
+        </td>
+        <td>
+          6848
+          -
+          6848
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F))
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          11895
+        </td>
+        <td>
+          6848
+          -
+          6848
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          12112
+        </td>
+        <td>
+          6848
+          -
+          6848
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          11014
+        </td>
+        <td>
+          6744
+          -
+          6876
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.CompileOps.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.body.through[[x]F[x], fs2.INothing](fs2.io.`package`.writeOutputStream[F](JavaNetClientBuilder.this.F.delay[java.io.OutputStream](conn.getOutputStream()), false)(JavaNetClientBuilder.this.F)).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](JavaNetClientBuilder.this.F))).drain
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11316
+        </td>
+        <td>
+          6913
+          -
+          6936
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.setDoOutput
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.setDoOutput(false)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11091
+        </td>
+        <td>
+          6905
+          -
+          6937
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Unit](conn.setDoOutput(false))
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          12096
+        </td>
+        <td>
+          7044
+          -
+          7208
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recoverWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Option[java.io.InputStream]](JavaNetClientBuilder.this.F.delay[Option[java.io.InputStream]](scala.Option.apply[java.io.InputStream](conn.getInputStream())))(JavaNetClientBuilder.this.F).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,F[Option[java.io.InputStream]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; F[Option[java.io.InputStream]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: F[Option[java.io.InputStream]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) if conn.getResponseCode().&gt;(0) =&gt; JavaNetClientBuilder.this.F.delay[Option[java.io.InputStream]](scala.Option.apply[java.io.InputStream](conn.getErrorStream()))
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.io.IOException) if conn.getResponseCode().&gt;(0) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,F[Option[java.io.InputStream]]]))(JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          11435
+        </td>
+        <td>
+          7051
+          -
+          7051
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          11671
+        </td>
+        <td>
+          7044
+          -
+          7080
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Option[java.io.InputStream]](scala.Option.apply[java.io.InputStream](conn.getInputStream()))
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          11411
+        </td>
+        <td>
+          7059
+          -
+          7078
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.getInputStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getInputStream()
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          11796
+        </td>
+        <td>
+          7093
+          -
+          7093
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          12092
+        </td>
+        <td>
+          7052
+          -
+          7079
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[java.io.InputStream](conn.getInputStream())
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          11425
+        </td>
+        <td>
+          7093
+          -
+          7093
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          11018
+        </td>
+        <td>
+          7126
+          -
+          7150
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getResponseCode().&gt;(0)
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          11733
+        </td>
+        <td>
+          7179
+          -
+          7198
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.HttpURLConnection.getErrorStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          conn.getErrorStream()
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          11299
+        </td>
+        <td>
+          7172
+          -
+          7199
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[java.io.InputStream](conn.getErrorStream())
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          11104
+        </td>
+        <td>
+          7164
+          -
+          7200
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.delay[Option[java.io.InputStream]](scala.Option.apply[java.io.InputStream](conn.getErrorStream()))
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11846
+        </td>
+        <td>
+          7246
+          -
+          7246
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11427
+        </td>
+        <td>
+          7213
+          -
+          7349
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.eval[F, Option[java.io.InputStream]](inputStream).flatMap[[x]F[x], Byte](((x0$1: Option[java.io.InputStream]) =&gt; x0$1 match {
+  case (value: java.io.InputStream): Some[java.io.InputStream]((in @ _)) =&gt; fs2.io.`package`.readInputStream[F](JavaNetClientBuilder.this.F.pure[java.io.InputStream](in), 4096, false)(JavaNetClientBuilder.this.F)
+  case scala.None =&gt; fs2.Stream.empty
+}))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          11020
+        </td>
+        <td>
+          7305
+          -
+          7310
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          11477
+        </td>
+        <td>
+          7299
+          -
+          7303
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          4096
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          11662
+        </td>
+        <td>
+          7287
+          -
+          7297
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.pure[java.io.InputStream](in)
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          11786
+        </td>
+        <td>
+          7286
+          -
+          7286
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          11304
+        </td>
+        <td>
+          7271
+          -
+          7311
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.readInputStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.`package`.readInputStream[F](JavaNetClientBuilder.this.F.pure[java.io.InputStream](in), 4096, false)(JavaNetClientBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          11089
+        </td>
+        <td>
+          7331
+          -
+          7343
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.empty
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          11692
+        </td>
+        <td>
+          7541
+          -
+          7572
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          javax.net.ssl.HttpsURLConnection.setHostnameVerifier
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          connSsl.setHostnameVerifier(hv)
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          11013
+        </td>
+        <td>
+          7497
+          -
+          7574
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.hostnameVerifier.fold[F[Unit]](JavaNetClientBuilder.this.F.unit)(((hv: javax.net.ssl.HostnameVerifier) =&gt; JavaNetClientBuilder.this.F.delay[Unit](connSsl.setHostnameVerifier(hv))))
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          11790
+        </td>
+        <td>
+          7526
+          -
+          7526
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          12139
+        </td>
+        <td>
+          7519
+          -
+          7525
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.F.unit
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          11454
+        </td>
+        <td>
+          7533
+          -
+          7573
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.F.delay[Unit](connSsl.setHostnameVerifier(hv))
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          12145
+        </td>
+        <td>
+          7476
+          -
+          7690
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](JavaNetClientBuilder.this.hostnameVerifier.fold[F[Unit]](JavaNetClientBuilder.this.F.unit)(((hv: javax.net.ssl.HostnameVerifier) =&gt; JavaNetClientBuilder.this.F.delay[Unit](connSsl.setHostnameVerifier(hv)))))(JavaNetClientBuilder.this.F).flatMap[Unit](((x$13: Unit) =&gt; (x$13: Unit @unchecked) match {
+  case _ =&gt; JavaNetClientBuilder.this.sslSocketFactory.fold[F[Unit]](JavaNetClientBuilder.this.F.unit)(((sslf: javax.net.ssl.SSLSocketFactory) =&gt; JavaNetClientBuilder.this.F.delay[Unit](connSsl.setSSLSocketFactory(sslf))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          11848
+        </td>
+        <td>
+          7628
+          -
+          7670
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.F.delay[Unit](connSsl.setSSLSocketFactory(sslf))
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          12060
+        </td>
+        <td>
+          7636
+          -
+          7669
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          javax.net.ssl.HttpsURLConnection.setSSLSocketFactory
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          connSsl.setSSLSocketFactory(sslf)
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          11390
+        </td>
+        <td>
+          7585
+          -
+          7690
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.sslSocketFactory.fold[F[Unit]](JavaNetClientBuilder.this.F.unit)(((sslf: javax.net.ssl.SSLSocketFactory) =&gt; JavaNetClientBuilder.this.F.delay[Unit](connSsl.setSSLSocketFactory(sslf))))
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          11353
+        </td>
+        <td>
+          7612
+          -
+          7618
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JavaNetClientBuilder.this.F.unit
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          11679
+        </td>
+        <td>
+          7707
+          -
+          7713
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JavaNetClientBuilder.this.F.unit
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          11456
+        </td>
+        <td>
+          7884
+          -
+          7887
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.JavaNetClientBuilder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

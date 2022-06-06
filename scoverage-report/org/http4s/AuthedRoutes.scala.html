@@ -1,0 +1,296 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/AuthedRoutes.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Applicative
+</span>20 <span style=''>import cats.Monad
+</span>21 <span style=''>import cats.data.Kleisli
+</span>22 <span style=''>import cats.data.OptionT
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>
+</span>25 <span style=''>object AuthedRoutes {
+</span>26 <span style=''>
+</span>27 <span style=''>  /** Lifts a function into an [[AuthedRoutes]].  The application of `run`
+</span>28 <span style=''>    * is suspended in `F` to permit more efficient combination of
+</span>29 <span style=''>    * routes via `SemigroupK`.
+</span>30 <span style=''>    *
+</span>31 <span style=''>    * @tparam F the effect of the [[AuthedRoutes]]
+</span>32 <span style=''>    * @tparam T the type of the auth info in the [[AuthedRequest]] accepted by the [[AuthedRoutes]]
+</span>33 <span style=''>    * @param run the function to lift
+</span>34 <span style=''>    * @return an [[AuthedRoutes]] that wraps `run`
+</span>35 <span style=''>    */
+</span>36 <span style=''>  def apply[T, F[_]](run: AuthedRequest[F, T] =&gt; OptionT[F, Response[F]])(implicit
+</span>37 <span style=''>      F: Monad[F]
+</span>38 <span style=''>  ): AuthedRoutes[T, F] =
+</span>39 <span style=''>    </span><span style='background: #F0ADAD'>Kleisli(req =&gt; OptionT(F.unit &gt;&gt; run(req).value))</span><span style=''>
+</span>40 <span style=''>
+</span>41 <span style=''>  /** Lifts a partial function into an [[AuthedRoutes]].  The application of the
+</span>42 <span style=''>    * partial function is suspended in `F` to permit more efficient combination
+</span>43 <span style=''>    * of authed services via `SemigroupK`.
+</span>44 <span style=''>    *
+</span>45 <span style=''>    * @tparam F the base effect of the [[AuthedRoutes]]
+</span>46 <span style=''>    * @param pf the partial function to lift
+</span>47 <span style=''>    * @return An [[AuthedRoutes]] that returns some [[Response]] in an `OptionT[F, *]`
+</span>48 <span style=''>    * wherever `pf` is defined, an `OptionT.none` wherever it is not
+</span>49 <span style=''>    */
+</span>50 <span style=''>  def of[T, F[_]](pf: PartialFunction[AuthedRequest[F, T], F[Response[F]]])(implicit
+</span>51 <span style=''>      FA: Monad[F]
+</span>52 <span style=''>  ): AuthedRoutes[T, F] =
+</span>53 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli(req =&gt; OptionT(FA.unit &gt;&gt; pf.lift(req).sequence))</span><span style=''>
+</span>54 <span style=''>
+</span>55 <span style=''>  /** The empty service (all requests fallthrough).
+</span>56 <span style=''>    *
+</span>57 <span style=''>    * @tparam T - ignored.
+</span>58 <span style=''>    * @return
+</span>59 <span style=''>    */
+</span>60 <span style=''>  def empty[T, F[_]: Applicative]: AuthedRoutes[T, F] =
+</span>61 <span style=''>    </span><span style='background: #F0ADAD'>Kleisli.liftF(OptionT.none)</span><span style=''>
+</span>62 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          15102
+        </td>
+        <td>
+          1327
+          -
+          1360
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.apply[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](F.unit)(F).&gt;&gt;[Option[org.http4s.Response[F]]](run.apply(req).value)(F))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          17030
+        </td>
+        <td>
+          1335
+          -
+          1359
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](F.unit)(F).&gt;&gt;[Option[org.http4s.Response[F]]](run.apply(req).value)(F)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          21287
+        </td>
+        <td>
+          1312
+          -
+          1361
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.AuthedRequest[F,T], org.http4s.Response[F]](((req: org.http4s.AuthedRequest[F,T]) =&gt; cats.data.OptionT.apply[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](F.unit)(F).&gt;&gt;[Option[org.http4s.Response[F]]](run.apply(req).value)(F))))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          17576
+        </td>
+        <td>
+          1994
+          -
+          2026
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](FA.unit)(FA).&gt;&gt;[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.toTraverseOps[Option, F[org.http4s.Response[F]]](pf.lift.apply(req))(cats.this.UnorderedFoldable.catsTraverseForOption).sequence[F, org.http4s.Response[F]](scala.this.&lt;:&lt;.refl[F[org.http4s.Response[F]]], FA))(FA)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          22089
+        </td>
+        <td>
+          1971
+          -
+          2028
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.AuthedRequest[F,T], org.http4s.Response[F]](((req: org.http4s.AuthedRequest[F,T]) =&gt; cats.data.OptionT.apply[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](FA.unit)(FA).&gt;&gt;[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.toTraverseOps[Option, F[org.http4s.Response[F]]](pf.lift.apply(req))(cats.this.UnorderedFoldable.catsTraverseForOption).sequence[F, org.http4s.Response[F]](scala.this.&lt;:&lt;.refl[F[org.http4s.Response[F]]], FA))(FA))))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          14026
+        </td>
+        <td>
+          1986
+          -
+          2027
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](FA.unit)(FA).&gt;&gt;[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.toTraverseOps[Option, F[org.http4s.Response[F]]](pf.lift.apply(req))(cats.this.UnorderedFoldable.catsTraverseForOption).sequence[F, org.http4s.Response[F]](scala.this.&lt;:&lt;.refl[F[org.http4s.Response[F]]], FA))(FA))
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          14205
+        </td>
+        <td>
+          2196
+          -
+          2223
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.KleisliFunctions.liftF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.liftF[[A]cats.data.OptionT[[_]F[_],A], org.http4s.AuthedRequest[F,T], org.http4s.Response[F]](cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](evidence$1))
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          18346
+        </td>
+        <td>
+          2210
+          -
+          2222
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.none
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](evidence$1)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

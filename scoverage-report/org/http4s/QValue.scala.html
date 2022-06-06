@@ -1,0 +1,3053 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/QValue.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Hash
+</span>20 <span style=''>import cats.Order
+</span>21 <span style=''>import cats.Show
+</span>22 <span style=''>import cats.kernel.BoundedEnumerable
+</span>23 <span style=''>import cats.parse.Parser0
+</span>24 <span style=''>import org.http4s.util.Writer
+</span>25 <span style=''>
+</span>26 <span style=''>/** A Quality Value.  Represented as thousandths for an exact representation rounded to three
+</span>27 <span style=''>  * decimal places.
+</span>28 <span style=''>  *
+</span>29 <span style=''>  * @param thousandths between 0 (for q=0) and 1000 (for q=1)
+</span>30 <span style=''>  * @see [[http://www.w3.org/Protocols/rfc2616/rfc2616-sec3.html#sec3.9 RFC 2616, Section 3.9, Quality Values]]
+</span>31 <span style=''>  */
+</span>32 <span style=''>final class QValue private (val thousandths: Int) extends AnyVal with Ordered[QValue] {
+</span>33 <span style=''>  def toDouble: Double = </span><span style='background: #F0ADAD'>0.001 * thousandths</span><span style=''>
+</span>34 <span style=''>
+</span>35 <span style=''>  def isAcceptable: Boolean = </span><span style='background: #F0ADAD'>thousandths &gt; 0</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  override def toString: String = s&quot;QValue(${0.001 * thousandths})&quot;
+</span>38 <span style=''>
+</span>39 <span style=''>  override def compare(that: QValue): Int = </span><span style='background: #AEF1AE'>thousandths - that.thousandths</span><span style=''>
+</span>40 <span style=''>
+</span>41 <span style=''>  def render(writer: Writer): writer.type =
+</span>42 <span style=''>    if (</span><span style='background: #AEF1AE'>thousandths == 1000</span><span style=''>) </span><span style='background: #AEF1AE'>writer</span><span style=''>
+</span>43 <span style=''>    else </span><span style='background: #AEF1AE'>{
+</span>44 <span style=''></span><span style='background: #AEF1AE'>      writer.append(&quot;;q=&quot;)
+</span>45 <span style=''></span><span style='background: #AEF1AE'>      formatq(writer)
+</span>46 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>47 <span style=''>
+</span>48 <span style=''>  // Assumes that q is in the proper bounds, otherwise you get an exception!
+</span>49 <span style=''>  private def formatq(b: Writer): b.type =
+</span>50 <span style=''>    // Skip the rest of the stuff if we are 1.0
+</span>51 <span style=''>    if (</span><span style='background: #AEF1AE'>thousandths == 1000</span><span style=''>) </span><span style='background: #F0ADAD'>b.append(&quot;1.0&quot;)</span><span style=''>
+</span>52 <span style=''>    else </span><span style='background: #AEF1AE'>if (thousandths == 0) b.append('0')
+</span>53 <span style=''></span><span style='background: #AEF1AE'>    else {
+</span>54 <span style=''></span><span style='background: #AEF1AE'>      // Need to start appending stuff
+</span>55 <span style=''></span><span style='background: #AEF1AE'>      b.append(&quot;0.&quot;)
+</span>56 <span style=''></span><span style='background: #AEF1AE'>
+</span>57 <span style=''></span><span style='background: #AEF1AE'>      @inline
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      def convert(i: Int): Char = ('0' + i).toChar
+</span>59 <span style=''></span><span style='background: #AEF1AE'>
+</span>60 <span style=''></span><span style='background: #AEF1AE'>      val mod100 = thousandths % 100
+</span>61 <span style=''></span><span style='background: #AEF1AE'>
+</span>62 <span style=''></span><span style='background: #AEF1AE'>      if (thousandths &gt; 99) {
+</span>63 <span style=''></span><span style='background: #AEF1AE'>        b.append(convert(thousandths / 100))
+</span>64 <span style=''></span><span style='background: #AEF1AE'>        if (mod100 == 0) return b // First digit only
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      } else b.append('0')
+</span>66 <span style=''></span><span style='background: #AEF1AE'>
+</span>67 <span style=''></span><span style='background: #AEF1AE'>      val mod10 = thousandths % 10
+</span>68 <span style=''></span><span style='background: #AEF1AE'>
+</span>69 <span style=''></span><span style='background: #AEF1AE'>      if (thousandths &gt; 9) {
+</span>70 <span style=''></span><span style='background: #AEF1AE'>        b.append(convert(mod100 / 10))
+</span>71 <span style=''></span><span style='background: #AEF1AE'>        if (mod10 == 0) return b // Second digit only
+</span>72 <span style=''></span><span style='background: #AEF1AE'>      } else b.append('0')
+</span>73 <span style=''></span><span style='background: #AEF1AE'>
+</span>74 <span style=''></span><span style='background: #AEF1AE'>      b.append(convert(mod10)) // Last digit
+</span>75 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>}
+</span>78 <span style=''>
+</span>79 <span style=''>object QValue extends QValuePlatform {
+</span>80 <span style=''>  lazy val One: QValue = new QValue(1000)
+</span>81 <span style=''>  lazy val Zero: QValue = new QValue(0)
+</span>82 <span style=''>
+</span>83 <span style=''>  def unapply(qValue: QValue): Option[Int] = </span><span style='background: #AEF1AE'>Some(qValue.thousandths)</span><span style=''>
+</span>84 <span style=''>
+</span>85 <span style=''>  private def mkQValue(thousandths: Int, s: =&gt; String): ParseResult[QValue] =
+</span>86 <span style=''>    if (</span><span style='background: #AEF1AE'>thousandths &lt; 0 || thousandths &gt; 1000</span><span style=''>)
+</span>87 <span style=''>      </span><span style='background: #AEF1AE'>ParseResult.fail(&quot;Invalid q-value&quot;, s&quot;$s must be between 0.0 and 1.0&quot;)</span><span style=''>
+</span>88 <span style=''>    else </span><span style='background: #AEF1AE'>ParseResult.success(new QValue(thousandths))</span><span style=''>
+</span>89 <span style=''>
+</span>90 <span style=''>  def fromThousandths(thousandths: Int): ParseResult[QValue] =
+</span>91 <span style=''>    </span><span style='background: #AEF1AE'>mkQValue(thousandths, </span><span style='background: #F0ADAD'>(thousandths * .001).toString</span><span style='background: #AEF1AE'>)</span><span style=''>
+</span>92 <span style=''>
+</span>93 <span style=''>  def fromDouble(d: Double): ParseResult[QValue] =
+</span>94 <span style=''>    </span><span style='background: #AEF1AE'>mkQValue(Math.round(1000 * d).toInt, d.toString)</span><span style=''>
+</span>95 <span style=''>
+</span>96 <span style=''>  def fromString(s: String): ParseResult[QValue] =
+</span>97 <span style=''>    try </span><span style='background: #AEF1AE'>fromDouble(s.toDouble)</span><span style=''>
+</span>98 <span style=''>    catch {
+</span>99 <span style=''>      case _: NumberFormatException =&gt; </span><span style='background: #AEF1AE'>ParseResult.fail(&quot;Invalid q-value&quot;, s&quot;$s is not a number&quot;)</span><span style=''>
+</span>100 <span style=''>    }
+</span>101 <span style=''>
+</span>102 <span style=''>  def unsafeFromString(s: String): QValue =
+</span>103 <span style=''>    </span><span style='background: #AEF1AE'>fromString(s).fold(</span><span style='background: #F0ADAD'>throw _</span><span style='background: #AEF1AE'>, identity)</span><span style=''>
+</span>104 <span style=''>
+</span>105 <span style=''>  private[http4s] val parser: Parser0[QValue] = {
+</span>106 <span style=''>    import cats.parse.Parser.{char =&gt; ch, _}
+</span>107 <span style=''>    import cats.parse.Rfc5234._
+</span>108 <span style=''>    import org.http4s.internal.parsing.Rfc7230.ows
+</span>109 <span style=''>
+</span>110 <span style=''>    val qValue = </span><span style='background: #AEF1AE'>string(ch('0') *&gt; (ch('.') *&gt; digit.rep).rep0)
+</span>111 <span style=''></span><span style='background: #AEF1AE'>      .mapFilter(
+</span>112 <span style=''></span><span style='background: #AEF1AE'>        QValue
+</span>113 <span style=''></span><span style='background: #AEF1AE'>          .fromString(_)
+</span>114 <span style=''></span><span style='background: #AEF1AE'>          .toOption
+</span>115 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>116 <span style=''></span><span style='background: #AEF1AE'>      .orElse(
+</span>117 <span style=''></span><span style='background: #AEF1AE'>        ch('1') *&gt; (ch('.') *&gt; ch('0').rep0.void).?.as(One)
+</span>118 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>119 <span style=''>
+</span>120 <span style=''>    </span><span style='background: #AEF1AE'>((ch(';') *&gt; ows *&gt; ignoreCaseChar('q') *&gt; ch('=')) *&gt; qValue).backtrack
+</span>121 <span style=''></span><span style='background: #AEF1AE'>      .orElse(pure(QValue.One))</span><span style=''>
+</span>122 <span style=''>  }
+</span>123 <span style=''>
+</span>124 <span style=''>  def parse(s: String): ParseResult[QValue] =
+</span>125 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Q-Value&quot;)(s)</span><span style=''>
+</span>126 <span style=''>
+</span>127 <span style=''>  /** Exists to support compile-time verified literals. Do not call directly. */
+</span>128 <span style=''>  @deprecated(
+</span>129 <span style=''>    &quot;&quot;&quot;QValue literal is deprecated.  Import `org.http4s.implicits._` and use the qValue&quot;&quot; string context&quot;&quot;&quot;,
+</span>130 <span style=''>    &quot;0.22.2&quot;,
+</span>131 <span style=''>  )
+</span>132 <span style=''>  def ☠(thousandths: Int): QValue = </span><span style='background: #F0ADAD'>new QValue(thousandths)</span><span style=''>
+</span>133 <span style=''>
+</span>134 <span style=''>  implicit val catsInstancesForHttp4sQValue: Order[QValue]
+</span>135 <span style=''>    with Show[QValue]
+</span>136 <span style=''>    with Hash[QValue]
+</span>137 <span style=''>    with HttpCodec[QValue]
+</span>138 <span style=''>    with BoundedEnumerable[QValue] = </span><span style='background: #AEF1AE'>new</span><span style=''> Order[QValue]
+</span>139 <span style=''>    with Show[QValue]
+</span>140 <span style=''>    with Hash[QValue]
+</span>141 <span style=''>    with HttpCodec[QValue]
+</span>142 <span style=''>    with BoundedEnumerable[QValue] { self =&gt;
+</span>143 <span style=''>    // Order
+</span>144 <span style=''>    override def compare(x: QValue, y: QValue): Int = </span><span style='background: #AEF1AE'>x.compare(y)</span><span style=''>
+</span>145 <span style=''>
+</span>146 <span style=''>    // Show
+</span>147 <span style=''>    override def show(t: QValue): String = </span><span style='background: #F0ADAD'>t.toString</span><span style=''>
+</span>148 <span style=''>
+</span>149 <span style=''>    // Hash
+</span>150 <span style=''>    override def hash(x: QValue): Int = </span><span style='background: #AEF1AE'>x.hashCode</span><span style=''>
+</span>151 <span style=''>
+</span>152 <span style=''>    // HttpCodec
+</span>153 <span style=''>    override def parse(s: String): ParseResult[QValue] = </span><span style='background: #AEF1AE'>QValue.parse(s)</span><span style=''>
+</span>154 <span style=''>    override def render(writer: Writer, q: QValue): writer.type = </span><span style='background: #AEF1AE'>q.render(writer)</span><span style=''>
+</span>155 <span style=''>
+</span>156 <span style=''>    // BoundedEnumerable
+</span>157 <span style=''>    override def partialNext(a: QValue): Option[QValue] = a match {
+</span>158 <span style=''>      case QValue.One =&gt; </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>159 <span style=''>      case QValue(thousandths) if </span><span style='background: #AEF1AE'>fromThousandths(thousandths).isLeft</span><span style=''> =&gt; </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>160 <span style=''>      case QValue(thousandths) =&gt; </span><span style='background: #AEF1AE'>Some(new QValue(thousandths + 1))</span><span style=''>
+</span>161 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>162 <span style=''>    }
+</span>163 <span style=''>    override def partialPrevious(a: QValue): Option[QValue] = a match {
+</span>164 <span style=''>      case QValue.Zero =&gt; </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>165 <span style=''>      case QValue(thousandths) if </span><span style='background: #AEF1AE'>fromThousandths(thousandths).isLeft</span><span style=''> =&gt; </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>166 <span style=''>      case QValue(thousandths) =&gt; </span><span style='background: #AEF1AE'>Some(new QValue(thousandths - 1))</span><span style=''>
+</span>167 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>168 <span style=''>    }
+</span>169 <span style=''>    override def order: Order[QValue] = self
+</span>170 <span style=''>    override def minBound: QValue = QValue.Zero
+</span>171 <span style=''>    override def maxBound: QValue = QValue.One
+</span>172 <span style=''>  }
+</span>173 <span style=''>
+</span>174 <span style=''>  implicit val stdLibOrderingInstance: Ordering[QValue] =
+</span>175 <span style=''>    </span><span style='background: #AEF1AE'>catsInstancesForHttp4sQValue.toOrdering</span><span style=''>
+</span>176 <span style=''>}
+</span>177 <span style=''>
+</span>178 <span style=''>trait HasQValue {
+</span>179 <span style=''>  def qValue: QValue
+</span>180 <span style=''>  def withQValue(q: QValue): HasQValue
+</span>181 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          16815
+        </td>
+        <td>
+          1171
+          -
+          1176
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0.001
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          21713
+        </td>
+        <td>
+          1171
+          -
+          1190
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Double.*
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0.001.*(QValue.this.thousandths)
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          13296
+        </td>
+        <td>
+          1179
+          -
+          1190
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QValue.thousandths
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QValue.this.thousandths
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          17729
+        </td>
+        <td>
+          1222
+          -
+          1237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          QValue.this.thousandths.&gt;(0)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          14099
+        </td>
+        <td>
+          1366
+          -
+          1382
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QValue.thousandths
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          that.thousandths
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          20393
+        </td>
+        <td>
+          1352
+          -
+          1382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.-
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths.-(that.thousandths)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          18511
+        </td>
+        <td>
+          1436
+          -
+          1455
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.server.middleware.gzipsuite,munit.scalachecksuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths.==(1000)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          14645
+        </td>
+        <td>
+          1457
+          -
+          1463
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.QValue.writer
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.server.middleware.gzipsuite,munit.scalachecksuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          13317
+        </td>
+        <td>
+          1473
+          -
+          1529
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  writer.append(&quot;;q=&quot;);
+  QValue.this.formatq(writer)
+}
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          20925
+        </td>
+        <td>
+          1481
+          -
+          1501
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append(&quot;;q=&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          17327
+        </td>
+        <td>
+          1508
+          -
+          1523
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.formatq
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.formatq(writer)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          21729
+        </td>
+        <td>
+          1707
+          -
+          1726
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths.==(1000)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          13823
+        </td>
+        <td>
+          1728
+          -
+          1743
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          b.append(&quot;1.0&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          17597
+        </td>
+        <td>
+          1728
+          -
+          1743
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          b.append(&quot;1.0&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          14366
+        </td>
+        <td>
+          1775
+          -
+          1788
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append('0')
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          16576
+        </td>
+        <td>
+          1775
+          -
+          1788
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append('0')
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          19810
+        </td>
+        <td>
+          1753
+          -
+          2358
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (QValue.this.thousandths.==(0))
+  b.append('0')
+else
+  {
+    b.append(&quot;0.&quot;);
+    @inline def convert(i: Int): Char = '0'.+(i).toChar;
+    val mod100: Int = QValue.this.thousandths.%(100);
+    if (QValue.this.thousandths.&gt;(99))
+      {
+        b.append(convert(QValue.this.thousandths./(100)));
+        if (mod100.==(0))
+          return b
+        else
+          ()
+      }
+    else
+      b.append('0');
+    val mod10: Int = QValue.this.thousandths.%(10);
+    if (QValue.this.thousandths.&gt;(9))
+      {
+        b.append(convert(mod100./(10)));
+        if (mod10.==(0))
+          return b
+        else
+          ()
+      }
+    else
+      b.append('0');
+    b.append(convert(mod10))
+  }
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          20417
+        </td>
+        <td>
+          1757
+          -
+          1773
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths.==(0)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          13472
+        </td>
+        <td>
+          1798
+          -
+          2358
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  b.append(&quot;0.&quot;);
+  @inline def convert(i: Int): Char = '0'.+(i).toChar;
+  val mod100: Int = QValue.this.thousandths.%(100);
+  if (QValue.this.thousandths.&gt;(99))
+    {
+      b.append(convert(QValue.this.thousandths./(100)));
+      if (mod100.==(0))
+        return b
+      else
+        ()
+    }
+  else
+    b.append('0');
+  val mod10: Int = QValue.this.thousandths.%(10);
+  if (QValue.this.thousandths.&gt;(9))
+    {
+      b.append(convert(mod100./(10)));
+      if (mod10.==(0))
+        return b
+      else
+        ()
+    }
+  else
+    b.append('0');
+  b.append(convert(mod10))
+}
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          20812
+        </td>
+        <td>
+          1845
+          -
+          1859
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append(&quot;0.&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          13342
+        </td>
+        <td>
+          1909
+          -
+          1925
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          '0'.+(i).toChar
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          16792
+        </td>
+        <td>
+          1910
+          -
+          1913
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          '0'
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          21597
+        </td>
+        <td>
+          1946
+          -
+          1963
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.%
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths.%(100)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          17618
+        </td>
+        <td>
+          1975
+          -
+          1991
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths.&gt;(99)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          21338
+        </td>
+        <td>
+          1993
+          -
+          2101
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  b.append(convert(QValue.this.thousandths./(100)));
+  if (mod100.==(0))
+    return b
+  else
+    ()
+}
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          13717
+        </td>
+        <td>
+          2020
+          -
+          2037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int./
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths./(100)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          16596
+        </td>
+        <td>
+          2003
+          -
+          2039
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append(convert(QValue.this.thousandths./(100)))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          20010
+        </td>
+        <td>
+          2012
+          -
+          2038
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.convert
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          convert(QValue.this.thousandths./(100))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          16807
+        </td>
+        <td>
+          2048
+          -
+          2048
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          20829
+        </td>
+        <td>
+          2065
+          -
+          2073
+        </td>
+        <td>
+          Return
+        </td>
+        <td>
+          org.http4s.QValue.formatq
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          return b
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          14240
+        </td>
+        <td>
+          2052
+          -
+          2063
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          mod100.==(0)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          12911
+        </td>
+        <td>
+          2048
+          -
+          2048
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          13734
+        </td>
+        <td>
+          2107
+          -
+          2120
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append('0')
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          17478
+        </td>
+        <td>
+          2107
+          -
+          2120
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append('0')
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          20022
+        </td>
+        <td>
+          2140
+          -
+          2156
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.%
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths.%(10)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          20548
+        </td>
+        <td>
+          2185
+          -
+          2287
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  b.append(convert(mod100./(10)));
+  if (mod10.==(0))
+    return b
+  else
+    ()
+}
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          16157
+        </td>
+        <td>
+          2168
+          -
+          2183
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.thousandths.&gt;(9)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          17324
+        </td>
+        <td>
+          2195
+          -
+          2225
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append(convert(mod100./(10)))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          20695
+        </td>
+        <td>
+          2204
+          -
+          2224
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.convert
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          convert(mod100./(10))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          14253
+        </td>
+        <td>
+          2212
+          -
+          2223
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int./
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          mod100./(10)
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          12925
+        </td>
+        <td>
+          2238
+          -
+          2248
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          mod10.==(0)
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          14112
+        </td>
+        <td>
+          2234
+          -
+          2234
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          17500
+        </td>
+        <td>
+          2234
+          -
+          2234
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          19793
+        </td>
+        <td>
+          2250
+          -
+          2258
+        </td>
+        <td>
+          Return
+        </td>
+        <td>
+          org.http4s.QValue.formatq
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          return b
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          14513
+        </td>
+        <td>
+          2293
+          -
+          2306
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append('0')
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          16573
+        </td>
+        <td>
+          2293
+          -
+          2306
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append('0')
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          17341
+        </td>
+        <td>
+          2314
+          -
+          2338
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.append(convert(mod10))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          20716
+        </td>
+        <td>
+          2323
+          -
+          2337
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.convert
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          convert(mod10)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          13980
+        </td>
+        <td>
+          2530
+          -
+          2554
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Int](qValue.thousandths)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          17885
+        </td>
+        <td>
+          2535
+          -
+          2553
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QValue.thousandths
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          qValue.thousandths
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          20566
+        </td>
+        <td>
+          2656
+          -
+          2657
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          16437
+        </td>
+        <td>
+          2661
+          -
+          2679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          thousandths.&gt;(1000)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          14532
+        </td>
+        <td>
+          2642
+          -
+          2679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          thousandths.&lt;(0).||(thousandths.&gt;(1000))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          20823
+        </td>
+        <td>
+          2704
+          -
+          2721
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Invalid q-value&quot;
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          13196
+        </td>
+        <td>
+          2687
+          -
+          2757
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid q-value&quot;, (&quot;&quot;.+(s).+(&quot; must be between 0.0 and 1.0&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          17212
+        </td>
+        <td>
+          2687
+          -
+          2757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid q-value&quot;, (&quot;&quot;.+(s).+(&quot; must be between 0.0 and 1.0&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          17767
+        </td>
+        <td>
+          2767
+          -
+          2811
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[org.http4s.QValue](new QValue(thousandths))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          19691
+        </td>
+        <td>
+          2787
+          -
+          2810
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new QValue(thousandths)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          13728
+        </td>
+        <td>
+          2767
+          -
+          2811
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[org.http4s.QValue](new QValue(thousandths))
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          20440
+        </td>
+        <td>
+          2902
+          -
+          2931
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          thousandths.*(0.001).toString()
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          16458
+        </td>
+        <td>
+          2880
+          -
+          2932
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.mkQValue
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.mkQValue(thousandths, thousandths.*(0.001).toString())
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          20688
+        </td>
+        <td>
+          2998
+          -
+          3024
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Long.toInt
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.Math.round(1000.*(d)).toInt
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          23026
+        </td>
+        <td>
+          3009
+          -
+          3017
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.*
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          1000.*(d)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          13064
+        </td>
+        <td>
+          2989
+          -
+          3037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.mkQValue
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.mkQValue(java.lang.Math.round(1000.*(d)).toInt, d.toString())
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          16945
+        </td>
+        <td>
+          3026
+          -
+          3036
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          d.toString()
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          13604
+        </td>
+        <td>
+          3098
+          -
+          3120
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.QValue.fromDouble
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.fromDouble(scala.Predef.augmentString(s).toDouble)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          17490
+        </td>
+        <td>
+          3098
+          -
+          3120
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.fromDouble
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.fromDouble(scala.Predef.augmentString(s).toDouble)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          19711
+        </td>
+        <td>
+          3109
+          -
+          3119
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toDouble
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(s).toDouble
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          20542
+        </td>
+        <td>
+          3189
+          -
+          3206
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Invalid q-value&quot;
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          16478
+        </td>
+        <td>
+          3172
+          -
+          3230
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid q-value&quot;, (&quot;&quot;.+(s).+(&quot; is not a number&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          16833
+        </td>
+        <td>
+          3286
+          -
+          3323
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.qvaluesuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.fromString(s).fold[org.http4s.QValue](((x$1: org.http4s.ParseFailure) =&gt; throw x$1), ((x: org.http4s.QValue) =&gt; scala.Predef.identity[org.http4s.QValue](x)))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          20708
+        </td>
+        <td>
+          3314
+          -
+          3322
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          org.http4s.qvaluesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[org.http4s.QValue](x)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          22914
+        </td>
+        <td>
+          3305
+          -
+          3312
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          throw x$1
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          20416
+        </td>
+        <td>
+          3528
+          -
+          3566
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('0').*&gt;[List[cats.data.NonEmptyList[Char]]](cats.parse.Parser.char('.').*&gt;[cats.data.NonEmptyList[Char]](cats.parse.Rfc5234.digit.rep).rep0)
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          13466
+        </td>
+        <td>
+          3531
+          -
+          3534
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '0'
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          13624
+        </td>
+        <td>
+          3539
+          -
+          3566
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep0
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('.').*&gt;[cats.data.NonEmptyList[Char]](cats.parse.Rfc5234.digit.rep).rep0
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          15561
+        </td>
+        <td>
+          3551
+          -
+          3560
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.rep
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          19732
+        </td>
+        <td>
+          3543
+          -
+          3546
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.qvaluesuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '.'
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          16707
+        </td>
+        <td>
+          3594
+          -
+          3645
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.toOption
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.fromString(x$2).toOption
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          14135
+        </td>
+        <td>
+          3521
+          -
+          3736
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(cats.parse.Parser.char('0').*&gt;[List[cats.data.NonEmptyList[Char]]](cats.parse.Parser.char('.').*&gt;[cats.data.NonEmptyList[Char]](cats.parse.Rfc5234.digit.rep).rep0)).mapFilter[org.http4s.QValue](((x$2: String) =&gt; QValue.fromString(x$2).toOption)).orElse[org.http4s.QValue](cats.parse.Parser.char('1').*&gt;[org.http4s.QValue](cats.parse.Parser.char('.').*&gt;[Unit](cats.parse.Parser.char('0').rep0.void).?.as[org.http4s.QValue](QValue.this.One)))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          17204
+        </td>
+        <td>
+          3703
+          -
+          3706
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.qvaluesuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '0'
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          21217
+        </td>
+        <td>
+          3692
+          -
+          3695
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.qvaluesuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '.'
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          15585
+        </td>
+        <td>
+          3677
+          -
+          3728
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('1').*&gt;[org.http4s.QValue](cats.parse.Parser.char('.').*&gt;[Unit](cats.parse.Parser.char('0').rep0.void).?.as[org.http4s.QValue](QValue.this.One))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          13482
+        </td>
+        <td>
+          3700
+          -
+          3717
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.void
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.qvaluesuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('0').rep0.void
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          22645
+        </td>
+        <td>
+          3680
+          -
+          3683
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '1'
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          19927
+        </td>
+        <td>
+          3688
+          -
+          3728
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser0.as
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.qvaluesuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('.').*&gt;[Unit](cats.parse.Parser.char('0').rep0.void).?.as[org.http4s.QValue](QValue.this.One)
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          20434
+        </td>
+        <td>
+          3747
+          -
+          3750
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ';'
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          16720
+        </td>
+        <td>
+          3755
+          -
+          3758
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          22892
+        </td>
+        <td>
+          3762
+          -
+          3781
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.ignoreCaseChar
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.ignoreCaseChar('q')
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          21233
+        </td>
+        <td>
+          3785
+          -
+          3792
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.qvaluesuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('=')
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          17087
+        </td>
+        <td>
+          3829
+          -
+          3845
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.pure
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.pure[org.http4s.QValue](QValue.One)
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          13363
+        </td>
+        <td>
+          3742
+          -
+          3846
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser0.orElse
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(';').*&gt;[Unit](org.http4s.internal.parsing.Rfc7230.ows).*&gt;[Unit](cats.parse.Parser.ignoreCaseChar('q')).*&gt;[Unit](cats.parse.Parser.char('=')).*&gt;[org.http4s.QValue](qValue).backtrack.orElse[org.http4s.QValue](cats.parse.Parser.pure[org.http4s.QValue](QValue.One))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          19705
+        </td>
+        <td>
+          3902
+          -
+          3954
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.QValue](QValue.this.parser, &quot;Invalid Q-Value&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          15822
+        </td>
+        <td>
+          4216
+          -
+          4239
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new QValue(thousandths)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          20056
+        </td>
+        <td>
+          4408
+          -
+          4411
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          14155
+        </td>
+        <td>
+          4609
+          -
+          4621
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.compare
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.compare(y)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          20452
+        </td>
+        <td>
+          4678
+          -
+          4688
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          t.toString()
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          16612
+        </td>
+        <td>
+          4742
+          -
+          4752
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.hashCode
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.hashCode()
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          22910
+        </td>
+        <td>
+          4828
+          -
+          4843
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.parse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.parse(s)
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          19026
+        </td>
+        <td>
+          4910
+          -
+          4926
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.render
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.server.middleware.gzipsuite,munit.scalachecksuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          q.render(writer)
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          17100
+        </td>
+        <td>
+          5046
+          -
+          5050
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.qvaluesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          13378
+        </td>
+        <td>
+          5085
+          -
+          5120
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.isLeft
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.fromThousandths(thousandths).isLeft
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          19576
+        </td>
+        <td>
+          5124
+          -
+          5128
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          15838
+        </td>
+        <td>
+          5179
+          -
+          5194
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          thousandths.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          13616
+        </td>
+        <td>
+          5168
+          -
+          5195
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new QValue(thousandths.+(1))
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          20321
+        </td>
+        <td>
+          5163
+          -
+          5196
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.QValue](new QValue(thousandths.+(1)))
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          16345
+        </td>
+        <td>
+          5213
+          -
+          5217
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          164
+        </td>
+        <td>
+          22784
+        </td>
+        <td>
+          5322
+          -
+          5326
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.qvaluesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          19041
+        </td>
+        <td>
+          5361
+          -
+          5396
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.isLeft
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.fromThousandths(thousandths).isLeft
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          16844
+        </td>
+        <td>
+          5400
+          -
+          5404
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          15721
+        </td>
+        <td>
+          5439
+          -
+          5472
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.QValue](new QValue(thousandths.-(1)))
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          13238
+        </td>
+        <td>
+          5455
+          -
+          5470
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.-
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          thousandths.-(1)
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          19595
+        </td>
+        <td>
+          5444
+          -
+          5471
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QValue.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new QValue(thousandths.-(1))
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          14128
+        </td>
+        <td>
+          5489
+          -
+          5493
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          16219
+        </td>
+        <td>
+          5707
+          -
+          5746
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Order.toOrdering
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.qvaluesuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.this.catsInstancesForHttp4sQValue.toOrdering
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

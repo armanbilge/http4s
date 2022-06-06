@@ -1,0 +1,1482 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/RequestPrelude.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats._
+</span>20 <span style=''>import cats.syntax.all._
+</span>21 <span style=''>import org.http4s.internal.reduceComparisons
+</span>22 <span style=''>
+</span>23 <span style=''>/** A projection of a [[Request]] without the body.
+</span>24 <span style=''>  *
+</span>25 <span style=''>  * @note The [[Request#attributes]] are omitted in this encoding because they
+</span>26 <span style=''>  *       do not (and can not) have a [[cats.kernel.Order]] instance. If they
+</span>27 <span style=''>  *       were included here, then we could not write a [[cats.kernel.Order]]
+</span>28 <span style=''>  *       instance for [[RequestPrelude]], limiting some of its utility, e.g. it
+</span>29 <span style=''>  *       could not be used in a [[cats.data.NonEmptySet]].
+</span>30 <span style=''>  */
+</span>31 <span style=''>sealed abstract class RequestPrelude extends Product with Serializable {
+</span>32 <span style=''>  def headers: Headers
+</span>33 <span style=''>  def httpVersion: HttpVersion
+</span>34 <span style=''>  def method: Method
+</span>35 <span style=''>  def uri: Uri
+</span>36 <span style=''>
+</span>37 <span style=''>  def withHeaders(value: Headers): RequestPrelude
+</span>38 <span style=''>  def withHttpVersion(value: HttpVersion): RequestPrelude
+</span>39 <span style=''>  def withMethod(value: Method): RequestPrelude
+</span>40 <span style=''>  def withUri(value: Uri): RequestPrelude
+</span>41 <span style=''>
+</span>42 <span style=''>  // final //
+</span>43 <span style=''>
+</span>44 <span style=''>  final def mapHeaders(f: Headers =&gt; Headers): RequestPrelude =
+</span>45 <span style=''>    </span><span style='background: #F0ADAD'>withHeaders(f(headers))</span><span style=''>
+</span>46 <span style=''>
+</span>47 <span style=''>  final def mapHttpVersion(f: HttpVersion =&gt; HttpVersion): RequestPrelude =
+</span>48 <span style=''>    </span><span style='background: #F0ADAD'>withHttpVersion(f(httpVersion))</span><span style=''>
+</span>49 <span style=''>
+</span>50 <span style=''>  final def mapMethod(f: Method =&gt; Method): RequestPrelude =
+</span>51 <span style=''>    </span><span style='background: #F0ADAD'>withMethod(f(method))</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>  final def mapUri(f: Uri =&gt; Uri): RequestPrelude =
+</span>54 <span style=''>    </span><span style='background: #F0ADAD'>withUri(f(uri))</span><span style=''>
+</span>55 <span style=''>
+</span>56 <span style=''>  override final def toString: String =
+</span>57 <span style=''>    s&quot;RequestPrelude(headers = ${headers
+</span>58 <span style=''>        .redactSensitive()}, httpVersion = ${httpVersion}, method = ${method}, uri = ${uri})&quot;
+</span>59 <span style=''>}
+</span>60 <span style=''>
+</span>61 <span style=''>object RequestPrelude {
+</span>62 <span style=''>  private[this] final case class RequestPreludeImpl(
+</span>63 <span style=''>      override final val headers: Headers,
+</span>64 <span style=''>      override final val httpVersion: HttpVersion,
+</span>65 <span style=''>      override final val method: Method,
+</span>66 <span style=''>      override final val uri: Uri,
+</span>67 <span style=''>  ) extends RequestPrelude {
+</span>68 <span style=''>    override final def withHeaders(value: Headers): RequestPrelude =
+</span>69 <span style=''>      </span><span style='background: #F0ADAD'>this.copy(headers = value)</span><span style=''>
+</span>70 <span style=''>
+</span>71 <span style=''>    override final def withHttpVersion(value: HttpVersion): RequestPrelude =
+</span>72 <span style=''>      </span><span style='background: #F0ADAD'>this.copy(httpVersion = value)</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>    override final def withMethod(value: Method): RequestPrelude =
+</span>75 <span style=''>      </span><span style='background: #F0ADAD'>this.copy(method = value)</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>    override final def withUri(value: Uri): RequestPrelude =
+</span>78 <span style=''>      </span><span style='background: #F0ADAD'>this.copy(uri = value)</span><span style=''>
+</span>79 <span style=''>  }
+</span>80 <span style=''>
+</span>81 <span style=''>  def apply(
+</span>82 <span style=''>      headers: Headers,
+</span>83 <span style=''>      httpVersion: HttpVersion,
+</span>84 <span style=''>      method: Method,
+</span>85 <span style=''>      uri: Uri,
+</span>86 <span style=''>  ): RequestPrelude =
+</span>87 <span style=''>    </span><span style='background: #AEF1AE'>RequestPreludeImpl(
+</span>88 <span style=''></span><span style='background: #AEF1AE'>      headers,
+</span>89 <span style=''></span><span style='background: #AEF1AE'>      httpVersion,
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      method,
+</span>91 <span style=''></span><span style='background: #AEF1AE'>      uri,
+</span>92 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>93 <span style=''>
+</span>94 <span style=''>  def fromRequest[F[_]](value: Request[F]): RequestPrelude =
+</span>95 <span style=''>    </span><span style='background: #F0ADAD'>RequestPreludeImpl(
+</span>96 <span style=''></span><span style='background: #F0ADAD'>      value.headers,
+</span>97 <span style=''></span><span style='background: #F0ADAD'>      value.httpVersion,
+</span>98 <span style=''></span><span style='background: #F0ADAD'>      value.method,
+</span>99 <span style=''></span><span style='background: #F0ADAD'>      value.uri,
+</span>100 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>101 <span style=''>
+</span>102 <span style=''>  implicit val catsHashAndOrderForRequestPrelude: Hash[RequestPrelude] with Order[RequestPrelude] =
+</span>103 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Hash[RequestPrelude] with Order[RequestPrelude] {
+</span>104 <span style=''>      override def hash(x: RequestPrelude): Int = </span><span style='background: #AEF1AE'>x.hashCode</span><span style=''>
+</span>105 <span style=''>
+</span>106 <span style=''>      override def compare(x: RequestPrelude, y: RequestPrelude): Int =
+</span>107 <span style=''>        </span><span style='background: #AEF1AE'>reduceComparisons(
+</span>108 <span style=''></span><span style='background: #AEF1AE'>          x.headers.compare(y.headers),
+</span>109 <span style=''></span><span style='background: #AEF1AE'>          Eval.later(x.httpVersion.compare(y.httpVersion)),
+</span>110 <span style=''></span><span style='background: #AEF1AE'>          Eval.later(x.method.compare(y.method)),
+</span>111 <span style=''></span><span style='background: #AEF1AE'>          Eval.later(x.uri.compare(y.uri)),
+</span>112 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''>
+</span>113 <span style=''>    }
+</span>114 <span style=''>
+</span>115 <span style=''>  implicit val catsShowForRequestPrelude: Show[RequestPrelude] =
+</span>116 <span style=''>    </span><span style='background: #AEF1AE'>Show.fromToString</span><span style=''>
+</span>117 <span style=''>
+</span>118 <span style=''>  implicit def stdLibOrdering: Ordering[RequestPrelude] =
+</span>119 <span style=''>    </span><span style='background: #F0ADAD'>catsHashAndOrderForRequestPrelude.toOrdering</span><span style=''>
+</span>120 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          21677
+        </td>
+        <td>
+          1597
+          -
+          1604
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.headers
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          13781
+        </td>
+        <td>
+          1583
+          -
+          1606
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.withHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.withHeaders(f.apply(RequestPrelude.this.headers))
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          17534
+        </td>
+        <td>
+          1595
+          -
+          1605
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.apply(RequestPrelude.this.headers)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          14306
+        </td>
+        <td>
+          1688
+          -
+          1719
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.withHttpVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.withHttpVersion(f.apply(RequestPrelude.this.httpVersion))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          18693
+        </td>
+        <td>
+          1704
+          -
+          1718
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.apply(RequestPrelude.this.httpVersion)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          22541
+        </td>
+        <td>
+          1706
+          -
+          1717
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.httpVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.httpVersion
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          19211
+        </td>
+        <td>
+          1797
+          -
+          1806
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.apply(RequestPrelude.this.method)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          15473
+        </td>
+        <td>
+          1786
+          -
+          1807
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.withMethod
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.withMethod(f.apply(RequestPrelude.this.method))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          20895
+        </td>
+        <td>
+          1799
+          -
+          1805
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.method
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.method
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          21887
+        </td>
+        <td>
+          1875
+          -
+          1878
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.uri
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.uri
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          17556
+        </td>
+        <td>
+          1873
+          -
+          1879
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.apply(RequestPrelude.this.uri)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          13796
+        </td>
+        <td>
+          1865
+          -
+          1880
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.withUri
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.withUri(f.apply(RequestPrelude.this.uri))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          18708
+        </td>
+        <td>
+          2416
+          -
+          2416
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          20768
+        </td>
+        <td>
+          2411
+          -
+          2437
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy(value, this.copy$default$2, this.copy$default$3, this.copy$default$4)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          22403
+        </td>
+        <td>
+          2416
+          -
+          2416
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          14702
+        </td>
+        <td>
+          2416
+          -
+          2416
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          21651
+        </td>
+        <td>
+          2527
+          -
+          2527
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          15337
+        </td>
+        <td>
+          2527
+          -
+          2527
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          17400
+        </td>
+        <td>
+          2527
+          -
+          2527
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          17926
+        </td>
+        <td>
+          2522
+          -
+          2552
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy(x$2, x$1, x$3, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          13678
+        </td>
+        <td>
+          2632
+          -
+          2632
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          18588
+        </td>
+        <td>
+          2632
+          -
+          2632
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          22422
+        </td>
+        <td>
+          2632
+          -
+          2632
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          14589
+        </td>
+        <td>
+          2627
+          -
+          2652
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy(x$2, x$3, x$1, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          21107
+        </td>
+        <td>
+          2726
+          -
+          2726
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          21668
+        </td>
+        <td>
+          2721
+          -
+          2743
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy(x$2, x$3, x$4, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          15357
+        </td>
+        <td>
+          2726
+          -
+          2726
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          17259
+        </td>
+        <td>
+          2726
+          -
+          2726
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          17821
+        </td>
+        <td>
+          2882
+          -
+          2966
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          RequestPrelude.this.RequestPreludeImpl.apply(headers, httpVersion, method, uri)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          20999
+        </td>
+        <td>
+          3033
+          -
+          3141
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.RequestPreludeImpl.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.RequestPreludeImpl.apply(value.headers, value.httpVersion, value.method, value.uri)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          13774
+        </td>
+        <td>
+          3059
+          -
+          3072
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          value.headers
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          22292
+        </td>
+        <td>
+          3080
+          -
+          3097
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.httpVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          value.httpVersion
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          18310
+        </td>
+        <td>
+          3105
+          -
+          3117
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.method
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          value.method
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          14606
+        </td>
+        <td>
+          3125
+          -
+          3134
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.uri
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          value.uri
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          16898
+        </td>
+        <td>
+          3247
+          -
+          3250
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestPrelude.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.requestpreludesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          16989
+        </td>
+        <td>
+          3351
+          -
+          3361
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.hashCode
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.hashCode()
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          20629
+        </td>
+        <td>
+          3443
+          -
+          3665
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.reduceComparisons
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.`package`.reduceComparisons(cats.syntax.`package`.all.catsSyntaxOrder[org.http4s.Headers](x.headers)(http4s.this.Headers.HeadersOrder).compare(y.headers), cats.Eval.later[Int](x.httpVersion.compare(y.httpVersion)), cats.Eval.later[Int](cats.syntax.`package`.all.catsSyntaxOrder[org.http4s.Method](x.method)(http4s.this.Method.catsInstancesForHttp4sMethod).compare(y.method)), cats.Eval.later[Int](cats.syntax.`package`.all.catsSyntaxOrder[org.http4s.Uri](x.uri)(http4s.this.Uri.catsInstancesForHttp4sUri).compare(y.uri)))
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          15219
+        </td>
+        <td>
+          3472
+          -
+          3481
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.headers
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.headers
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          21533
+        </td>
+        <td>
+          3490
+          -
+          3499
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.headers
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          y.headers
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          17836
+        </td>
+        <td>
+          3472
+          -
+          3500
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.OrderOps.compare
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOrder[org.http4s.Headers](x.headers)(http4s.this.Headers.HeadersOrder).compare(y.headers)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          20197
+        </td>
+        <td>
+          3523
+          -
+          3559
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpVersion.compare
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.httpVersion.compare(y.httpVersion)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          18327
+        </td>
+        <td>
+          3512
+          -
+          3560
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Eval.later
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Eval.later[Int](x.httpVersion.compare(y.httpVersion))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          13655
+        </td>
+        <td>
+          3545
+          -
+          3558
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.httpVersion
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          y.httpVersion
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          14471
+        </td>
+        <td>
+          3583
+          -
+          3591
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.method
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.method
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          20763
+        </td>
+        <td>
+          3585
+          -
+          3585
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.catsInstancesForHttp4sMethod
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.Method.catsInstancesForHttp4sMethod
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          21555
+        </td>
+        <td>
+          3572
+          -
+          3610
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Eval.later
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Eval.later[Int](cats.syntax.`package`.all.catsSyntaxOrder[org.http4s.Method](x.method)(http4s.this.Method.catsInstancesForHttp4sMethod).compare(y.method))
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          15328
+        </td>
+        <td>
+          3583
+          -
+          3609
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.OrderOps.compare
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOrder[org.http4s.Method](x.method)(http4s.this.Method.catsInstancesForHttp4sMethod).compare(y.method)
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          16879
+        </td>
+        <td>
+          3600
+          -
+          3608
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.method
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          y.method
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          14492
+        </td>
+        <td>
+          3622
+          -
+          3654
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Eval.later
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Eval.later[Int](cats.syntax.`package`.all.catsSyntaxOrder[org.http4s.Uri](x.uri)(http4s.this.Uri.catsInstancesForHttp4sUri).compare(y.uri))
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          17716
+        </td>
+        <td>
+          3633
+          -
+          3638
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.uri
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.uri
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          13675
+        </td>
+        <td>
+          3635
+          -
+          3635
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.catsInstancesForHttp4sUri
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.Uri.catsInstancesForHttp4sUri
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          18579
+        </td>
+        <td>
+          3633
+          -
+          3653
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.OrderOps.compare
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOrder[org.http4s.Uri](x.uri)(http4s.this.Uri.catsInstancesForHttp4sUri).compare(y.uri)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          20209
+        </td>
+        <td>
+          3647
+          -
+          3652
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RequestPrelude.uri
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          y.uri
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          15350
+        </td>
+        <td>
+          3742
+          -
+          3759
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.Show.fromToString
+        </td>
+        <td>
+          org.http4s.requestpreludesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Show.fromToString[org.http4s.RequestPrelude]
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          21795
+        </td>
+        <td>
+          3823
+          -
+          3867
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Order.toOrdering
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestPrelude.this.catsHashAndOrderForRequestPrelude.toOrdering
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

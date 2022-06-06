@@ -1,0 +1,1037 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/authentication/NonceF.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server.middleware.authentication
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Functor
+</span>20 <span style=''>import cats.effect.Async
+</span>21 <span style=''>import cats.effect.Ref
+</span>22 <span style=''>import cats.effect.std.Random
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>
+</span>25 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>26 <span style=''>
+</span>27 <span style=''>private[authentication] class NonceF[F[_]](
+</span>28 <span style=''>    val created: FiniteDuration,
+</span>29 <span style=''>    val nc: Ref[F, Int],
+</span>30 <span style=''>    val data: String,
+</span>31 <span style=''>)
+</span>32 <span style=''>
+</span>33 <span style=''>private[authentication] object NonceF {
+</span>34 <span style=''>  private[this] val hexAlphabet = </span><span style='background: #AEF1AE'>&quot;0123456789abcdef&quot;.toArray</span><span style=''>
+</span>35 <span style=''>
+</span>36 <span style=''>  private def bytesToHex(arr: Array[Byte]): String = {
+</span>37 <span style=''>    val sb = </span><span style='background: #AEF1AE'>new StringBuilder(arr.size * 2)</span><span style=''>
+</span>38 <span style=''>    </span><span style='background: #AEF1AE'>for (i &lt;- 0 until arr.size) {
+</span>39 <span style=''></span><span style='background: #AEF1AE'>      val b = arr(i) &amp; 0xff
+</span>40 <span style=''></span><span style='background: #AEF1AE'>      sb.append(hexAlphabet(b &gt;&gt;&gt; 4))
+</span>41 <span style=''></span><span style='background: #AEF1AE'>      sb.append(hexAlphabet(b &amp; 0x0f))
+</span>42 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>43 <span style=''>    </span><span style='background: #AEF1AE'>sb.toString</span><span style=''>
+</span>44 <span style=''>  }
+</span>45 <span style=''>
+</span>46 <span style=''>  private def getRandomBits[F[_]: Functor](random: Random[F], bits: Int): F[Array[Byte]] = {
+</span>47 <span style=''>    val bytes = </span><span style='background: #AEF1AE'>(bits + 7) / 8</span><span style=''>
+</span>48 <span style=''>    </span><span style='background: #AEF1AE'>random.nextBytes(bytes).map { arr =&gt;
+</span>49 <span style=''></span><span style='background: #AEF1AE'>      if (arr.nonEmpty) {
+</span>50 <span style=''></span><span style='background: #AEF1AE'>        val extraBits = 8 * bytes - bits
+</span>51 <span style=''></span><span style='background: #AEF1AE'>        arr(0) = (arr(0) &amp; ((1 &lt;&lt; (8 - extraBits)) - 1)).toByte
+</span>52 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>53 <span style=''></span><span style='background: #AEF1AE'>      arr
+</span>54 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>55 <span style=''>  }
+</span>56 <span style=''>
+</span>57 <span style=''>  def getRandomData[F[_]: Functor](random: Random[F], bits: Int): F[String] =
+</span>58 <span style=''>    </span><span style='background: #AEF1AE'>getRandomBits[F](random, bits).map(bytesToHex)</span><span style=''>
+</span>59 <span style=''>
+</span>60 <span style=''>  def gen[F[_]](random: Random[F], bits: Int)(implicit
+</span>61 <span style=''>      F: Async[F]
+</span>62 <span style=''>  ): F[NonceF[F]] = </span><span style='background: #AEF1AE'>for {
+</span>63 <span style=''></span><span style='background: #AEF1AE'>    nc &lt;- Ref[F].of(0)
+</span>64 <span style=''></span><span style='background: #AEF1AE'>    data &lt;- getRandomData[F](random, bits)
+</span>65 <span style=''></span><span style='background: #AEF1AE'>    created &lt;- F.monotonic
+</span>66 <span style=''></span><span style='background: #AEF1AE'>  } yield new NonceF(created, nc, data)</span><span style=''>
+</span>67 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          8871
+        </td>
+        <td>
+          1022
+          -
+          1040
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;0123456789abcdef&quot;
+        </td>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          7877
+        </td>
+        <td>
+          1022
+          -
+          1048
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.StringOps.toArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(&quot;0123456789abcdef&quot;).toArray[Char]((ClassTag.Char: scala.reflect.ClassTag[Char]))
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          7254
+        </td>
+        <td>
+          1136
+          -
+          1148
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.*
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.byteArrayOps(arr).size.*(2)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          9115
+        </td>
+        <td>
+          1118
+          -
+          1149
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new scala.`package`.StringBuilder(scala.Predef.byteArrayOps(arr).size.*(2))
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          7972
+        </td>
+        <td>
+          1164
+          -
+          1165
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          9763
+        </td>
+        <td>
+          1172
+          -
+          1180
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.ArrayOps.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.byteArrayOps(arr).size
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          8102
+        </td>
+        <td>
+          1154
+          -
+          1294
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.Range.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.intWrapper(0).until(scala.Predef.byteArrayOps(arr).size).foreach[StringBuilder](((i: Int) =&gt; {
+  val b: Int = arr.apply(i).&amp;(255);
+  sb.append(NonceF.this.hexAlphabet.apply(b.&gt;&gt;&gt;(4)));
+  sb.append(NonceF.this.hexAlphabet.apply(b.&amp;(15)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          8693
+        </td>
+        <td>
+          1198
+          -
+          1211
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Byte.&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          arr.apply(i).&amp;(255)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          10094
+        </td>
+        <td>
+          1228
+          -
+          1248
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          NonceF.this.hexAlphabet.apply(b.&gt;&gt;&gt;(4))
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          8186
+        </td>
+        <td>
+          1240
+          -
+          1247
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          b.&gt;&gt;&gt;(4)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          8876
+        </td>
+        <td>
+          1218
+          -
+          1249
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append(NonceF.this.hexAlphabet.apply(b.&gt;&gt;&gt;(4)))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          7751
+        </td>
+        <td>
+          1278
+          -
+          1286
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          b.&amp;(15)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          9626
+        </td>
+        <td>
+          1266
+          -
+          1287
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          NonceF.this.hexAlphabet.apply(b.&amp;(15))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          9123
+        </td>
+        <td>
+          1256
+          -
+          1288
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append(NonceF.this.hexAlphabet.apply(b.&amp;(15)))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          9765
+        </td>
+        <td>
+          1299
+          -
+          1310
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sb.toString()
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          8828
+        </td>
+        <td>
+          1425
+          -
+          1439
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int./
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bits.+(7)./(8)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          8838
+        </td>
+        <td>
+          1444
+          -
+          1635
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Array[Byte]](random.nextBytes(bytes))(evidence$1).map[Array[Byte]](((arr: Array[Byte]) =&gt; {
+  if (scala.Predef.byteArrayOps(arr).nonEmpty)
+    {
+      val extraBits: Int = 8.*(bytes).-(bits);
+      arr.update(0, arr.apply(0).&amp;(1.&lt;&lt;(8.-(extraBits)).-(1)).toByte)
+    }
+  else
+    ();
+  arr
+}))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          8137
+        </td>
+        <td>
+          1444
+          -
+          1467
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.Random.nextBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          random.nextBytes(bytes)
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          10072
+        </td>
+        <td>
+          1487
+          -
+          1487
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          9922
+        </td>
+        <td>
+          1491
+          -
+          1503
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.ArrayOps.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.byteArrayOps(arr).nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          8268
+        </td>
+        <td>
+          1487
+          -
+          1487
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          8797
+        </td>
+        <td>
+          1505
+          -
+          1619
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val extraBits: Int = 8.*(bytes).-(bits);
+  arr.update(0, arr.apply(0).&amp;(1.&lt;&lt;(8.-(extraBits)).-(1)).toByte)
+}
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          9017
+        </td>
+        <td>
+          1531
+          -
+          1547
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          8.*(bytes).-(bits)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9067
+        </td>
+        <td>
+          1576
+          -
+          1602
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          1.&lt;&lt;(8.-(extraBits)).-(1)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9733
+        </td>
+        <td>
+          1570
+          -
+          1571
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9769
+        </td>
+        <td>
+          1556
+          -
+          1611
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          arr.update(0, arr.apply(0).&amp;(1.&lt;&lt;(8.-(extraBits)).-(1)).toByte)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7869
+        </td>
+        <td>
+          1560
+          -
+          1561
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7926
+        </td>
+        <td>
+          1565
+          -
+          1611
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toByte
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          arr.apply(0).&amp;(1.&lt;&lt;(8.-(extraBits)).-(1)).toByte
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          9114
+        </td>
+        <td>
+          1723
+          -
+          1769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Array[Byte]](NonceF.this.getRandomBits[F](random, bits)(evidence$2))(evidence$2).map[String](((arr: Array[Byte]) =&gt; NonceF.this.bytesToHex(arr)))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          9709
+        </td>
+        <td>
+          1758
+          -
+          1768
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceF.bytesToHex
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          NonceF.this.bytesToHex(arr)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          7874
+        </td>
+        <td>
+          1723
+          -
+          1753
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceF.getRandomBits
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          NonceF.this.getRandomBits[F](random, bits)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          7825
+        </td>
+        <td>
+          1864
+          -
+          2002
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.kernel.Ref[F,Int]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[Int](0))(F).flatMap[org.http4s.server.middleware.authentication.NonceF[[_]F[_]]](((nc: cats.effect.kernel.Ref[F,Int]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, String](NonceF.this.getRandomData[F](random, bits)(F))(F).flatMap[org.http4s.server.middleware.authentication.NonceF[[_]F[_]]](((data: String) =&gt; cats.syntax.`package`.all.toFunctorOps[F, scala.concurrent.duration.FiniteDuration](F.monotonic)(F).map[org.http4s.server.middleware.authentication.NonceF[[_]F[_]]](((created: scala.concurrent.duration.FiniteDuration) =&gt; new org.http4s.server.middleware.authentication.NonceF[[_]F[_]](created, nc, data)))))))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          8069
+        </td>
+        <td>
+          1880
+          -
+          1892
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.ApplyBuilders.of
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[Int](0)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          8845
+        </td>
+        <td>
+          1897
+          -
+          2002
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, String](NonceF.this.getRandomData[F](random, bits)(F))(F).flatMap[org.http4s.server.middleware.authentication.NonceF[[_]F[_]]](((data: String) =&gt; cats.syntax.`package`.all.toFunctorOps[F, scala.concurrent.duration.FiniteDuration](F.monotonic)(F).map[org.http4s.server.middleware.authentication.NonceF[[_]F[_]]](((created: scala.concurrent.duration.FiniteDuration) =&gt; new org.http4s.server.middleware.authentication.NonceF[[_]F[_]](created, nc, data)))))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          9818
+        </td>
+        <td>
+          1905
+          -
+          1935
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceF.getRandomData
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          NonceF.this.getRandomData[F](random, bits)(F)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          8802
+        </td>
+        <td>
+          1951
+          -
+          1962
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.Clock.monotonic
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.monotonic
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          10021
+        </td>
+        <td>
+          1940
+          -
+          2002
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, scala.concurrent.duration.FiniteDuration](F.monotonic)(F).map[org.http4s.server.middleware.authentication.NonceF[[_]F[_]]](((created: scala.concurrent.duration.FiniteDuration) =&gt; new org.http4s.server.middleware.authentication.NonceF[[_]F[_]](created, nc, data)))
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          7710
+        </td>
+        <td>
+          1973
+          -
+          2002
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceF.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.middleware.authentication.NonceF[[_]F[_]](created, nc, data)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

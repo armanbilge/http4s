@@ -1,0 +1,3736 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/testkit/scaffold/RoutesToNettyAdapter.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.client.testkit.scaffold
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.effect.Ref
+</span>20 <span style=''>import cats.effect.implicits.genSpawnOps
+</span>21 <span style=''>import cats.effect.kernel.Async
+</span>22 <span style=''>import cats.effect.std.Dispatcher
+</span>23 <span style=''>import cats.effect.std.Queue
+</span>24 <span style=''>import cats.implicits._
+</span>25 <span style=''>import fs2.Chunk
+</span>26 <span style=''>import io.netty.buffer.Unpooled
+</span>27 <span style=''>import io.netty.channel.ChannelHandlerContext
+</span>28 <span style=''>import io.netty.channel.ChannelInboundHandler
+</span>29 <span style=''>import io.netty.handler.codec.http.HttpResponseStatus._
+</span>30 <span style=''>import io.netty.handler.codec.http._
+</span>31 <span style=''>import org.http4s
+</span>32 <span style=''>import org.http4s.Headers
+</span>33 <span style=''>import org.http4s.HttpRoutes
+</span>34 <span style=''>import org.http4s.Method
+</span>35 <span style=''>import org.http4s.Response
+</span>36 <span style=''>import org.http4s.headers.`Transfer-Encoding`
+</span>37 <span style=''>
+</span>38 <span style=''>import scala.annotation.nowarn
+</span>39 <span style=''>import scala.collection.JavaConverters._
+</span>40 <span style=''>
+</span>41 <span style=''>private[http4s] object RoutesToNettyAdapter {
+</span>42 <span style=''>  def apply[F[_]](routes: HttpRoutes[F], dispatcher: Dispatcher[F])(implicit
+</span>43 <span style=''>      F: Async[F]
+</span>44 <span style=''>  ): F[ChannelInboundHandler] =
+</span>45 <span style=''>    </span><span style='background: #AEF1AE'>RoutesToHandlerAdapter[F](routes, dispatcher).flatMap(HandlersToNettyAdapter[F](Map.empty, _))</span><span style=''>
+</span>46 <span style=''>}
+</span>47 <span style=''>
+</span>48 <span style=''>private[http4s] object RoutesToHandlerAdapter {
+</span>49 <span style=''>  def apply[F[_]](routes: HttpRoutes[F], dispatcher: Dispatcher[F])(implicit
+</span>50 <span style=''>      F: Async[F]
+</span>51 <span style=''>  ): F[RoutesToHandlerAdapter[F]] =
+</span>52 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>53 <span style=''></span><span style='background: #AEF1AE'>      initialDummyQueue &lt;- Queue.unbounded[F, Option[Chunk[Byte]]]
+</span>54 <span style=''></span><span style='background: #AEF1AE'>      requestBodyQueue &lt;- Ref[F].of(initialDummyQueue)
+</span>55 <span style=''></span><span style='background: #AEF1AE'>    } yield new RoutesToHandlerAdapter(routes, dispatcher, requestBodyQueue)</span><span style=''>
+</span>56 <span style=''>}
+</span>57 <span style=''>
+</span>58 <span style=''>private[http4s] class RoutesToHandlerAdapter[F[_]](
+</span>59 <span style=''>    routes: HttpRoutes[F],
+</span>60 <span style=''>    dispatcher: Dispatcher[F],
+</span>61 <span style=''>    requestBodyQueue: Ref[F, Queue[F, Option[Chunk[Byte]]]],
+</span>62 <span style=''>)(implicit F: Async[F])
+</span>63 <span style=''>    extends Handler {
+</span>64 <span style=''>
+</span>65 <span style=''>  override def onRequestStart(ctx: ChannelHandlerContext, request: HttpRequest): Unit =
+</span>66 <span style=''>    </span><span style='background: #AEF1AE'>dispatcher.unsafeRunSync(
+</span>67 <span style=''></span><span style='background: #AEF1AE'>      for {
+</span>68 <span style=''></span><span style='background: #AEF1AE'>        method &lt;- Method.fromString(request.method().name()).liftTo[F]
+</span>69 <span style=''></span><span style='background: #AEF1AE'>        uri &lt;- http4s.Uri.fromString(request.uri()).liftTo[F]
+</span>70 <span style=''></span><span style='background: #AEF1AE'>        headers = http4s.Headers(request.headers().names().asScala.toVector.flatMap { k =&gt;
+</span>71 <span style=''></span><span style='background: #AEF1AE'>          val vs = request.headers().getAll(k)
+</span>72 <span style=''></span><span style='background: #AEF1AE'>          vs.asScala.toVector.map(v =&gt; (k -&gt; v): http4s.Header.ToRaw)
+</span>73 <span style=''></span><span style='background: #AEF1AE'>        }): @nowarn(&quot;cat=deprecation&quot;)
+</span>74 <span style=''></span><span style='background: #AEF1AE'>        bodyQueue &lt;- Queue.unbounded[F, Option[Chunk[Byte]]]
+</span>75 <span style=''></span><span style='background: #AEF1AE'>        _ &lt;- requestBodyQueue.set(bodyQueue)
+</span>76 <span style=''></span><span style='background: #AEF1AE'>        body = fs2.Stream.fromQueueNoneTerminatedChunk(bodyQueue)
+</span>77 <span style=''></span><span style='background: #AEF1AE'>        http4sRequest = http4s.Request(method, uri, headers = headers, body = body)
+</span>78 <span style=''></span><span style='background: #AEF1AE'>        _ &lt;- processRequest(ctx, http4sRequest).start
+</span>79 <span style=''></span><span style='background: #AEF1AE'>      } yield ()
+</span>80 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>81 <span style=''>
+</span>82 <span style=''>  private def processRequest(
+</span>83 <span style=''>      ctx: ChannelHandlerContext,
+</span>84 <span style=''>      http4sRequest: http4s.Request[F],
+</span>85 <span style=''>  ): F[Unit] =
+</span>86 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>87 <span style=''></span><span style='background: #AEF1AE'>      response &lt;- routes.run(http4sRequest).value
+</span>88 <span style=''></span><span style='background: #AEF1AE'>      _ &lt;- response.fold(
+</span>89 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>F.delay(HandlerHelpers.sendResponse(ctx, NOT_FOUND)).liftToF</span><span style='background: #AEF1AE'>
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      )(response =&gt; sendResponse(ctx, response))
+</span>91 <span style=''></span><span style='background: #AEF1AE'>    } yield ()</span><span style=''>
+</span>92 <span style=''>
+</span>93 <span style=''>  private def sendResponse(ctx: ChannelHandlerContext, response: Response[F]): F[Unit] =
+</span>94 <span style=''>    </span><span style='background: #AEF1AE'>response.headers.get[`Transfer-Encoding`]</span><span style=''> match {
+</span>95 <span style=''>      case None =&gt; </span><span style='background: #AEF1AE'>sendStrictResponse(ctx, response)</span><span style=''>
+</span>96 <span style=''>      case Some(codings) if </span><span style='background: #AEF1AE'>codings.hasChunked</span><span style=''> =&gt; </span><span style='background: #AEF1AE'>sendChunkedResponse(ctx, response)</span><span style=''>
+</span>97 <span style=''>      case Some(_) =&gt; </span><span style='background: #F0ADAD'>F.delay(HandlerHelpers.sendResponse(ctx, BAD_REQUEST)).liftToF</span><span style=''>
+</span>98 <span style=''>    }
+</span>99 <span style=''>
+</span>100 <span style=''>  private def sendStrictResponse(ctx: ChannelHandlerContext, response: Response[F]): F[Unit] =
+</span>101 <span style=''>    </span><span style='background: #AEF1AE'>response.body.compile.to(Array).flatMap { bodyBytes =&gt;
+</span>102 <span style=''></span><span style='background: #AEF1AE'>      F.delay(
+</span>103 <span style=''></span><span style='background: #AEF1AE'>        HandlerHelpers.sendResponse(
+</span>104 <span style=''></span><span style='background: #AEF1AE'>          ctx,
+</span>105 <span style=''></span><span style='background: #AEF1AE'>          HttpResponseStatus.valueOf(response.status.code),
+</span>106 <span style=''></span><span style='background: #AEF1AE'>          Unpooled.copiedBuffer(bodyBytes),
+</span>107 <span style=''></span><span style='background: #AEF1AE'>          makeNettyHeaders(response.headers),
+</span>108 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>109 <span style=''></span><span style='background: #AEF1AE'>      ).liftToF
+</span>110 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>111 <span style=''>
+</span>112 <span style=''>  private def sendChunkedResponse(ctx: ChannelHandlerContext, response: Response[F]): F[Unit] =
+</span>113 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>114 <span style=''></span><span style='background: #AEF1AE'>      _ &lt;- F
+</span>115 <span style=''></span><span style='background: #AEF1AE'>        .delay(
+</span>116 <span style=''></span><span style='background: #AEF1AE'>          HandlerHelpers.sendChunkedResponseHead(
+</span>117 <span style=''></span><span style='background: #AEF1AE'>            ctx,
+</span>118 <span style=''></span><span style='background: #AEF1AE'>            HttpResponseStatus.valueOf(response.status.code),
+</span>119 <span style=''></span><span style='background: #AEF1AE'>            makeNettyHeaders(response.headers),
+</span>120 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>121 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>122 <span style=''></span><span style='background: #AEF1AE'>        .liftToF
+</span>123 <span style=''></span><span style='background: #AEF1AE'>      _ &lt;- response.body.chunks
+</span>124 <span style=''></span><span style='background: #AEF1AE'>        .evalMap(chunk =&gt;
+</span>125 <span style=''></span><span style='background: #AEF1AE'>          F.delay(HandlerHelpers.sendChunk(ctx, Unpooled.copiedBuffer(chunk.toArray))).liftToF
+</span>126 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>127 <span style=''></span><span style='background: #AEF1AE'>        .compile
+</span>128 <span style=''></span><span style='background: #AEF1AE'>        .drain
+</span>129 <span style=''></span><span style='background: #AEF1AE'>      _ &lt;- F.delay(HandlerHelpers.sendEmptyLastChunk(ctx)).liftToF
+</span>130 <span style=''></span><span style='background: #AEF1AE'>    } yield ()</span><span style=''>
+</span>131 <span style=''>
+</span>132 <span style=''>  private def makeNettyHeaders(http4sHeaders: Headers): DefaultHttpHeaders = {
+</span>133 <span style=''>    val nettyHeaders = </span><span style='background: #AEF1AE'>new DefaultHttpHeaders()</span><span style=''>
+</span>134 <span style=''>    </span><span style='background: #AEF1AE'>http4sHeaders.foreach { h =&gt;
+</span>135 <span style=''></span><span style='background: #AEF1AE'>      nettyHeaders.add(h.name.toString, h.value)
+</span>136 <span style=''></span><span style='background: #AEF1AE'>      ()
+</span>137 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>138 <span style=''>    nettyHeaders
+</span>139 <span style=''>  }
+</span>140 <span style=''>
+</span>141 <span style=''>  override def onContent(
+</span>142 <span style=''>      ctx: ChannelHandlerContext,
+</span>143 <span style=''>      request: HttpRequest,
+</span>144 <span style=''>      content: HttpContent,
+</span>145 <span style=''>  ): Unit = {
+</span>146 <span style=''>    val bytes = </span><span style='background: #AEF1AE'>new Array[Byte](content.content().readableBytes())</span><span style=''>
+</span>147 <span style=''>    </span><span style='background: #AEF1AE'>content.content().readBytes(bytes)</span><span style=''>
+</span>148 <span style=''>    </span><span style='background: #AEF1AE'>dispatcher.unsafeRunSync(requestBodyQueue.get.flatMap(_.offer(Some(Chunk.array(bytes)))))</span><span style=''>
+</span>149 <span style=''>  }
+</span>150 <span style=''>
+</span>151 <span style=''>  override def onRequestEnd(ctx: ChannelHandlerContext, request: HttpRequest): Unit =
+</span>152 <span style=''>    </span><span style='background: #AEF1AE'>dispatcher.unsafeRunSync(requestBodyQueue.get.flatMap(_.offer(None)))</span><span style=''>
+</span>153 <span style=''>
+</span>154 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          6193
+        </td>
+        <td>
+          1478
+          -
+          1523
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.apply[F](routes, dispatcher)(F)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          5804
+        </td>
+        <td>
+          1478
+          -
+          1572
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter[F]](RoutesToHandlerAdapter.apply[F](routes, dispatcher)(F))(F).flatMap[io.netty.channel.ChannelInboundHandler](((x$1: org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter[F]) =&gt; HandlersToNettyAdapter.apply[F](scala.Predef.Map.empty[(io.netty.handler.codec.http.HttpMethod, String), Nothing], x$1)(F)))
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          5939
+        </td>
+        <td>
+          1532
+          -
+          1571
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlersToNettyAdapter.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HandlersToNettyAdapter.apply[F](scala.Predef.Map.empty[(io.netty.handler.codec.http.HttpMethod, String), Nothing], x$1)(F)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6016
+        </td>
+        <td>
+          1759
+          -
+          1963
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](cats.effect.std.Queue.unbounded[F, Option[fs2.Chunk[Byte]]](F))(F).flatMap[org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter[[_]F[_]]](((initialDummyQueue: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; cats.implicits.toFunctorOps[F, cats.effect.kernel.Ref[F,cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](initialDummyQueue))(F).map[org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter[[_]F[_]]](((requestBodyQueue: cats.effect.kernel.Ref[F,cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]]) =&gt; new org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter[[_]F[_]](routes, dispatcher, requestBodyQueue)(F)))))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6244
+        </td>
+        <td>
+          1792
+          -
+          1831
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.Queue.unbounded
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.std.Queue.unbounded[F, Option[fs2.Chunk[Byte]]](F)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          5955
+        </td>
+        <td>
+          1858
+          -
+          1886
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.ApplyBuilders.of
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](initialDummyQueue)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          6152
+        </td>
+        <td>
+          1838
+          -
+          1963
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFunctorOps[F, cats.effect.kernel.Ref[F,cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](initialDummyQueue))(F).map[org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter[[_]F[_]]](((requestBodyQueue: cats.effect.kernel.Ref[F,cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]]) =&gt; new org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter[[_]F[_]](routes, dispatcher, requestBodyQueue)(F)))
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          5715
+        </td>
+        <td>
+          1899
+          -
+          1963
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter[[_]F[_]](routes, dispatcher, requestBodyQueue)(F)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          6232
+        </td>
+        <td>
+          2277
+          -
+          3027
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.DispatcherPlatform.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.dispatcher.unsafeRunSync[Unit](cats.implicits.toFlatMapOps[F, org.http4s.Method](cats.implicits.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Method](org.http4s.Method.fromString(request.method().name())).liftTo[F](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((method: org.http4s.Method) =&gt; cats.implicits.toFlatMapOps[F, org.http4s.Uri](cats.implicits.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Uri](org.http4s.Uri.fromString(request.uri())).liftTo[F](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((uri: org.http4s.Uri) =&gt; {
+  val headers: org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;) = (org.http4s.Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](scala.collection.JavaConverters.asScalaSetConverter[String](request.headers().names()).asScala.toVector.flatMap[org.http4s.Header.ToRaw](((k: String) =&gt; {
+    val vs: java.util.List[String] = request.headers().getAll(k);
+    scala.collection.JavaConverters.asScalaBufferConverter[String](vs).asScala.toVector.map[org.http4s.Header.ToRaw](((v: String) =&gt; (Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](k).-&gt;[String](v)): org.http4s.Header.ToRaw)))
+  })))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))): org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;));
+  cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](cats.effect.std.Queue.unbounded[F, Option[fs2.Chunk[Byte]]](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((bodyQueue: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; cats.implicits.toFlatMapOps[F, Unit](RoutesToHandlerAdapter.this.requestBodyQueue.set(bodyQueue))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$2: Unit) =&gt; {
+    val body: fs2.Stream[[_]F[_],Byte] = fs2.Stream.fromQueueNoneTerminatedChunk[[_]F[_], Byte](bodyQueue, fs2.Stream.fromQueueNoneTerminatedChunk$default$2[Nothing, Nothing]);
+    val http4sRequest: org.http4s.Request[[_]F[_]] = {
+      &lt;artifact&gt; val x$5: org.http4s.Method = method;
+      &lt;artifact&gt; val x$6: org.http4s.Uri = uri;
+      &lt;artifact&gt; val x$7: org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;) = headers;
+      &lt;artifact&gt; val x$8: fs2.Stream[[_]F[_],Byte] @scala.reflect.internal.annotations.uncheckedBounds = body;
+      &lt;artifact&gt; val x$9: org.http4s.HttpVersion = org.http4s.Request.apply$default$3[Nothing];
+      &lt;artifact&gt; val x$10: org.typelevel.vault.Vault = org.http4s.Request.apply$default$6[Nothing];
+      org.http4s.Request.apply[[_]F[_]](x$5, x$6, x$9, x$7, x$8, x$10)
+    };
+    cats.implicits.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](cats.effect.implicits.genSpawnOps[F, Unit, Throwable](RoutesToHandlerAdapter.this.processRequest(ctx, http4sRequest))(RoutesToHandlerAdapter.this.F).start(RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).map[Unit](((x$3: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; (x$3: cats.effect.kernel.Fiber[F,Throwable,Unit] @unchecked) match {
+      case _ =&gt; ()
+    }))
+  }))))
+})))))
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          5735
+        </td>
+        <td>
+          2351
+          -
+          2374
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpMethod.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          request.method().name()
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          6366
+        </td>
+        <td>
+          2309
+          -
+          3021
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, org.http4s.Method](cats.implicits.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Method](org.http4s.Method.fromString(request.method().name())).liftTo[F](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((method: org.http4s.Method) =&gt; cats.implicits.toFlatMapOps[F, org.http4s.Uri](cats.implicits.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Uri](org.http4s.Uri.fromString(request.uri())).liftTo[F](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((uri: org.http4s.Uri) =&gt; {
+  val headers: org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;) = (org.http4s.Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](scala.collection.JavaConverters.asScalaSetConverter[String](request.headers().names()).asScala.toVector.flatMap[org.http4s.Header.ToRaw](((k: String) =&gt; {
+    val vs: java.util.List[String] = request.headers().getAll(k);
+    scala.collection.JavaConverters.asScalaBufferConverter[String](vs).asScala.toVector.map[org.http4s.Header.ToRaw](((v: String) =&gt; (Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](k).-&gt;[String](v)): org.http4s.Header.ToRaw)))
+  })))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))): org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;));
+  cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](cats.effect.std.Queue.unbounded[F, Option[fs2.Chunk[Byte]]](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((bodyQueue: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; cats.implicits.toFlatMapOps[F, Unit](RoutesToHandlerAdapter.this.requestBodyQueue.set(bodyQueue))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$2: Unit) =&gt; {
+    val body: fs2.Stream[[_]F[_],Byte] = fs2.Stream.fromQueueNoneTerminatedChunk[[_]F[_], Byte](bodyQueue, fs2.Stream.fromQueueNoneTerminatedChunk$default$2[Nothing, Nothing]);
+    val http4sRequest: org.http4s.Request[[_]F[_]] = {
+      &lt;artifact&gt; val x$5: org.http4s.Method = method;
+      &lt;artifact&gt; val x$6: org.http4s.Uri = uri;
+      &lt;artifact&gt; val x$7: org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;) = headers;
+      &lt;artifact&gt; val x$8: fs2.Stream[[_]F[_],Byte] @scala.reflect.internal.annotations.uncheckedBounds = body;
+      &lt;artifact&gt; val x$9: org.http4s.HttpVersion = org.http4s.Request.apply$default$3[Nothing];
+      &lt;artifact&gt; val x$10: org.typelevel.vault.Vault = org.http4s.Request.apply$default$6[Nothing];
+      org.http4s.Request.apply[[_]F[_]](x$5, x$6, x$9, x$7, x$8, x$10)
+    };
+    cats.implicits.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](cats.effect.implicits.genSpawnOps[F, Unit, Throwable](RoutesToHandlerAdapter.this.processRequest(ctx, http4sRequest))(RoutesToHandlerAdapter.this.F).start(RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).map[Unit](((x$3: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; (x$3: cats.effect.kernel.Fiber[F,Throwable,Unit] @unchecked) match {
+      case _ =&gt; ()
+    }))
+  }))))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          6231
+        </td>
+        <td>
+          2382
+          -
+          2382
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          5917
+        </td>
+        <td>
+          2382
+          -
+          2382
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          5788
+        </td>
+        <td>
+          2333
+          -
+          2385
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.EitherOps.liftTo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Method](org.http4s.Method.fromString(request.method().name())).liftTo[F](RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          6195
+        </td>
+        <td>
+          2333
+          -
+          2375
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Method.fromString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Method.fromString(request.method().name())
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          6142
+        </td>
+        <td>
+          2444
+          -
+          2444
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          5732
+        </td>
+        <td>
+          2444
+          -
+          2444
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          6004
+        </td>
+        <td>
+          2401
+          -
+          2447
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.EitherOps.liftTo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Uri](org.http4s.Uri.fromString(request.uri())).liftTo[F](RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          5717
+        </td>
+        <td>
+          2401
+          -
+          2437
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.fromString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.fromString(request.uri())
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          5931
+        </td>
+        <td>
+          2394
+          -
+          3021
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, org.http4s.Uri](cats.implicits.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.Uri](org.http4s.Uri.fromString(request.uri())).liftTo[F](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((uri: org.http4s.Uri) =&gt; {
+  val headers: org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;) = (org.http4s.Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](scala.collection.JavaConverters.asScalaSetConverter[String](request.headers().names()).asScala.toVector.flatMap[org.http4s.Header.ToRaw](((k: String) =&gt; {
+    val vs: java.util.List[String] = request.headers().getAll(k);
+    scala.collection.JavaConverters.asScalaBufferConverter[String](vs).asScala.toVector.map[org.http4s.Header.ToRaw](((v: String) =&gt; (Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](k).-&gt;[String](v)): org.http4s.Header.ToRaw)))
+  })))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))): org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;));
+  cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](cats.effect.std.Queue.unbounded[F, Option[fs2.Chunk[Byte]]](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((bodyQueue: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; cats.implicits.toFlatMapOps[F, Unit](RoutesToHandlerAdapter.this.requestBodyQueue.set(bodyQueue))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$2: Unit) =&gt; {
+    val body: fs2.Stream[[_]F[_],Byte] = fs2.Stream.fromQueueNoneTerminatedChunk[[_]F[_], Byte](bodyQueue, fs2.Stream.fromQueueNoneTerminatedChunk$default$2[Nothing, Nothing]);
+    val http4sRequest: org.http4s.Request[[_]F[_]] = {
+      &lt;artifact&gt; val x$5: org.http4s.Method = method;
+      &lt;artifact&gt; val x$6: org.http4s.Uri = uri;
+      &lt;artifact&gt; val x$7: org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;) = headers;
+      &lt;artifact&gt; val x$8: fs2.Stream[[_]F[_],Byte] @scala.reflect.internal.annotations.uncheckedBounds = body;
+      &lt;artifact&gt; val x$9: org.http4s.HttpVersion = org.http4s.Request.apply$default$3[Nothing];
+      &lt;artifact&gt; val x$10: org.typelevel.vault.Vault = org.http4s.Request.apply$default$6[Nothing];
+      org.http4s.Request.apply[[_]F[_]](x$5, x$6, x$9, x$7, x$8, x$10)
+    };
+    cats.implicits.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](cats.effect.implicits.genSpawnOps[F, Unit, Throwable](RoutesToHandlerAdapter.this.processRequest(ctx, http4sRequest))(RoutesToHandlerAdapter.this.F).start(RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).map[Unit](((x$3: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; (x$3: cats.effect.kernel.Fiber[F,Throwable,Unit] @unchecked) match {
+      case _ =&gt; ()
+    }))
+  }))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          5957
+        </td>
+        <td>
+          2423
+          -
+          2436
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpRequest.uri
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          request.uri()
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6184
+        </td>
+        <td>
+          2481
+          -
+          2506
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpHeaders.names
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          request.headers().names()
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          5759
+        </td>
+        <td>
+          2466
+          -
+          2666
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](scala.collection.JavaConverters.asScalaSetConverter[String](request.headers().names()).asScala.toVector.flatMap[org.http4s.Header.ToRaw](((k: String) =&gt; {
+  val vs: java.util.List[String] = request.headers().getAll(k);
+  scala.collection.JavaConverters.asScalaBufferConverter[String](vs).asScala.toVector.map[org.http4s.Header.ToRaw](((v: String) =&gt; (Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](k).-&gt;[String](v)): org.http4s.Header.ToRaw)))
+})))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          5683
+        </td>
+        <td>
+          2481
+          -
+          2665
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.JavaConverters.asScalaSetConverter[String](request.headers().names()).asScala.toVector.flatMap[org.http4s.Header.ToRaw](((k: String) =&gt; {
+  val vs: java.util.List[String] = request.headers().getAll(k);
+  scala.collection.JavaConverters.asScalaBufferConverter[String](vs).asScala.toVector.map[org.http4s.Header.ToRaw](((v: String) =&gt; (Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](k).-&gt;[String](v)): org.http4s.Header.ToRaw)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6146
+        </td>
+        <td>
+          2532
+          -
+          2532
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          5993
+        </td>
+        <td>
+          2481
+          -
+          2665
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](scala.collection.JavaConverters.asScalaSetConverter[String](request.headers().names()).asScala.toVector.flatMap[org.http4s.Header.ToRaw](((k: String) =&gt; {
+  val vs: java.util.List[String] = request.headers().getAll(k);
+  scala.collection.JavaConverters.asScalaBufferConverter[String](vs).asScala.toVector.map[org.http4s.Header.ToRaw](((v: String) =&gt; (Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](k).-&gt;[String](v)): org.http4s.Header.ToRaw)))
+})))(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          5920
+        </td>
+        <td>
+          2558
+          -
+          2585
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpHeaders.getAll
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          request.headers().getAll(k)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          6241
+        </td>
+        <td>
+          2626
+          -
+          2632
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.keyValuesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](k).-&gt;[String](v))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          5773
+        </td>
+        <td>
+          2626
+          -
+          2632
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](k).-&gt;[String](v)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          5958
+        </td>
+        <td>
+          2596
+          -
+          2655
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.JavaConverters.asScalaBufferConverter[String](vs).asScala.toVector.map[org.http4s.Header.ToRaw](((v: String) =&gt; (Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](k).-&gt;[String](v)): org.http4s.Header.ToRaw)))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          6183
+        </td>
+        <td>
+          2703
+          -
+          3021
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](cats.effect.std.Queue.unbounded[F, Option[fs2.Chunk[Byte]]](RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((bodyQueue: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; cats.implicits.toFlatMapOps[F, Unit](RoutesToHandlerAdapter.this.requestBodyQueue.set(bodyQueue))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$2: Unit) =&gt; {
+  val body: fs2.Stream[[_]F[_],Byte] = fs2.Stream.fromQueueNoneTerminatedChunk[[_]F[_], Byte](bodyQueue, fs2.Stream.fromQueueNoneTerminatedChunk$default$2[Nothing, Nothing]);
+  val http4sRequest: org.http4s.Request[[_]F[_]] = {
+    &lt;artifact&gt; val x$5: org.http4s.Method = method;
+    &lt;artifact&gt; val x$6: org.http4s.Uri = uri;
+    &lt;artifact&gt; val x$7: org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;) = headers;
+    &lt;artifact&gt; val x$8: fs2.Stream[[_]F[_],Byte] @scala.reflect.internal.annotations.uncheckedBounds = body;
+    &lt;artifact&gt; val x$9: org.http4s.HttpVersion = org.http4s.Request.apply$default$3[Nothing];
+    &lt;artifact&gt; val x$10: org.typelevel.vault.Vault = org.http4s.Request.apply$default$6[Nothing];
+    org.http4s.Request.apply[[_]F[_]](x$5, x$6, x$9, x$7, x$8, x$10)
+  };
+  cats.implicits.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](cats.effect.implicits.genSpawnOps[F, Unit, Throwable](RoutesToHandlerAdapter.this.processRequest(ctx, http4sRequest))(RoutesToHandlerAdapter.this.F).start(RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).map[Unit](((x$3: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; (x$3: cats.effect.kernel.Fiber[F,Throwable,Unit] @unchecked) match {
+    case _ =&gt; ()
+  }))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          6186
+        </td>
+        <td>
+          2731
+          -
+          2731
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          6359
+        </td>
+        <td>
+          2731
+          -
+          2731
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          5907
+        </td>
+        <td>
+          2716
+          -
+          2755
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.Queue.unbounded
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.std.Queue.unbounded[F, Option[fs2.Chunk[Byte]]](RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          5746
+        </td>
+        <td>
+          2764
+          -
+          3021
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, Unit](RoutesToHandlerAdapter.this.requestBodyQueue.set(bodyQueue))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$2: Unit) =&gt; {
+  val body: fs2.Stream[[_]F[_],Byte] = fs2.Stream.fromQueueNoneTerminatedChunk[[_]F[_], Byte](bodyQueue, fs2.Stream.fromQueueNoneTerminatedChunk$default$2[Nothing, Nothing]);
+  val http4sRequest: org.http4s.Request[[_]F[_]] = {
+    &lt;artifact&gt; val x$5: org.http4s.Method = method;
+    &lt;artifact&gt; val x$6: org.http4s.Uri = uri;
+    &lt;artifact&gt; val x$7: org.http4s.Headers @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;) = headers;
+    &lt;artifact&gt; val x$8: fs2.Stream[[_]F[_],Byte] @scala.reflect.internal.annotations.uncheckedBounds = body;
+    &lt;artifact&gt; val x$9: org.http4s.HttpVersion = org.http4s.Request.apply$default$3[Nothing];
+    &lt;artifact&gt; val x$10: org.typelevel.vault.Vault = org.http4s.Request.apply$default$6[Nothing];
+    org.http4s.Request.apply[[_]F[_]](x$5, x$6, x$9, x$7, x$8, x$10)
+  };
+  cats.implicits.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](cats.effect.implicits.genSpawnOps[F, Unit, Throwable](RoutesToHandlerAdapter.this.processRequest(ctx, http4sRequest))(RoutesToHandlerAdapter.this.F).start(RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).map[Unit](((x$3: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; (x$3: cats.effect.kernel.Fiber[F,Throwable,Unit] @unchecked) match {
+    case _ =&gt; ()
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          5982
+        </td>
+        <td>
+          2789
+          -
+          2789
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          6226
+        </td>
+        <td>
+          2769
+          -
+          2800
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.RefSink.set
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.requestBodyQueue.set(bodyQueue)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          6128
+        </td>
+        <td>
+          2816
+          -
+          2866
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.fromQueueNoneTerminatedChunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.fromQueueNoneTerminatedChunk[[_]F[_], Byte](bodyQueue, fs2.Stream.fromQueueNoneTerminatedChunk$default$2[Nothing, Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          5685
+        </td>
+        <td>
+          2827
+          -
+          2827
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.Stream.fromQueueNoneTerminatedChunk$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.fromQueueNoneTerminatedChunk$default$2[Nothing, Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          6180
+        </td>
+        <td>
+          2891
+          -
+          2950
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Request.apply[[_]F[_]](x$5, x$6, x$9, x$7, x$8, x$10)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          5761
+        </td>
+        <td>
+          2898
+          -
+          2898
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Request.apply$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Request.apply$default$6[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          6014
+        </td>
+        <td>
+          2898
+          -
+          2898
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Request.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Request.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          5909
+        </td>
+        <td>
+          2964
+          -
+          2998
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.processRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.processRequest(ctx, http4sRequest)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          6348
+        </td>
+        <td>
+          2978
+          -
+          2978
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          5983
+        </td>
+        <td>
+          2964
+          -
+          3004
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.syntax.GenSpawnOps.start
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.implicits.genSpawnOps[F, Unit, Throwable](RoutesToHandlerAdapter.this.processRequest(ctx, http4sRequest))(RoutesToHandlerAdapter.this.F).start(RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          6230
+        </td>
+        <td>
+          2999
+          -
+          2999
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          6017
+        </td>
+        <td>
+          2959
+          -
+          3021
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](cats.effect.implicits.genSpawnOps[F, Unit, Throwable](RoutesToHandlerAdapter.this.processRequest(ctx, http4sRequest))(RoutesToHandlerAdapter.this.F).start(RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).map[Unit](((x$3: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; (x$3: cats.effect.kernel.Fiber[F,Throwable,Unit] @unchecked) match {
+  case _ =&gt; ()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          5706
+        </td>
+        <td>
+          2999
+          -
+          2999
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          6132
+        </td>
+        <td>
+          3019
+          -
+          3021
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          5947
+        </td>
+        <td>
+          3176
+          -
+          3207
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.OptionT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.routes.run.apply(http4sRequest).value
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          5709
+        </td>
+        <td>
+          3202
+          -
+          3202
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          5876
+        </td>
+        <td>
+          3152
+          -
+          3366
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, Option[org.http4s.Response[F]]](RoutesToHandlerAdapter.this.routes.run.apply(http4sRequest).value)(RoutesToHandlerAdapter.this.F).flatMap[Unit](((response: Option[org.http4s.Response[F]]) =&gt; response.fold[F[Unit]](scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND, HandlerHelpers.sendResponse$default$3, HandlerHelpers.sendResponse$default$4, HandlerHelpers.sendResponse$default$5))).liftToF(RoutesToHandlerAdapter.this.F))(((response: org.http4s.Response[F]) =&gt; RoutesToHandlerAdapter.this.sendResponse(ctx, response)))))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          6126
+        </td>
+        <td>
+          3214
+          -
+          3366
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.fold[F[Unit]](scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND, HandlerHelpers.sendResponse$default$3, HandlerHelpers.sendResponse$default$4, HandlerHelpers.sendResponse$default$5))).liftToF(RoutesToHandlerAdapter.this.F))(((response: org.http4s.Response[F]) =&gt; RoutesToHandlerAdapter.this.sendResponse(ctx, response)))
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          5933
+        </td>
+        <td>
+          3250
+          -
+          3293
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND, HandlerHelpers.sendResponse$default$3, HandlerHelpers.sendResponse$default$4, HandlerHelpers.sendResponse$default$5)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6154
+        </td>
+        <td>
+          3283
+          -
+          3292
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          5747
+        </td>
+        <td>
+          3265
+          -
+          3265
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HandlerHelpers.sendResponse$default$4
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          5950
+        </td>
+        <td>
+          3242
+          -
+          3302
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyFutureSyntax.liftToF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND, HandlerHelpers.sendResponse$default$3, HandlerHelpers.sendResponse$default$4, HandlerHelpers.sendResponse$default$5))).liftToF(RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6174
+        </td>
+        <td>
+          3265
+          -
+          3265
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HandlerHelpers.sendResponse$default$5
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6221
+        </td>
+        <td>
+          3295
+          -
+          3295
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          5886
+        </td>
+        <td>
+          3265
+          -
+          3265
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HandlerHelpers.sendResponse$default$3
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6358
+        </td>
+        <td>
+          3242
+          -
+          3294
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.NOT_FOUND, HandlerHelpers.sendResponse$default$3, HandlerHelpers.sendResponse$default$4, HandlerHelpers.sendResponse$default$5))
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          5696
+        </td>
+        <td>
+          3323
+          -
+          3350
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.sendResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.sendResponse(ctx, response)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          5738
+        </td>
+        <td>
+          3481
+          -
+          3481
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerSemigroupInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerSemigroupInstance
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          5935
+        </td>
+        <td>
+          3481
+          -
+          3481
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.recurringHeadersWithMerge
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          6176
+        </td>
+        <td>
+          3481
+          -
+          3481
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          6347
+        </td>
+        <td>
+          3461
+          -
+          3502
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.headers.get[org.http4s.headers.Transfer-Encoding](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          6089
+        </td>
+        <td>
+          3530
+          -
+          3563
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.sendStrictResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.sendStrictResponse(ctx, response)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          5699
+        </td>
+        <td>
+          3614
+          -
+          3648
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.sendChunkedResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.sendChunkedResponse(ctx, response)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          5946
+        </td>
+        <td>
+          3592
+          -
+          3610
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.hasChunked
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          codings.hasChunked
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          6166
+        </td>
+        <td>
+          3694
+          -
+          3694
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HandlerHelpers.sendResponse$default$5
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          5867
+        </td>
+        <td>
+          3694
+          -
+          3694
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HandlerHelpers.sendResponse$default$3
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          5744
+        </td>
+        <td>
+          3694
+          -
+          3694
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HandlerHelpers.sendResponse$default$4
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          5974
+        </td>
+        <td>
+          3671
+          -
+          3733
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyFutureSyntax.liftToF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST, HandlerHelpers.sendResponse$default$3, HandlerHelpers.sendResponse$default$4, HandlerHelpers.sendResponse$default$5))).liftToF(RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          6350
+        </td>
+        <td>
+          3671
+          -
+          3725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST, HandlerHelpers.sendResponse$default$3, HandlerHelpers.sendResponse$default$4, HandlerHelpers.sendResponse$default$5))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          6084
+        </td>
+        <td>
+          3726
+          -
+          3726
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          5940
+        </td>
+        <td>
+          3679
+          -
+          3724
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST, HandlerHelpers.sendResponse$default$3, HandlerHelpers.sendResponse$default$4, HandlerHelpers.sendResponse$default$5)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          6131
+        </td>
+        <td>
+          3712
+          -
+          3723
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.netty.handler.codec.http.HttpResponseStatus.BAD_REQUEST
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5960
+        </td>
+        <td>
+          3840
+          -
+          4143
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, Array[Byte]](response.body.compile[[x]F[x], [x]F[x], Byte](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F))).to(fs2.this.Collector.supportsArray[Byte](scala.Array)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((bodyBytes: Array[Byte]) =&gt; scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code), io.netty.buffer.Unpooled.copiedBuffer(bodyBytes), RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers), HandlerHelpers.sendResponse$default$5))).liftToF(RoutesToHandlerAdapter.this.F)))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5870
+        </td>
+        <td>
+          3854
+          -
+          3854
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          6160
+        </td>
+        <td>
+          3854
+          -
+          3854
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5941
+        </td>
+        <td>
+          3840
+          -
+          3871
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.CompileOps.to
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.body.compile[[x]F[x], [x]F[x], Byte](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F))).to(fs2.this.Collector.supportsArray[Byte](scala.Array)((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          6197
+        </td>
+        <td>
+          3865
+          -
+          3870
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Collector.supportsArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Collector.supportsArray[Byte](scala.Array)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          6373
+        </td>
+        <td>
+          3864
+          -
+          3864
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5700
+        </td>
+        <td>
+          3854
+          -
+          3854
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5736
+        </td>
+        <td>
+          3865
+          -
+          3870
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Array
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Array
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          5924
+        </td>
+        <td>
+          3901
+          -
+          4129
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code), io.netty.buffer.Unpooled.copiedBuffer(bodyBytes), RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers), HandlerHelpers.sendResponse$default$5))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6327
+        </td>
+        <td>
+          3933
+          -
+          3933
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HandlerHelpers.sendResponse$default$5
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6198
+        </td>
+        <td>
+          3918
+          -
+          4121
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code), io.netty.buffer.Unpooled.copiedBuffer(bodyBytes), RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers), HandlerHelpers.sendResponse$default$5)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          5959
+        </td>
+        <td>
+          3972
+          -
+          4020
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpResponseStatus.valueOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          6105
+        </td>
+        <td>
+          3999
+          -
+          4019
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.code
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.status.code
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          5694
+        </td>
+        <td>
+          4032
+          -
+          4064
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.buffer.Unpooled.copiedBuffer
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.netty.buffer.Unpooled.copiedBuffer(bodyBytes)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          5899
+        </td>
+        <td>
+          4076
+          -
+          4110
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.makeNettyHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          6162
+        </td>
+        <td>
+          4093
+          -
+          4109
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.headers
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          6096
+        </td>
+        <td>
+          3901
+          -
+          4137
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyFutureSyntax.liftToF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendResponse(ctx, io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code), io.netty.buffer.Unpooled.copiedBuffer(bodyBytes), RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers), HandlerHelpers.sendResponse$default$5))).liftToF(RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          6376
+        </td>
+        <td>
+          4130
+          -
+          4130
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          6119
+        </td>
+        <td>
+          4245
+          -
+          4772
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, Unit](scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendChunkedResponseHead(ctx, io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code), RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers)))).liftToF(RoutesToHandlerAdapter.this.F))(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$9: Unit) =&gt; (x$9: Unit @unchecked) match {
+  case _ =&gt; cats.implicits.toFlatMapOps[F, Unit](response.body.chunks.evalMap[[x]F[x], Unit](((chunk: fs2.Chunk[Byte]) =&gt; scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendChunk(ctx, io.netty.buffer.Unpooled.copiedBuffer(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))))).liftToF(RoutesToHandlerAdapter.this.F))).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F))).drain)(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$8: Unit) =&gt; (x$8: Unit @unchecked) match {
+    case _ =&gt; scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendEmptyLastChunk(ctx))).liftToF(RoutesToHandlerAdapter.this.F)
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          5926
+        </td>
+        <td>
+          4262
+          -
+          4478
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendChunkedResponseHead(ctx, io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code), RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers)))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          6167
+        </td>
+        <td>
+          4290
+          -
+          4468
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendChunkedResponseHead
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HandlerHelpers.sendChunkedResponseHead(ctx, io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code), RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers))
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          6148
+        </td>
+        <td>
+          4359
+          -
+          4407
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpResponseStatus.valueOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          5698
+        </td>
+        <td>
+          4386
+          -
+          4406
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.code
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.status.code
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          5879
+        </td>
+        <td>
+          4438
+          -
+          4454
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.headers
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          6329
+        </td>
+        <td>
+          4421
+          -
+          4455
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.makeNettyHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          6097
+        </td>
+        <td>
+          4262
+          -
+          4495
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyFutureSyntax.liftToF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendChunkedResponseHead(ctx, io.netty.handler.codec.http.HttpResponseStatus.valueOf(response.status.code), RoutesToHandlerAdapter.this.makeNettyHeaders(response.headers)))).liftToF(RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          5961
+        </td>
+        <td>
+          4488
+          -
+          4488
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          6361
+        </td>
+        <td>
+          4488
+          -
+          4488
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          6377
+        </td>
+        <td>
+          4502
+          -
+          4772
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, Unit](response.body.chunks.evalMap[[x]F[x], Unit](((chunk: fs2.Chunk[Byte]) =&gt; scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendChunk(ctx, io.netty.buffer.Unpooled.copiedBuffer(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))))).liftToF(RoutesToHandlerAdapter.this.F))).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F))).drain)(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$8: Unit) =&gt; (x$8: Unit @unchecked) match {
+  case _ =&gt; scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendEmptyLastChunk(ctx))).liftToF(RoutesToHandlerAdapter.this.F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          5911
+        </td>
+        <td>
+          4564
+          -
+          4648
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyFutureSyntax.liftToF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendChunk(ctx, io.netty.buffer.Unpooled.copiedBuffer(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))))).liftToF(RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          5687
+        </td>
+        <td>
+          4624
+          -
+          4637
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.toArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          6150
+        </td>
+        <td>
+          4602
+          -
+          4638
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.buffer.Unpooled.copiedBuffer
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.netty.buffer.Unpooled.copiedBuffer(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          6168
+        </td>
+        <td>
+          4641
+          -
+          4641
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          5895
+        </td>
+        <td>
+          4572
+          -
+          4639
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendChunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HandlerHelpers.sendChunk(ctx, io.netty.buffer.Unpooled.copiedBuffer(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          6316
+        </td>
+        <td>
+          4564
+          -
+          4640
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendChunk(ctx, io.netty.buffer.Unpooled.copiedBuffer(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))))
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          6085
+        </td>
+        <td>
+          4668
+          -
+          4668
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          6374
+        </td>
+        <td>
+          4668
+          -
+          4668
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          5841
+        </td>
+        <td>
+          4668
+          -
+          4668
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F))
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          6136
+        </td>
+        <td>
+          4685
+          -
+          4685
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          5689
+        </td>
+        <td>
+          4507
+          -
+          4690
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.CompileOps.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.body.chunks.evalMap[[x]F[x], Unit](((chunk: fs2.Chunk[Byte]) =&gt; scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendChunk(ctx, io.netty.buffer.Unpooled.copiedBuffer(chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))))).liftToF(RoutesToHandlerAdapter.this.F))).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](RoutesToHandlerAdapter.this.F))).drain
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          6205
+        </td>
+        <td>
+          4750
+          -
+          4750
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          6300
+        </td>
+        <td>
+          4702
+          -
+          4749
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendEmptyLastChunk(ctx))
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          5914
+        </td>
+        <td>
+          4697
+          -
+          4772
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyFutureSyntax.liftToF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](RoutesToHandlerAdapter.this.F.delay[io.netty.channel.ChannelFuture](HandlerHelpers.sendEmptyLastChunk(ctx))).liftToF(RoutesToHandlerAdapter.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          5898
+        </td>
+        <td>
+          4710
+          -
+          4748
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.HandlerHelpers.sendEmptyLastChunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HandlerHelpers.sendEmptyLastChunk(ctx)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          5852
+        </td>
+        <td>
+          4876
+          -
+          4900
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.DefaultHttpHeaders.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new io.netty.handler.codec.http.DefaultHttpHeaders()
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          6074
+        </td>
+        <td>
+          4905
+          -
+          4997
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http4sHeaders.foreach(((h: org.http4s.Header.Raw) =&gt; {
+  nettyHeaders.add(h.name.toString, h.value);
+  ()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          6156
+        </td>
+        <td>
+          4974
+          -
+          4981
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h.value
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          5722
+        </td>
+        <td>
+          4957
+          -
+          4972
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h.name.toString
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          5901
+        </td>
+        <td>
+          4940
+          -
+          4982
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.DefaultHttpHeaders.add
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nettyHeaders.add(h.name.toString, h.value)
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          6341
+        </td>
+        <td>
+          4989
+          -
+          4991
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          5942
+        </td>
+        <td>
+          5182
+          -
+          5215
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.buffer.ByteBuf.readableBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          content.content().readableBytes()
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          6369
+        </td>
+        <td>
+          5166
+          -
+          5216
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new Array[Byte](content.content().readableBytes())
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          6122
+        </td>
+        <td>
+          5221
+          -
+          5255
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.buffer.ByteBuf.readBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          content.content().readBytes(bytes)
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          6157
+        </td>
+        <td>
+          5327
+          -
+          5345
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.array[Byte](bytes)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          5711
+        </td>
+        <td>
+          5302
+          -
+          5302
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          5839
+        </td>
+        <td>
+          5285
+          -
+          5305
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.RefSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.requestBodyQueue.get
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          6317
+        </td>
+        <td>
+          5314
+          -
+          5347
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.QueueSink.offer
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$10.offer(scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](bytes)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))))
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          5889
+        </td>
+        <td>
+          5322
+          -
+          5346
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](bytes)((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          6059
+        </td>
+        <td>
+          5285
+          -
+          5348
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](RoutesToHandlerAdapter.this.requestBodyQueue.get)(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$10: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; x$10.offer(scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](bytes)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))))))
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          5912
+        </td>
+        <td>
+          5260
+          -
+          5349
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.DispatcherPlatform.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.dispatcher.unsafeRunSync[Unit](cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](RoutesToHandlerAdapter.this.requestBodyQueue.get)(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$10: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; x$10.offer(scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](bytes)((ClassTag.Byte: scala.reflect.ClassTag[Byte])))))))
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          6111
+        </td>
+        <td>
+          5487
+          -
+          5487
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.RoutesToHandlerAdapter.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.F
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          5842
+        </td>
+        <td>
+          5507
+          -
+          5511
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          6135
+        </td>
+        <td>
+          5470
+          -
+          5513
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](RoutesToHandlerAdapter.this.requestBodyQueue.get)(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$11: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; x$11.offer(scala.None)))
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          5701
+        </td>
+        <td>
+          5499
+          -
+          5512
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.QueueSink.offer
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$11.offer(scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          5877
+        </td>
+        <td>
+          5445
+          -
+          5514
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.DispatcherPlatform.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.dispatcher.unsafeRunSync[Unit](cats.implicits.toFlatMapOps[F, cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]](RoutesToHandlerAdapter.this.requestBodyQueue.get)(RoutesToHandlerAdapter.this.F).flatMap[Unit](((x$11: cats.effect.std.Queue[F,Option[fs2.Chunk[Byte]]]) =&gt; x$11.offer(scala.None))))
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          6370
+        </td>
+        <td>
+          5470
+          -
+          5490
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.RefSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RoutesToHandlerAdapter.this.requestBodyQueue.get
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,1357 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/RequestLogger.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.arrow.FunctionK
+</span>22 <span style=''>import cats.data.Kleisli
+</span>23 <span style=''>import cats.data.OptionT
+</span>24 <span style=''>import cats.effect.implicits._
+</span>25 <span style=''>import cats.effect.kernel.Async
+</span>26 <span style=''>import cats.effect.kernel.MonadCancelThrow
+</span>27 <span style=''>import cats.effect.kernel.Outcome
+</span>28 <span style=''>import cats.effect.kernel.Sync
+</span>29 <span style=''>import cats.syntax.all._
+</span>30 <span style=''>import cats.~&gt;
+</span>31 <span style=''>import fs2.Chunk
+</span>32 <span style=''>import fs2.Pipe
+</span>33 <span style=''>import fs2.Stream
+</span>34 <span style=''>import org.log4s.getLogger
+</span>35 <span style=''>import org.typelevel.ci.CIString
+</span>36 <span style=''>
+</span>37 <span style=''>/** Simple Middleware for Logging Requests As They Are Processed
+</span>38 <span style=''>  */
+</span>39 <span style=''>object RequestLogger {
+</span>40 <span style=''>  private[this] val logger = getLogger
+</span>41 <span style=''>
+</span>42 <span style=''>  def apply[G[_], F[_]](
+</span>43 <span style=''>      logHeaders: Boolean,
+</span>44 <span style=''>      logBody: Boolean,
+</span>45 <span style=''>      fk: F ~&gt; G,
+</span>46 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>47 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>48 <span style=''>  )(http: Http[G, F])(implicit
+</span>49 <span style=''>      F: Async[F],
+</span>50 <span style=''>      G: MonadCancelThrow[G],
+</span>51 <span style=''>  ): Http[G, F] =
+</span>52 <span style=''>    </span><span style='background: #AEF1AE'>impl[G, F](logHeaders, Left(logBody), fk, redactHeadersWhen, logAction)(http)</span><span style=''>
+</span>53 <span style=''>
+</span>54 <span style=''>  private[server] def impl[G[_], F[_]](
+</span>55 <span style=''>      logHeaders: Boolean,
+</span>56 <span style=''>      logBodyText: Either[Boolean, Stream[F, Byte] =&gt; Option[F[String]]],
+</span>57 <span style=''>      fk: F ~&gt; G,
+</span>58 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean,
+</span>59 <span style=''>      logAction: Option[String =&gt; F[Unit]],
+</span>60 <span style=''>  )(http: Http[G, F])(implicit
+</span>61 <span style=''>      F: Async[F],
+</span>62 <span style=''>      G: MonadCancelThrow[G],
+</span>63 <span style=''>  ): Http[G, F] = {
+</span>64 <span style=''>    val log = </span><span style='background: #AEF1AE'>logAction.fold { (s: String) =&gt;
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      Sync[F].delay(logger.info(s))
+</span>66 <span style=''></span><span style='background: #AEF1AE'>    }(identity)</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>    def logMessage(r: Request[F]): F[Unit] =
+</span>69 <span style=''>      logBodyText match {
+</span>70 <span style=''>        case Left(bool) =&gt;
+</span>71 <span style=''>          </span><span style='background: #AEF1AE'>Logger.logMessage[F, Request[F]](r)(logHeaders, bool, redactHeadersWhen)(log(_))</span><span style=''>
+</span>72 <span style=''>        case Right(f) =&gt;
+</span>73 <span style=''>          </span><span style='background: #F0ADAD'>org.http4s.internal.Logger
+</span>74 <span style=''></span><span style='background: #F0ADAD'>            .logMessageWithBodyText[F, Request[F]](r)(logHeaders, f, redactHeadersWhen)(log(_))</span><span style=''>
+</span>75 <span style=''>      }
+</span>76 <span style=''>
+</span>77 <span style=''>    val logBody: Boolean = logBodyText match {
+</span>78 <span style=''>      case Left(bool) =&gt; bool
+</span>79 <span style=''>      case Right(_) =&gt; </span><span style='background: #F0ADAD'>true</span><span style=''>
+</span>80 <span style=''>    }
+</span>81 <span style=''>
+</span>82 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>83 <span style=''></span><span style='background: #AEF1AE'>      if (!logBody) </span><span style='background: #F0ADAD'>{
+</span>84 <span style=''></span><span style='background: #F0ADAD'>        def logAct = logMessage(req)
+</span>85 <span style=''></span><span style='background: #F0ADAD'>        // This construction will log on Any Error/Cancellation
+</span>86 <span style=''></span><span style='background: #F0ADAD'>        // The Completed Case is Unit, as we rely on the semantics of G
+</span>87 <span style=''></span><span style='background: #F0ADAD'>        // As None Is Successful, but we oly want to log on Some
+</span>88 <span style=''></span><span style='background: #F0ADAD'>        http(req)
+</span>89 <span style=''></span><span style='background: #F0ADAD'>          .guaranteeCase {
+</span>90 <span style=''></span><span style='background: #F0ADAD'>            case Outcome.Succeeded(_) =&gt; G.unit
+</span>91 <span style=''></span><span style='background: #F0ADAD'>            case _ =&gt; fk(logAct)
+</span>92 <span style=''></span><span style='background: #F0ADAD'>          } &lt;* fk(logAct)
+</span>93 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style='background: #AEF1AE'> else
+</span>94 <span style=''></span><span style='background: #AEF1AE'>        fk(F.ref(Vector.empty[Chunk[Byte]]))
+</span>95 <span style=''></span><span style='background: #AEF1AE'>          .flatMap { vec =&gt;
+</span>96 <span style=''></span><span style='background: #AEF1AE'>            val collectChunks: Pipe[F, Byte, Nothing] =
+</span>97 <span style=''></span><span style='background: #AEF1AE'>              _.chunks.flatMap(c =&gt; Stream.exec(vec.update(_ :+ c)))
+</span>98 <span style=''></span><span style='background: #AEF1AE'>
+</span>99 <span style=''></span><span style='background: #AEF1AE'>            val changedRequest = req.pipeBodyThrough(_.observe(collectChunks))
+</span>100 <span style=''></span><span style='background: #AEF1AE'>
+</span>101 <span style=''></span><span style='background: #AEF1AE'>            val newBody = Stream.eval(vec.get).flatMap(v =&gt; Stream.emits(v)).unchunks
+</span>102 <span style=''></span><span style='background: #AEF1AE'>            val logRequest: F[Unit] = logMessage(req.withBodyStream(newBody))
+</span>103 <span style=''></span><span style='background: #AEF1AE'>
+</span>104 <span style=''></span><span style='background: #AEF1AE'>            http(changedRequest)
+</span>105 <span style=''></span><span style='background: #AEF1AE'>              .guaranteeCase {
+</span>106 <span style=''></span><span style='background: #AEF1AE'>                case Outcome.Succeeded(_) =&gt; G.unit
+</span>107 <span style=''></span><span style='background: #AEF1AE'>                case _ =&gt; fk(logRequest)
+</span>108 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>109 <span style=''></span><span style='background: #AEF1AE'>              .map(_.pipeBodyThrough(_.onFinalizeWeak(logRequest)))
+</span>110 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>111 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>112 <span style=''>  }
+</span>113 <span style=''>
+</span>114 <span style=''>  def httpApp[F[_]: Async](
+</span>115 <span style=''>      logHeaders: Boolean,
+</span>116 <span style=''>      logBody: Boolean,
+</span>117 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>118 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>119 <span style=''>  )(httpApp: HttpApp[F]): HttpApp[F] =
+</span>120 <span style=''>    </span><span style='background: #AEF1AE'>apply(logHeaders, logBody, FunctionK.id[F], redactHeadersWhen, logAction)(httpApp)</span><span style=''>
+</span>121 <span style=''>
+</span>122 <span style=''>  def httpRoutes[F[_]: Async](
+</span>123 <span style=''>      logHeaders: Boolean,
+</span>124 <span style=''>      logBody: Boolean,
+</span>125 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>126 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>127 <span style=''>  )(httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>128 <span style=''>    </span><span style='background: #F0ADAD'>apply(logHeaders, logBody, OptionT.liftK[F], redactHeadersWhen, logAction)(httpRoutes)</span><span style=''>
+</span>129 <span style=''>
+</span>130 <span style=''>  def httpAppLogBodyText[F[_]: Async](
+</span>131 <span style=''>      logHeaders: Boolean,
+</span>132 <span style=''>      logBody: Stream[F, Byte] =&gt; Option[F[String]],
+</span>133 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>134 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>135 <span style=''>  )(httpApp: HttpApp[F]): HttpApp[F] =
+</span>136 <span style=''>    </span><span style='background: #F0ADAD'>impl[F, F](logHeaders, Right(logBody), FunctionK.id[F], redactHeadersWhen, logAction)(httpApp)</span><span style=''>
+</span>137 <span style=''>
+</span>138 <span style=''>  def httpRoutesLogBodyText[F[_]: Async](
+</span>139 <span style=''>      logHeaders: Boolean,
+</span>140 <span style=''>      logBody: Stream[F, Byte] =&gt; Option[F[String]],
+</span>141 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>142 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>143 <span style=''>  )(httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>144 <span style=''>    </span><span style='background: #F0ADAD'>impl[OptionT[F, *], F](
+</span>145 <span style=''></span><span style='background: #F0ADAD'>      logHeaders,
+</span>146 <span style=''></span><span style='background: #F0ADAD'>      Right(logBody),
+</span>147 <span style=''></span><span style='background: #F0ADAD'>      OptionT.liftK[F],
+</span>148 <span style=''></span><span style='background: #F0ADAD'>      redactHeadersWhen,
+</span>149 <span style=''></span><span style='background: #F0ADAD'>      logAction,
+</span>150 <span style=''></span><span style='background: #F0ADAD'>    )(httpRoutes)</span><span style=''>
+</span>151 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          9551
+        </td>
+        <td>
+          1512
+          -
+          1589
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestLogger.impl
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          RequestLogger.this.impl[G, F](logHeaders, scala.`package`.Left.apply[Boolean, Nothing](logBody), fk, redactHeadersWhen, logAction)(http)(F, G)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          8456
+        </td>
+        <td>
+          1992
+          -
+          2021
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.kernel.Sync.apply[F](F).delay[Unit](if (RequestLogger.this.logger.logger.isInfoEnabled())
+  RequestLogger.this.logger.logger.info(s)
+else
+  ())
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          9055
+        </td>
+        <td>
+          1954
+          -
+          2037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          logAction.fold[String =&gt; F[Unit]](((s: String) =&gt; cats.effect.kernel.Sync.apply[F](F).delay[Unit](if (RequestLogger.this.logger.logger.isInfoEnabled())
+  RequestLogger.this.logger.logger.info(s)
+else
+  ())))(((x: String =&gt; F[Unit]) =&gt; scala.Predef.identity[String =&gt; F[Unit]](x)))
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          7339
+        </td>
+        <td>
+          2028
+          -
+          2036
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[String =&gt; F[Unit]](x)
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          8097
+        </td>
+        <td>
+          2147
+          -
+          2227
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Logger.logMessage
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Logger.logMessage[F, org.http4s.Request[F]](r)(logHeaders, bool, redactHeadersWhen)(((x$1: String) =&gt; log.apply(x$1)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          7551
+        </td>
+        <td>
+          2263
+          -
+          2385
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.internal.Logger.logMessageWithBodyText
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.internal.Logger.logMessageWithBodyText[F, org.http4s.Request[F]](r)(logHeaders, f, redactHeadersWhen)(((x$2: String) =&gt; log.apply(x$2)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          9276
+        </td>
+        <td>
+          2495
+          -
+          2499
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          8903
+        </td>
+        <td>
+          2511
+          -
+          3655
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[G, org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; if (logBody.unary_!)
+  {
+    def logAct: F[Unit] = logMessage(req);
+    cats.syntax.`package`.all.catsSyntaxApply[G, org.http4s.Response[F]](cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(req))(G).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$1 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logAct)
+}))(G))(G).&lt;*[Unit](fk.apply[Unit](logAct))
+  }
+else
+  cats.syntax.`package`.all.toFlatMapOps[G, cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](fk.apply[cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](F.ref[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]])))(G).flatMap[org.http4s.Response[F]](((vec: cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]) =&gt; {
+    val collectChunks: fs2.Pipe[F,Byte,Nothing] = ((x$3: fs2.Stream[F,Byte]) =&gt; x$3.chunks.flatMap[[x]F[x], fs2.INothing](((c: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$4: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$4.:+[fs2.Chunk[Byte]](c))))))(compat.this.NotGiven.default[Nothing]));
+    val changedRequest: req.Self = req.pipeBodyThrough(((x$5: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$5).observe(collectChunks)(F)));
+    val newBody: fs2.Stream[[x]F[x],Byte] = fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((v: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](v)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]);
+    val logRequest: F[Unit] = logMessage(req.withBodyStream(newBody));
+    cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(changedRequest))(G).guaranteeCase(((x0$2: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$2 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logRequest)
+}))(G))(G).map[org.http4s.Response[F]](((x$6: org.http4s.Response[F]) =&gt; x$6.pipeBodyThrough(((x$7: fs2.Stream[F,Byte]) =&gt; x$7.onFinalizeWeak[[x]F[x]](logRequest)(F)))))
+  }))))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          8262
+        </td>
+        <td>
+          2538
+          -
+          2546
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          logBody.unary_!
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          9181
+        </td>
+        <td>
+          2548
+          -
+          2947
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  def logAct: F[Unit] = logMessage(req);
+  cats.syntax.`package`.all.catsSyntaxApply[G, org.http4s.Response[F]](cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(req))(G).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$1 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logAct)
+}))(G))(G).&lt;*[Unit](fk.apply[Unit](logAct))
+}
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          10097
+        </td>
+        <td>
+          2571
+          -
+          2586
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestLogger.logMessage
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          logMessage(req)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          9504
+        </td>
+        <td>
+          2796
+          -
+          2925
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.syntax.MonadCancelOps.guaranteeCase
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(req))(G).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$1 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logAct)
+}))(G)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          8359
+        </td>
+        <td>
+          2929
+          -
+          2939
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fk.apply[Unit](logAct)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          7294
+        </td>
+        <td>
+          2796
+          -
+          2939
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.&lt;*
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApply[G, org.http4s.Response[F]](cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(req))(G).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$1 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logAct)
+}))(G))(G).&lt;*[Unit](fk.apply[Unit](logAct))
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          8104
+        </td>
+        <td>
+          2970
+          -
+          2995
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.empty
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Vector.empty[fs2.Chunk[Byte]]
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          7497
+        </td>
+        <td>
+          2964
+          -
+          2996
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.GenConcurrent.ref
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.ref[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]])
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          9281
+        </td>
+        <td>
+          2961
+          -
+          2997
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](F.ref[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]]))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          9963
+        </td>
+        <td>
+          2961
+          -
+          3649
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[G, cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](fk.apply[cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](F.ref[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]])))(G).flatMap[org.http4s.Response[F]](((vec: cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]) =&gt; {
+  val collectChunks: fs2.Pipe[F,Byte,Nothing] = ((x$3: fs2.Stream[F,Byte]) =&gt; x$3.chunks.flatMap[[x]F[x], fs2.INothing](((c: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$4: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$4.:+[fs2.Chunk[Byte]](c))))))(compat.this.NotGiven.default[Nothing]));
+  val changedRequest: req.Self = req.pipeBodyThrough(((x$5: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$5).observe(collectChunks)(F)));
+  val newBody: fs2.Stream[[x]F[x],Byte] = fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((v: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](v)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]);
+  val logRequest: F[Unit] = logMessage(req.withBodyStream(newBody));
+  cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(changedRequest))(G).guaranteeCase(((x0$2: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$2 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logRequest)
+}))(G))(G).map[org.http4s.Response[F]](((x$6: org.http4s.Response[F]) =&gt; x$6.pipeBodyThrough(((x$7: fs2.Stream[F,Byte]) =&gt; x$7.onFinalizeWeak[[x]F[x]](logRequest)(F)))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          8132
+        </td>
+        <td>
+          2961
+          -
+          3649
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[G, cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](fk.apply[cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](F.ref[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]])))(G).flatMap[org.http4s.Response[F]](((vec: cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]) =&gt; {
+  val collectChunks: fs2.Pipe[F,Byte,Nothing] = ((x$3: fs2.Stream[F,Byte]) =&gt; x$3.chunks.flatMap[[x]F[x], fs2.INothing](((c: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$4: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$4.:+[fs2.Chunk[Byte]](c))))))(compat.this.NotGiven.default[Nothing]));
+  val changedRequest: req.Self = req.pipeBodyThrough(((x$5: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$5).observe(collectChunks)(F)));
+  val newBody: fs2.Stream[[x]F[x],Byte] = fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((v: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](v)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]);
+  val logRequest: F[Unit] = logMessage(req.withBodyStream(newBody));
+  cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(changedRequest))(G).guaranteeCase(((x0$2: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$2 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logRequest)
+}))(G))(G).map[org.http4s.Response[F]](((x$6: org.http4s.Response[F]) =&gt; x$6.pipeBodyThrough(((x$7: fs2.Stream[F,Byte]) =&gt; x$7.onFinalizeWeak[[x]F[x]](logRequest)(F)))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          9019
+        </td>
+        <td>
+          3118
+          -
+          3149
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.exec
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.exec[F](vec.update(((x$4: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$4.:+[fs2.Chunk[Byte]](c))))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          8265
+        </td>
+        <td>
+          3141
+          -
+          3147
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.:+[fs2.Chunk[Byte]](c)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          10007
+        </td>
+        <td>
+          3130
+          -
+          3148
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          vec.update(((x$4: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$4.:+[fs2.Chunk[Byte]](c)))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          7300
+        </td>
+        <td>
+          3096
+          -
+          3150
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$3.chunks.flatMap[[x]F[x], fs2.INothing](((c: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$4: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$4.:+[fs2.Chunk[Byte]](c))))))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          8332
+        </td>
+        <td>
+          3112
+          -
+          3112
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          9105
+        </td>
+        <td>
+          3205
+          -
+          3229
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.InvariantOps.observe
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$5).observe(collectChunks)(F)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          8009
+        </td>
+        <td>
+          3185
+          -
+          3230
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.pipeBodyThrough
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.pipeBodyThrough(((x$5: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$5).observe(collectChunks)(F)))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          10015
+        </td>
+        <td>
+          3309
+          -
+          3309
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          7443
+        </td>
+        <td>
+          3270
+          -
+          3277
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.RefSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          vec.get
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          8899
+        </td>
+        <td>
+          3258
+          -
+          3317
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.unchunks
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((v: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](v)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]])
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          9243
+        </td>
+        <td>
+          3292
+          -
+          3307
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.emits
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](v)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          8235
+        </td>
+        <td>
+          3286
+          -
+          3286
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          8333
+        </td>
+        <td>
+          3367
+          -
+          3394
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withBodyStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.withBodyStream(newBody)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          7306
+        </td>
+        <td>
+          3356
+          -
+          3395
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestLogger.logMessage
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          logMessage(req.withBodyStream(newBody))
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          9053
+        </td>
+        <td>
+          3409
+          -
+          3569
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.syntax.MonadCancelOps.guaranteeCase
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(changedRequest))(G).guaranteeCase(((x0$2: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$2 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logRequest)
+}))(G)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          9372
+        </td>
+        <td>
+          3409
+          -
+          3637
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](cats.effect.implicits.monadCancelOps[G, org.http4s.Response[F], Throwable](http.apply(changedRequest))(G).guaranteeCase(((x0$2: cats.effect.kernel.Outcome[G,Throwable,org.http4s.Response[F]]) =&gt; x0$2 match {
+  case (fa: G[org.http4s.Response[F]]): cats.effect.kernel.Outcome.Succeeded[[_]G[_],Throwable,org.http4s.Response[F]](_) =&gt; G.unit
+  case _ =&gt; fk.apply[Unit](logRequest)
+}))(G))(G).map[org.http4s.Response[F]](((x$6: org.http4s.Response[F]) =&gt; x$6.pipeBodyThrough(((x$7: fs2.Stream[F,Byte]) =&gt; x$7.onFinalizeWeak[[x]F[x]](logRequest)(F)))))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          8014
+        </td>
+        <td>
+          3607
+          -
+          3635
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.onFinalizeWeak
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$7.onFinalizeWeak[[x]F[x]](logRequest)(F)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          7489
+        </td>
+        <td>
+          3589
+          -
+          3636
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.pipeBodyThrough
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.pipeBodyThrough(((x$7: fs2.Stream[F,Byte]) =&gt; x$7.onFinalizeWeak[[x]F[x]](logRequest)(F)))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          8402
+        </td>
+        <td>
+          3916
+          -
+          3998
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestLogger.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          RequestLogger.this.apply[[_]F[_], F](logHeaders, logBody, cats.arrow.FunctionK.id[F], redactHeadersWhen, logAction)(httpApp)(evidence$1, evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          9058
+        </td>
+        <td>
+          4341
+          -
+          4341
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.monadCancelForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          kernel.this.MonadCancel.monadCancelForOptionT[[_]F[_], Throwable](evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          7976
+        </td>
+        <td>
+          4267
+          -
+          4353
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestLogger.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestLogger.this.apply[[β$0$]cats.data.OptionT[F,β$0$], F](logHeaders, logBody, cats.data.OptionT.liftK[F](evidence$2), redactHeadersWhen, logAction)(httpRoutes)(evidence$2, kernel.this.MonadCancel.monadCancelForOptionT[[_]F[_], Throwable](evidence$2))
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          7372
+        </td>
+        <td>
+          4294
+          -
+          4310
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftK
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.liftK[F](evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          9910
+        </td>
+        <td>
+          4650
+          -
+          4744
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestLogger.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestLogger.this.impl[F, F](logHeaders, scala.`package`.Right.apply[Nothing, fs2.Stream[F,Byte] =&gt; Option[F[String]]](logBody), cats.arrow.FunctionK.id[F], redactHeadersWhen, logAction)(httpApp)(evidence$3, evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          9376
+        </td>
+        <td>
+          5101
+          -
+          5115
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Right.apply[Nothing, fs2.Stream[F,Byte] =&gt; Option[F[String]]](logBody)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          8225
+        </td>
+        <td>
+          5123
+          -
+          5139
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftK
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.liftK[F](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          9970
+        </td>
+        <td>
+          5188
+          -
+          5188
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.monadCancelForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          kernel.this.MonadCancel.monadCancelForOptionT[[_]F[_], Throwable](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          8960
+        </td>
+        <td>
+          5053
+          -
+          5200
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestLogger.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestLogger.this.impl[[β$0$]cats.data.OptionT[F,β$0$], F](logHeaders, scala.`package`.Right.apply[Nothing, fs2.Stream[F,Byte] =&gt; Option[F[String]]](logBody), cats.data.OptionT.liftK[F](evidence$4), redactHeadersWhen, logAction)(httpRoutes)(evidence$4, kernel.this.MonadCancel.monadCancelForOptionT[[_]F[_], Throwable](evidence$4))
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,320 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/multipart/MultipartDecoder.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package multipart
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.effect.Concurrent
+</span>21 <span style=''>import cats.effect.Resource
+</span>22 <span style=''>import cats.effect.std.Supervisor
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import fs2.Pipe
+</span>25 <span style=''>import fs2.io.file.Files
+</span>26 <span style=''>
+</span>27 <span style=''>private[http4s] object MultipartDecoder {
+</span>28 <span style=''>  def decoder[F[_]: Concurrent]: EntityDecoder[F, Multipart[F]] =
+</span>29 <span style=''>    </span><span style='background: #AEF1AE'>makeDecoder(MultipartParser.parseToPartsStream[F](_))</span><span style=''>
+</span>30 <span style=''>
+</span>31 <span style=''>  /** Multipart decoder that streams all parts past a threshold
+</span>32 <span style=''>    * (anything above `maxSizeBeforeWrite`) into a temporary file.
+</span>33 <span style=''>    * The decoder is only valid inside the `Resource` scope; once
+</span>34 <span style=''>    * the `Resource` is released, all the created files are deleted.
+</span>35 <span style=''>    *
+</span>36 <span style=''>    * Note that no files are deleted until the `Resource` is released.
+</span>37 <span style=''>    * Thus, sharing and reusing the resulting `EntityDecoder` is not
+</span>38 <span style=''>    * recommended, and can lead to disk space leaks.
+</span>39 <span style=''>    *
+</span>40 <span style=''>    * The intended way to use this is as follows:
+</span>41 <span style=''>    *
+</span>42 <span style=''>    * {{{
+</span>43 <span style=''>    * mixedMultipartResource[F]()
+</span>44 <span style=''>    *   .flatTap(request.decodeWith(_, strict = true))
+</span>45 <span style=''>    *   .use { multipart =&gt;
+</span>46 <span style=''>    *     // Use the decoded entity
+</span>47 <span style=''>    *   }
+</span>48 <span style=''>    * }}}
+</span>49 <span style=''>    *
+</span>50 <span style=''>    * @param headerLimit the max size for the headers, in bytes. This is required as
+</span>51 <span style=''>    *                    headers are strictly evaluated and parsed.
+</span>52 <span style=''>    * @param maxSizeBeforeWrite the maximum size of a particular part before writing to a file is triggered
+</span>53 <span style=''>    * @param maxParts the maximum number of parts this decoder accepts. NOTE: this also may mean that a body that doesn't
+</span>54 <span style=''>    *                 conform perfectly to the spec (i.e isn't terminated properly) but has a lot of parts might
+</span>55 <span style=''>    *                 be parsed correctly, despite the total body being malformed due to not conforming to the multipart
+</span>56 <span style=''>    *                 spec. You can control this by `failOnLimit`, by setting it to true if you want to raise
+</span>57 <span style=''>    *                 an error if sending too many parts to a particular endpoint
+</span>58 <span style=''>    * @param failOnLimit Fail if `maxParts` is exceeded _during_ multipart parsing.
+</span>59 <span style=''>    * @param chunkSize the size of chunks created when reading data from temporary files.
+</span>60 <span style=''>    * @return A multipart/form-data encoded vector of parts with some part bodies held in
+</span>61 <span style=''>    *         temporary files.
+</span>62 <span style=''>    */
+</span>63 <span style=''>  def mixedMultipartResource[F[_]: Concurrent: Files](
+</span>64 <span style=''>      headerLimit: Int = 1024,
+</span>65 <span style=''>      maxSizeBeforeWrite: Int = 52428800,
+</span>66 <span style=''>      maxParts: Int = 50,
+</span>67 <span style=''>      failOnLimit: Boolean = false,
+</span>68 <span style=''>      chunkSize: Int = 8192,
+</span>69 <span style=''>  ): Resource[F, EntityDecoder[F, Multipart[F]]] =
+</span>70 <span style=''>    </span><span style='background: #AEF1AE'>Supervisor[F].map { supervisor =&gt;
+</span>71 <span style=''></span><span style='background: #AEF1AE'>      makeDecoder(
+</span>72 <span style=''></span><span style='background: #AEF1AE'>        MultipartParser.parseToPartsSupervisedFile[F](
+</span>73 <span style=''></span><span style='background: #AEF1AE'>          supervisor,
+</span>74 <span style=''></span><span style='background: #AEF1AE'>          _,
+</span>75 <span style=''></span><span style='background: #AEF1AE'>          headerLimit,
+</span>76 <span style=''></span><span style='background: #AEF1AE'>          maxSizeBeforeWrite,
+</span>77 <span style=''></span><span style='background: #AEF1AE'>          maxParts,
+</span>78 <span style=''></span><span style='background: #AEF1AE'>          failOnLimit,
+</span>79 <span style=''></span><span style='background: #AEF1AE'>          chunkSize,
+</span>80 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>81 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>82 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>83 <span style=''>
+</span>84 <span style=''>  /** Multipart decoder that streams all parts past a threshold
+</span>85 <span style=''>    * (anything above maxSizeBeforeWrite) into a temporary file.
+</span>86 <span style=''>    *
+</span>87 <span style=''>    * Note: (BIG NOTE) Using this decoder for multipart decoding is good for the sake of
+</span>88 <span style=''>    * not holding all information in memory, as it will never have more than
+</span>89 <span style=''>    * `maxSizeBeforeWrite` in memory before writing to a temporary file. On top of this,
+</span>90 <span style=''>    * you can gate the # of parts to further stop the quantity of parts you can have.
+</span>91 <span style=''>    * That said, because after a threshold it writes into a temporary file, given
+</span>92 <span style=''>    * bincompat reasons on 0.18.x, there is no way to make a distinction about which `Part[F]`
+</span>93 <span style=''>    * is a stream reference to a file or not. Thus, consumers using this decoder
+</span>94 <span style=''>    * should drain all `Part[F]` bodies if they were decoded correctly. That said,
+</span>95 <span style=''>    * this decoder gives you more control about how many part bodies it parses in the first place, thus you can have
+</span>96 <span style=''>    * more fine-grained control about how many parts you accept.
+</span>97 <span style=''>    *
+</span>98 <span style=''>    * @param headerLimit the max size for the headers, in bytes. This is required as
+</span>99 <span style=''>    *                    headers are strictly evaluated and parsed.
+</span>100 <span style=''>    * @param maxSizeBeforeWrite the maximum size of a particular part before writing to a file is triggered
+</span>101 <span style=''>    * @param maxParts the maximum number of parts this decoder accepts. NOTE: this also may mean that a body that doesn't
+</span>102 <span style=''>    *                 conform perfectly to the spec (i.e isn't terminated properly) but has a lot of parts might
+</span>103 <span style=''>    *                 be parsed correctly, despite the total body being malformed due to not conforming to the multipart
+</span>104 <span style=''>    *                 spec. You can control this by `failOnLimit`, by setting it to true if you want to raise
+</span>105 <span style=''>    *                 an error if sending too many parts to a particular endpoint
+</span>106 <span style=''>    * @param failOnLimit Fail if `maxParts` is exceeded _during_ multipart parsing.
+</span>107 <span style=''>    * @return A multipart/form-data encoded vector of parts with some part bodies held in
+</span>108 <span style=''>    *         temporary files.
+</span>109 <span style=''>    */
+</span>110 <span style=''>  @deprecated(&quot;Use mixedMultipartResource&quot;, &quot;0.23&quot;)
+</span>111 <span style=''>  def mixedMultipart[F[_]: Concurrent: Files](
+</span>112 <span style=''>      headerLimit: Int = 1024,
+</span>113 <span style=''>      maxSizeBeforeWrite: Int = 52428800,
+</span>114 <span style=''>      maxParts: Int = 50,
+</span>115 <span style=''>      failOnLimit: Boolean = false,
+</span>116 <span style=''>  ): EntityDecoder[F, Multipart[F]] =
+</span>117 <span style=''>    </span><span style='background: #AEF1AE'>makeDecoder(
+</span>118 <span style=''></span><span style='background: #AEF1AE'>      MultipartParser.parseToPartsStreamedFile[F](
+</span>119 <span style=''></span><span style='background: #AEF1AE'>        _,
+</span>120 <span style=''></span><span style='background: #AEF1AE'>        headerLimit,
+</span>121 <span style=''></span><span style='background: #AEF1AE'>        maxSizeBeforeWrite,
+</span>122 <span style=''></span><span style='background: #AEF1AE'>        maxParts,
+</span>123 <span style=''></span><span style='background: #AEF1AE'>        failOnLimit,
+</span>124 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>125 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>126 <span style=''>
+</span>127 <span style=''>  private def makeDecoder[F[_]: Concurrent](
+</span>128 <span style=''>      impl: Boundary =&gt; Pipe[F, Byte, Part[F]]
+</span>129 <span style=''>  ): EntityDecoder[F, Multipart[F]] =
+</span>130 <span style=''>    </span><span style='background: #AEF1AE'>EntityDecoder.decodeBy(MediaRange.`multipart/*`) { msg =&gt;
+</span>131 <span style=''></span><span style='background: #AEF1AE'>      msg.contentType.flatMap(_.mediaType.extensions.get(&quot;boundary&quot;)) match {
+</span>132 <span style=''></span><span style='background: #AEF1AE'>        case Some(boundary) =&gt;
+</span>133 <span style=''></span><span style='background: #AEF1AE'>          DecodeResult {
+</span>134 <span style=''></span><span style='background: #AEF1AE'>            msg.body
+</span>135 <span style=''></span><span style='background: #AEF1AE'>              .through(impl(Boundary(boundary)))
+</span>136 <span style=''></span><span style='background: #AEF1AE'>              .compile
+</span>137 <span style=''></span><span style='background: #AEF1AE'>              .toVector
+</span>138 <span style=''></span><span style='background: #AEF1AE'>              .map[Either[DecodeFailure, Multipart[F]]](parts =&gt;
+</span>139 <span style=''></span><span style='background: #AEF1AE'>                Right(Multipart(parts, Boundary(boundary)))
+</span>140 <span style=''></span><span style='background: #AEF1AE'>              )
+</span>141 <span style=''></span><span style='background: #AEF1AE'>              .handleError {
+</span>142 <span style=''></span><span style='background: #AEF1AE'>                case e: InvalidMessageBodyFailure =&gt; Left(e)
+</span>143 <span style=''></span><span style='background: #AEF1AE'>                case e =&gt; Left(InvalidMessageBodyFailure(&quot;Invalid multipart body&quot;, Some(e)))
+</span>144 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>145 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>146 <span style=''></span><span style='background: #AEF1AE'>        case None =&gt;
+</span>147 <span style=''></span><span style='background: #AEF1AE'>          DecodeResult.failureT(
+</span>148 <span style=''></span><span style='background: #AEF1AE'>            InvalidMessageBodyFailure(&quot;Missing boundary extension to Content-Type&quot;)
+</span>149 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>150 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>151 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>152 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          29
+        </td>
+        <td>
+          19740
+        </td>
+        <td>
+          904
+          -
+          957
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.multipart.MultipartDecoder.makeDecoder
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite,org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          MultipartDecoder.this.makeDecoder[[_]F[_]](((x$1: org.http4s.multipart.Boundary) =&gt; MultipartParser.parseToPartsStream[F](x$1, MultipartParser.parseToPartsStream$default$2[F])(evidence$1)))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          13908
+        </td>
+        <td>
+          3060
+          -
+          3343
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.map
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.std.Supervisor.apply[F](evidence$2).map[org.http4s.EntityDecoder[[_]F[_],org.http4s.multipart.Multipart[[_]F[_]]]](((supervisor: cats.effect.std.Supervisor[F]) =&gt; MultipartDecoder.this.makeDecoder[[_]F[_]](((x$2: org.http4s.multipart.Boundary) =&gt; MultipartParser.parseToPartsSupervisedFile[F](supervisor, x$2, headerLimit, maxSizeBeforeWrite, maxParts, failOnLimit, chunkSize)(evidence$2, evidence$3)))(evidence$2)))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          15854
+        </td>
+        <td>
+          3100
+          -
+          3337
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.multipart.MultipartDecoder.makeDecoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          MultipartDecoder.this.makeDecoder[[_]F[_]](((x$2: org.http4s.multipart.Boundary) =&gt; MultipartParser.parseToPartsSupervisedFile[F](supervisor, x$2, headerLimit, maxSizeBeforeWrite, maxParts, failOnLimit, chunkSize)(evidence$2, evidence$3)))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          20335
+        </td>
+        <td>
+          5647
+          -
+          5823
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.multipart.MultipartDecoder.makeDecoder
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          MultipartDecoder.this.makeDecoder[[_]F[_]](((x$3: org.http4s.multipart.Boundary) =&gt; MultipartParser.parseToPartsStreamedFile[F](x$3, headerLimit, maxSizeBeforeWrite, maxParts, failOnLimit)(evidence$4, evidence$5)))(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          16356
+        </td>
+        <td>
+          5959
+          -
+          6783
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite,org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityDecoder.decodeBy[[_]F[_], org.http4s.multipart.Multipart[F]](MediaRange.multipart/*)(((msg: org.http4s.Media[[_]F[_]]) =&gt; msg.contentType.flatMap[String](((x$4: org.http4s.headers.Content-Type) =&gt; x$4.mediaType.extensions.get(&quot;boundary&quot;))) match {
+  case (value: String): Some[String]((boundary @ _)) =&gt; DecodeResult.apply[F, org.http4s.multipart.Multipart[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Either[org.http4s.DecodeFailure,org.http4s.multipart.Multipart[F]]](cats.syntax.`package`.all.toFunctorOps[F, Vector[org.http4s.multipart.Part[F]]](msg.body.through[[x]F[x], org.http4s.multipart.Part[F]](impl.apply(Boundary.apply(boundary))).compile[[x]F[x], [x]F[x], org.http4s.multipart.Part[F]](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$6))).toVector)(evidence$6).map[Either[org.http4s.DecodeFailure,org.http4s.multipart.Multipart[F]]](((parts: Vector[org.http4s.multipart.Part[F]]) =&gt; scala.`package`.Right.apply[Nothing, org.http4s.multipart.Multipart[[_]F[_]]](Multipart.apply[[_]F[_]](parts, Boundary.apply(boundary))))))(evidence$6).handleError(((x0$1: Throwable) =&gt; x0$1 match {
+    case (e @ (_: org.http4s.InvalidMessageBodyFailure)) =&gt; scala.`package`.Left.apply[org.http4s.InvalidMessageBodyFailure, Nothing](e)
+    case (e @ _) =&gt; scala.`package`.Left.apply[org.http4s.InvalidMessageBodyFailure, Nothing](InvalidMessageBodyFailure.apply(&quot;Invalid multipart body&quot;, scala.Some.apply[Throwable](e)))
+  }))(evidence$6))
+  case scala.None =&gt; DecodeResult.failureT[[_]F[_], org.http4s.multipart.Multipart[F]](InvalidMessageBodyFailure.apply(&quot;Missing boundary extension to Content-Type&quot;, InvalidMessageBodyFailure.apply$default$2))(evidence$6)
+}))(evidence$6)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

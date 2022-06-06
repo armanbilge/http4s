@@ -1,0 +1,2769 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/Headers.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Monoid
+</span>20 <span style=''>import cats.Order
+</span>21 <span style=''>import cats.Show
+</span>22 <span style=''>import cats.data.Ior
+</span>23 <span style=''>import cats.data.NonEmptyList
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>import org.http4s.implicits.http4sSelectSyntaxOne
+</span>26 <span style=''>import org.typelevel.ci._
+</span>27 <span style=''>
+</span>28 <span style=''>import scala.collection.mutable
+</span>29 <span style=''>
+</span>30 <span style=''>import headers._
+</span>31 <span style=''>
+</span>32 <span style=''>/** A collection of HTTP Headers */
+</span>33 <span style=''>final class Headers(val headers: List[Header.Raw]) extends AnyVal {
+</span>34 <span style=''>
+</span>35 <span style=''>  def transform(f: List[Header.Raw] =&gt; List[Header.Raw]): Headers =
+</span>36 <span style=''>    </span><span style='background: #AEF1AE'>Headers(f(headers))</span><span style=''>
+</span>37 <span style=''>
+</span>38 <span style=''>  /** Attempt to get a (potentially repeating) header from this collection of headers.
+</span>39 <span style=''>    *
+</span>40 <span style=''>    * @return a scala.Option possibly containing the resulting (potentially repeating) header.
+</span>41 <span style=''>    */
+</span>42 <span style=''>  def get[A](implicit ev: Header.Select[A]): Option[ev.F[A]] =
+</span>43 <span style=''>    </span><span style='background: #AEF1AE'>ev.from(headers).flatMap(_.toOption)</span><span style=''>
+</span>44 <span style=''>
+</span>45 <span style=''>  /** Attempt to get a (potentially repeating) header and/or any parse errors from this collection of headers.
+</span>46 <span style=''>    *
+</span>47 <span style=''>    * @return a scala.Option possibly containing the resulting (potentially repeating) header
+</span>48 <span style=''>    *         and/or any parse errors.
+</span>49 <span style=''>    */
+</span>50 <span style=''>  def getWithWarnings[A](implicit
+</span>51 <span style=''>      ev: Header.Select[A]
+</span>52 <span style=''>  ): Option[Ior[NonEmptyList[ParseFailure], ev.F[A]]] =
+</span>53 <span style=''>    </span><span style='background: #F0ADAD'>ev.from(headers)</span><span style=''>
+</span>54 <span style=''>
+</span>55 <span style=''>  /** Returns true if there is at least one header by the specified name. */
+</span>56 <span style=''>  def contains[A](implicit ev: Header[A, _]): Boolean =
+</span>57 <span style=''>    </span><span style='background: #AEF1AE'>headers.exists(_.name == ev.name)</span><span style=''>
+</span>58 <span style=''>
+</span>59 <span style=''>  /** Attempt to get headers by key from this collection of headers.
+</span>60 <span style=''>    *
+</span>61 <span style=''>    * @param key name of the headers to find.
+</span>62 <span style=''>    * @return a scala.Option possibly containing the resulting collection
+</span>63 <span style=''>    *         [[cats.data.NonEmptyList]] of [[org.http4s.Header.Raw]].
+</span>64 <span style=''>    */
+</span>65 <span style=''>  def get(key: CIString): Option[NonEmptyList[Header.Raw]] = </span><span style='background: #AEF1AE'>headers.filter(_.name == key).toNel</span><span style=''>
+</span>66 <span style=''>
+</span>67 <span style=''>  /** Make a new collection adding the specified headers, replacing existing `Single` headers.
+</span>68 <span style=''>    *
+</span>69 <span style=''>    * @param in multiple heteregenous headers [[Header]] to append to the new collection, see [[Header.ToRaw]]
+</span>70 <span style=''>    * @return a new [[Headers]] containing the sum of the initial and input headers
+</span>71 <span style=''>    */
+</span>72 <span style=''>  def put(in: Header.ToRaw*): Headers =
+</span>73 <span style=''>    </span><span style='background: #AEF1AE'>this ++ Headers(in.values)</span><span style=''>
+</span>74 <span style=''>
+</span>75 <span style=''>  def ++(those: Headers): Headers =
+</span>76 <span style=''>    if (</span><span style='background: #AEF1AE'>those.headers.isEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>this</span><span style=''>
+</span>77 <span style=''>    else </span><span style='background: #AEF1AE'>if (this.headers.isEmpty) those
+</span>78 <span style=''></span><span style='background: #AEF1AE'>    else {
+</span>79 <span style=''></span><span style='background: #AEF1AE'>      val thoseNames = mutable.Set.empty[CIString]
+</span>80 <span style=''></span><span style='background: #AEF1AE'>      those.headers.foreach(h =&gt; thoseNames.add(h.name))
+</span>81 <span style=''></span><span style='background: #AEF1AE'>      Headers(headers.filterNot(h =&gt; thoseNames.contains(h.name)) ++ those.headers)
+</span>82 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>83 <span style=''>
+</span>84 <span style=''>  def add[H: Header[*, Header.Recurring]](h: H): Headers =
+</span>85 <span style=''>    </span><span style='background: #AEF1AE'>Headers(this.headers ++ Header.ToRaw.modelledHeadersToRaw(h).values)</span><span style=''>
+</span>86 <span style=''>
+</span>87 <span style=''>  /** Removes the `Content-Length`, `Content-Range`, `Trailer`, and
+</span>88 <span style=''>    * `Transfer-Encoding` headers.
+</span>89 <span style=''>    *
+</span>90 <span style=''>    *  https://datatracker.ietf.org/doc/html/rfc7231#section-3.3
+</span>91 <span style=''>    */
+</span>92 <span style=''>  def removePayloadHeaders: Headers =
+</span>93 <span style=''>    </span><span style='background: #AEF1AE'>transform(_.filterNot(h =&gt; Headers.PayloadHeaderKeys(h.name)))</span><span style=''>
+</span>94 <span style=''>
+</span>95 <span style=''>  /** Puts a `Content-Length` header, replacing any existing.  Removes
+</span>96 <span style=''>    * any existing `chunked` value from the `Transfer-Encoding`
+</span>97 <span style=''>    * header.  It is critical that the supplied content length
+</span>98 <span style=''>    * accurately describe the length of the body stream.
+</span>99 <span style=''>    *
+</span>100 <span style=''>    * {{{
+</span>101 <span style=''>    * scala&gt; import org.http4s.headers._
+</span>102 <span style=''>    * scala&gt; val chunked = Headers(
+</span>103 <span style=''>    *      |   `Transfer-Encoding`(TransferCoding.chunked),
+</span>104 <span style=''>    *      |   `Content-Type`(MediaType.text.plain))
+</span>105 <span style=''>    * scala&gt; chunked.withContentLength(`Content-Length`.unsafeFromLong(1024))
+</span>106 <span style=''>    * res0: Headers = Headers(Content-Length: 1024, Content-Type: text/plain)
+</span>107 <span style=''>    *
+</span>108 <span style=''>    * scala&gt; val chunkedGzipped = Headers(
+</span>109 <span style=''>    *      |   `Transfer-Encoding`(TransferCoding.chunked, TransferCoding.gzip),
+</span>110 <span style=''>    *      |   `Content-Type`(MediaType.text.plain))
+</span>111 <span style=''>    * scala&gt; chunkedGzipped.withContentLength(`Content-Length`.unsafeFromLong(1024))
+</span>112 <span style=''>    * res1: Headers = Headers(Content-Length: 1024, Transfer-Encoding: gzip, Content-Type: text/plain)
+</span>113 <span style=''>    *
+</span>114 <span style=''>    * scala&gt; val const = Headers(
+</span>115 <span style=''>    *      |   `Content-Length`(2048),
+</span>116 <span style=''>    *      |   `Content-Type`(MediaType.text.plain))
+</span>117 <span style=''>    * scala&gt; const.withContentLength(`Content-Length`.unsafeFromLong(1024))
+</span>118 <span style=''>    * res1: Headers = Headers(Content-Length: 1024, Content-Type: text/plain)
+</span>119 <span style=''>    * }}}
+</span>120 <span style=''>    */
+</span>121 <span style=''>  def withContentLength(contentLength: `Content-Length`): Headers =
+</span>122 <span style=''>    </span><span style='background: #AEF1AE'>transform { hs =&gt;
+</span>123 <span style=''></span><span style='background: #AEF1AE'>      val b = List.newBuilder[Header.Raw]
+</span>124 <span style=''></span><span style='background: #AEF1AE'>      b += contentLength.toRaw1
+</span>125 <span style=''></span><span style='background: #AEF1AE'>      hs.foreach { h =&gt;
+</span>126 <span style=''></span><span style='background: #AEF1AE'>        h.name match {
+</span>127 <span style=''></span><span style='background: #AEF1AE'>          case `Transfer-Encoding`.name =&gt;
+</span>128 <span style=''></span><span style='background: #AEF1AE'>            `Transfer-Encoding`
+</span>129 <span style=''></span><span style='background: #AEF1AE'>              .parse(h.value)
+</span>130 <span style=''></span><span style='background: #AEF1AE'>              .redeem(
+</span>131 <span style=''></span><span style='background: #AEF1AE'>                _ =&gt; </span><span style='background: #F0ADAD'>b += h</span><span style='background: #AEF1AE'>,
+</span>132 <span style=''></span><span style='background: #AEF1AE'>                _.filter(_ != TransferCoding.chunked)
+</span>133 <span style=''></span><span style='background: #AEF1AE'>                  .foreach(b += _.toRaw1),
+</span>134 <span style=''></span><span style='background: #AEF1AE'>              )
+</span>135 <span style=''></span><span style='background: #AEF1AE'>          case `Content-Length`.name =&gt;
+</span>136 <span style=''></span><span style='background: #AEF1AE'>            ()
+</span>137 <span style=''></span><span style='background: #AEF1AE'>          case _ =&gt;
+</span>138 <span style=''></span><span style='background: #AEF1AE'>            b += h
+</span>139 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>140 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>141 <span style=''></span><span style='background: #AEF1AE'>      b.result()
+</span>142 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>143 <span style=''>
+</span>144 <span style=''>  def redactSensitive(
+</span>145 <span style=''>      redactWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains
+</span>146 <span style=''>  ): Headers =
+</span>147 <span style=''>    </span><span style='background: #AEF1AE'>transform {
+</span>148 <span style=''></span><span style='background: #AEF1AE'>      _.map {
+</span>149 <span style=''></span><span style='background: #AEF1AE'>        case h if redactWhen(h.name) =&gt; Header.Raw(h.name, &quot;&lt;REDACTED&gt;&quot;)
+</span>150 <span style=''></span><span style='background: #AEF1AE'>        case h =&gt; h
+</span>151 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>152 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>153 <span style=''>
+</span>154 <span style=''>  def foreach(f: Header.Raw =&gt; Unit): Unit = </span><span style='background: #AEF1AE'>headers.foreach(f)</span><span style=''>
+</span>155 <span style=''>
+</span>156 <span style=''>  override def toString: String =
+</span>157 <span style=''>    </span><span style='background: #AEF1AE'>this.show</span><span style=''>
+</span>158 <span style=''>}
+</span>159 <span style=''>
+</span>160 <span style=''>object Headers {
+</span>161 <span style=''>  val empty: Headers = </span><span style='background: #AEF1AE'>Headers(List.empty[Header.Raw])</span><span style=''>
+</span>162 <span style=''>
+</span>163 <span style=''>  /** Creates a new Headers collection.
+</span>164 <span style=''>    * The [[Header.ToRaw]] machinery allows the creation of Headers with
+</span>165 <span style=''>    * variadic and heteregenous arguments, provided they are either:
+</span>166 <span style=''>    * - A value of type `A`  which has a `Header[A]` in scope
+</span>167 <span style=''>    * - A (name, value) pair of `String`
+</span>168 <span style=''>    * - A `Header.Raw`
+</span>169 <span style=''>    * - A `Foldable` (`List`, `Option`, etc) of the above.
+</span>170 <span style=''>    */
+</span>171 <span style=''>  def apply(headers: Header.ToRaw*): Headers =
+</span>172 <span style=''>    </span><span style='background: #AEF1AE'>new Headers(headers.values)</span><span style=''>
+</span>173 <span style=''>
+</span>174 <span style=''>  @deprecated(&quot;use Headers.apply&quot;, &quot;0.22.0&quot;)
+</span>175 <span style=''>  def of(headers: Header.ToRaw*): Headers = </span><span style='background: #F0ADAD'>apply(headers: _*)</span><span style=''>
+</span>176 <span style=''>
+</span>177 <span style=''>  implicit val headersShow: Show[Headers] =
+</span>178 <span style=''>    </span><span style='background: #AEF1AE'>_.headers.iterator.map(_.show).mkString(&quot;Headers(&quot;, &quot;, &quot;, &quot;)&quot;)</span><span style=''>
+</span>179 <span style=''>
+</span>180 <span style=''>  implicit lazy val HeadersOrder: Order[Headers] =
+</span>181 <span style=''>    Order.by(_.headers)
+</span>182 <span style=''>
+</span>183 <span style=''>  implicit val headersMonoid: Monoid[Headers] = </span><span style='background: #AEF1AE'>new</span><span style=''> Monoid[Headers] {
+</span>184 <span style=''>    def empty: Headers = </span><span style='background: #AEF1AE'>Headers.empty</span><span style=''>
+</span>185 <span style=''>    def combine(xa: Headers, xb: Headers): Headers =
+</span>186 <span style=''>      </span><span style='background: #AEF1AE'>xa ++ xb</span><span style=''>
+</span>187 <span style=''>  }
+</span>188 <span style=''>
+</span>189 <span style=''>  private val PayloadHeaderKeys = </span><span style='background: #AEF1AE'>Set(
+</span>190 <span style=''></span><span style='background: #AEF1AE'>    `Content-Length`.name,
+</span>191 <span style=''></span><span style='background: #AEF1AE'>    `Content-Range`.name,
+</span>192 <span style=''></span><span style='background: #AEF1AE'>    Trailer.name,
+</span>193 <span style=''></span><span style='background: #AEF1AE'>    `Transfer-Encoding`.name,
+</span>194 <span style=''></span><span style='background: #AEF1AE'>  )</span><span style=''>
+</span>195 <span style=''>
+</span>196 <span style=''>  val SensitiveHeaders: Set[CIString] = </span><span style='background: #AEF1AE'>Set(
+</span>197 <span style=''></span><span style='background: #AEF1AE'>    Authorization.name,
+</span>198 <span style=''></span><span style='background: #AEF1AE'>    Cookie.name,
+</span>199 <span style=''></span><span style='background: #AEF1AE'>    `Set-Cookie`.name,
+</span>200 <span style=''></span><span style='background: #AEF1AE'>  )</span><span style=''>
+</span>201 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          22997
+        </td>
+        <td>
+          1060
+          -
+          1067
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headers
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.headers
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          17197
+        </td>
+        <td>
+          1059
+          -
+          1059
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          13039
+        </td>
+        <td>
+          1058
+          -
+          1068
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](f.apply(Headers.this.headers))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          19140
+        </td>
+        <td>
+          1058
+          -
+          1068
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(Headers.this.headers)
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          19681
+        </td>
+        <td>
+          1050
+          -
+          1069
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](f.apply(Headers.this.headers))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          22315
+        </td>
+        <td>
+          1358
+          -
+          1368
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Ior.toOption
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.toOption
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          15669
+        </td>
+        <td>
+          1341
+          -
+          1348
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headers
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.headers
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          20157
+        </td>
+        <td>
+          1333
+          -
+          1369
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          ev.from(Headers.this.headers).flatMap[ev.F[A]](((x$1: cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],ev.F[A]]) =&gt; x$1.toOption))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          16298
+        </td>
+        <td>
+          1757
+          -
+          1764
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.this.headers
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          22595
+        </td>
+        <td>
+          1749
+          -
+          1765
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Select.from
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ev.from(Headers.this.headers)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          17085
+        </td>
+        <td>
+          1919
+          -
+          1936
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.hstssuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.name.==(ev.name)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          18886
+        </td>
+        <td>
+          1929
+          -
+          1936
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.name
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.hstssuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          ev.name
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          13054
+        </td>
+        <td>
+          1904
+          -
+          1937
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.exists
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.hstssuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.headers.exists(((x$2: org.http4s.Header.Raw) =&gt; x$2.name.==(ev.name)))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          19698
+        </td>
+        <td>
+          2288
+          -
+          2301
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.headersspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$3.name.==(key)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          15529
+        </td>
+        <td>
+          2273
+          -
+          2302
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.filter
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.headersspec
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.headers.filter(((x$3: org.http4s.Header.Raw) =&gt; x$3.name.==(key)))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          22071
+        </td>
+        <td>
+          2273
+          -
+          2308
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.ListOps.toNel
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.headersspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxList[org.http4s.Header.Raw](Headers.this.headers.filter(((x$3: org.http4s.Header.Raw) =&gt; x$3.name.==(key)))).toNel
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          22611
+        </td>
+        <td>
+          2676
+          -
+          2676
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          18765
+        </td>
+        <td>
+          2673
+          -
+          2682
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](in)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))).values)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          12954
+        </td>
+        <td>
+          2657
+          -
+          2683
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.++
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.++(Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](in)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))).values)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          15370
+        </td>
+        <td>
+          2665
+          -
+          2683
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](in)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))).values)(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          16321
+        </td>
+        <td>
+          2673
+          -
+          2682
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.values
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](in)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))).values
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          20052
+        </td>
+        <td>
+          2673
+          -
+          2673
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          19933
+        </td>
+        <td>
+          2729
+          -
+          2750
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.immutable.List.isEmpty
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          those.headers.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          15551
+        </td>
+        <td>
+          2752
+          -
+          2756
+        </td>
+        <td>
+          This
+        </td>
+        <td>
+          org.http4s.Headers
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          this
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          21955
+        </td>
+        <td>
+          2770
+          -
+          2790
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.immutable.List.isEmpty
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.headers.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          15247
+        </td>
+        <td>
+          2766
+          -
+          3006
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (this.headers.isEmpty)
+  those
+else
+  {
+    val thoseNames: scala.collection.mutable.Set[org.typelevel.ci.CIString] = scala.collection.mutable.Set.empty[org.typelevel.ci.CIString];
+    those.headers.foreach[Boolean](((h: org.http4s.Header.Raw) =&gt; thoseNames.add(h.name)));
+    Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](Headers.this.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; thoseNames.contains(h.name))).++[org.http4s.Header.Raw](those.headers))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+  }
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          20399
+        </td>
+        <td>
+          2792
+          -
+          2797
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.Headers.those
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          those
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          19289
+        </td>
+        <td>
+          2807
+          -
+          3006
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val thoseNames: scala.collection.mutable.Set[org.typelevel.ci.CIString] = scala.collection.mutable.Set.empty[org.typelevel.ci.CIString];
+  those.headers.foreach[Boolean](((h: org.http4s.Header.Raw) =&gt; thoseNames.add(h.name)));
+  Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](Headers.this.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; thoseNames.contains(h.name))).++[org.http4s.Header.Raw](those.headers))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+}
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          16340
+        </td>
+        <td>
+          2832
+          -
+          2859
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.IterableFactory.Delegate.empty
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.mutable.Set.empty[org.typelevel.ci.CIString]
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          23134
+        </td>
+        <td>
+          2908
+          -
+          2914
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.name
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          18784
+        </td>
+        <td>
+          2893
+          -
+          2915
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.SetOps.add
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          thoseNames.add(h.name)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          15225
+        </td>
+        <td>
+          2866
+          -
+          2916
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.foreach
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          those.headers.foreach[Boolean](((h: org.http4s.Header.Raw) =&gt; thoseNames.add(h.name)))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          13325
+        </td>
+        <td>
+          2974
+          -
+          2980
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.name
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          22311
+        </td>
+        <td>
+          2931
+          -
+          2999
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; thoseNames.contains(h.name))).++[org.http4s.Header.Raw](those.headers)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          16066
+        </td>
+        <td>
+          2986
+          -
+          2999
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headers
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          those.headers
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          18635
+        </td>
+        <td>
+          2983
+          -
+          2983
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          16287
+        </td>
+        <td>
+          2931
+          -
+          2999
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](Headers.this.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; thoseNames.contains(h.name))).++[org.http4s.Header.Raw](those.headers))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          19950
+        </td>
+        <td>
+          2954
+          -
+          2981
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SetOps.contains
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          thoseNames.contains(h.name)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          23153
+        </td>
+        <td>
+          2923
+          -
+          3000
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.messagedoctest,org.http4s.ember.core.traversalspec,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](Headers.this.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; thoseNames.contains(h.name))).++[org.http4s.Header.Raw](those.headers))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          19543
+        </td>
+        <td>
+          3079
+          -
+          3138
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.headers.++[org.http4s.Header.Raw](Header.ToRaw.modelledHeadersToRaw[H](h)(evidence$1).values)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          18505
+        </td>
+        <td>
+          3071
+          -
+          3139
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.client.clientsyntaxsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](this.headers.++[org.http4s.Header.Raw](Header.ToRaw.modelledHeadersToRaw[H](h)(evidence$1).values))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          13348
+        </td>
+        <td>
+          3095
+          -
+          3138
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.values
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.client.clientsyntaxsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Header.ToRaw.modelledHeadersToRaw[H](h)(evidence$1).values
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          22197
+        </td>
+        <td>
+          3079
+          -
+          3138
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.client.clientsyntaxsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](this.headers.++[org.http4s.Header.Raw](Header.ToRaw.modelledHeadersToRaw[H](h)(evidence$1).values))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          16084
+        </td>
+        <td>
+          3092
+          -
+          3092
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.messagedoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          19046
+        </td>
+        <td>
+          3374
+          -
+          3425
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.filterNot
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.filterNot(((h: org.http4s.Header.Raw) =&gt; Headers.PayloadHeaderKeys.apply(h.name)))
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          22754
+        </td>
+        <td>
+          3391
+          -
+          3424
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SetOps.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.PayloadHeaderKeys.apply(h.name)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          15268
+        </td>
+        <td>
+          3364
+          -
+          3426
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.transform
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.transform(((x$4: List[org.http4s.Header.Raw]) =&gt; x$4.filterNot(((h: org.http4s.Header.Raw) =&gt; Headers.PayloadHeaderKeys.apply(h.name)))))
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          16311
+        </td>
+        <td>
+          3417
+          -
+          3423
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          23040
+        </td>
+        <td>
+          4791
+          -
+          5334
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.transform
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.transform(((hs: List[org.http4s.Header.Raw]) =&gt; {
+  val b: scala.collection.mutable.Builder[org.http4s.Header.Raw,List[org.http4s.Header.Raw]] = scala.`package`.List.newBuilder[org.http4s.Header.Raw];
+  b.+=(org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Content-Length](contentLength)(Header.this.Select.singleHeaders[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance)).toRaw1);
+  hs.foreach[Any](((h: org.http4s.Header.Raw) =&gt; h.name match {
+    case headers.Transfer-Encoding.name =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[org.http4s.ParseResult, org.http4s.ParseFailure, org.http4s.headers.Transfer-Encoding](headers.Transfer-Encoding.parse(h.value))(cats.this.Invariant.catsMonadErrorForEither[org.http4s.ParseFailure]).redeem[Any](((x$5: org.http4s.ParseFailure) =&gt; b.+=(h)), ((x$6: org.http4s.headers.Transfer-Encoding) =&gt; x$6.filter(((x$7: org.http4s.TransferCoding) =&gt; x$7.!=(TransferCoding.chunked))).foreach[scala.collection.mutable.Builder[org.http4s.Header.Raw,List[org.http4s.Header.Raw]]](((x$8: org.http4s.headers.Transfer-Encoding) =&gt; b.+=(org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Transfer-Encoding](x$8)(Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)).toRaw1)))))(cats.this.Invariant.catsMonadErrorForEither[org.http4s.ParseFailure])
+    case headers.Content-Length.name =&gt; ()
+    case _ =&gt; b.+=(h)
+  }));
+  b.result()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          12945
+        </td>
+        <td>
+          4823
+          -
+          4850
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.List.newBuilder
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.newBuilder[org.http4s.Header.Raw]
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          19564
+        </td>
+        <td>
+          4862
+          -
+          4862
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          22216
+        </td>
+        <td>
+          4862
+          -
+          4882
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.syntax.SelectOpsOne.toRaw1
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Content-Length](contentLength)(Header.this.Select.singleHeaders[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance)).toRaw1
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          18527
+        </td>
+        <td>
+          4857
+          -
+          4882
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.+=(org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Content-Length](contentLength)(Header.this.Select.singleHeaders[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance)).toRaw1)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          15695
+        </td>
+        <td>
+          4862
+          -
+          4862
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          18496
+        </td>
+        <td>
+          4889
+          -
+          5311
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.foreach
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          hs.foreach[Any](((h: org.http4s.Header.Raw) =&gt; h.name match {
+  case headers.Transfer-Encoding.name =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[org.http4s.ParseResult, org.http4s.ParseFailure, org.http4s.headers.Transfer-Encoding](headers.Transfer-Encoding.parse(h.value))(cats.this.Invariant.catsMonadErrorForEither[org.http4s.ParseFailure]).redeem[Any](((x$5: org.http4s.ParseFailure) =&gt; b.+=(h)), ((x$6: org.http4s.headers.Transfer-Encoding) =&gt; x$6.filter(((x$7: org.http4s.TransferCoding) =&gt; x$7.!=(TransferCoding.chunked))).foreach[scala.collection.mutable.Builder[org.http4s.Header.Raw,List[org.http4s.Header.Raw]]](((x$8: org.http4s.headers.Transfer-Encoding) =&gt; b.+=(org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Transfer-Encoding](x$8)(Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)).toRaw1)))))(cats.this.Invariant.catsMonadErrorForEither[org.http4s.ParseFailure])
+  case headers.Content-Length.name =&gt; ()
+  case _ =&gt; b.+=(h)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          16196
+        </td>
+        <td>
+          4915
+          -
+          4921
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          22773
+        </td>
+        <td>
+          5026
+          -
+          5033
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          h.value
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          15134
+        </td>
+        <td>
+          5025
+          -
+          5025
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.Invariant.catsMonadErrorForEither
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Invariant.catsMonadErrorForEither[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          19266
+        </td>
+        <td>
+          4985
+          -
+          5034
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.parse
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          headers.Transfer-Encoding.parse(h.value)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          19449
+        </td>
+        <td>
+          4985
+          -
+          5199
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.redeem
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[org.http4s.ParseResult, org.http4s.ParseFailure, org.http4s.headers.Transfer-Encoding](headers.Transfer-Encoding.parse(h.value))(cats.this.Invariant.catsMonadErrorForEither[org.http4s.ParseFailure]).redeem[Any](((x$5: org.http4s.ParseFailure) =&gt; b.+=(h)), ((x$6: org.http4s.headers.Transfer-Encoding) =&gt; x$6.filter(((x$7: org.http4s.TransferCoding) =&gt; x$7.!=(TransferCoding.chunked))).foreach[scala.collection.mutable.Builder[org.http4s.Header.Raw,List[org.http4s.Header.Raw]]](((x$8: org.http4s.headers.Transfer-Encoding) =&gt; b.+=(org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Transfer-Encoding](x$8)(Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)).toRaw1)))))(cats.this.Invariant.catsMonadErrorForEither[org.http4s.ParseFailure])
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          21327
+        </td>
+        <td>
+          5056
+          -
+          5056
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.Invariant.catsMonadErrorForEither
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Invariant.catsMonadErrorForEither[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          21447
+        </td>
+        <td>
+          5079
+          -
+          5085
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          b.+=(h)
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          16060
+        </td>
+        <td>
+          5112
+          -
+          5139
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.!=
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$7.!=(TransferCoding.chunked)
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          19430
+        </td>
+        <td>
+          5117
+          -
+          5139
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.TransferCoding.chunked
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          TransferCoding.chunked
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          21967
+        </td>
+        <td>
+          5173
+          -
+          5173
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerSemigroupInstance
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerSemigroupInstance
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          19284
+        </td>
+        <td>
+          5168
+          -
+          5181
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          b.+=(org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Transfer-Encoding](x$8)(Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)).toRaw1)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          22639
+        </td>
+        <td>
+          5173
+          -
+          5181
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.syntax.SelectOpsOne.toRaw1
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Transfer-Encoding](x$8)(Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)).toRaw1
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          18380
+        </td>
+        <td>
+          5173
+          -
+          5173
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerInstance
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          16209
+        </td>
+        <td>
+          5173
+          -
+          5173
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.recurringHeadersWithMerge
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          14884
+        </td>
+        <td>
+          5103
+          -
+          5182
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.filter(((x$7: org.http4s.TransferCoding) =&gt; x$7.!=(TransferCoding.chunked))).foreach[scala.collection.mutable.Builder[org.http4s.Header.Raw,List[org.http4s.Header.Raw]]](((x$8: org.http4s.headers.Transfer-Encoding) =&gt; b.+=(org.http4s.implicits.http4sSelectSyntaxOne[org.http4s.headers.Transfer-Encoding](x$8)(Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)).toRaw1)))
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          16075
+        </td>
+        <td>
+          5252
+          -
+          5254
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          22481
+        </td>
+        <td>
+          5287
+          -
+          5293
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.+=(h)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          16750
+        </td>
+        <td>
+          5318
+          -
+          5328
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Builder.result
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.result()
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          18358
+        </td>
+        <td>
+          5452
+          -
+          5584
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.transform
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.transform(((x$9: List[org.http4s.Header.Raw]) =&gt; x$9.map[org.http4s.Header.Raw](((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (h @ _) if redactWhen.apply(h.name) =&gt; Header.Raw.apply(h.name, &quot;&lt;REDACTED&gt;&quot;)
+  case (h @ _) =&gt; h
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          22498
+        </td>
+        <td>
+          5470
+          -
+          5578
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.map
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$9.map[org.http4s.Header.Raw](((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (h @ _) if redactWhen.apply(h.name) =&gt; Header.Raw.apply(h.name, &quot;&lt;REDACTED&gt;&quot;)
+  case (h @ _) =&gt; h
+}))
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          15413
+        </td>
+        <td>
+          5496
+          -
+          5514
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          redactWhen.apply(h.name)
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          19970
+        </td>
+        <td>
+          5537
+          -
+          5549
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;&lt;REDACTED&gt;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          19299
+        </td>
+        <td>
+          5507
+          -
+          5513
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.name
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          21721
+        </td>
+        <td>
+          5529
+          -
+          5535
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.name
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          15964
+        </td>
+        <td>
+          5518
+          -
+          5550
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(h.name, &quot;&lt;REDACTED&gt;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          14655
+        </td>
+        <td>
+          5631
+          -
+          5649
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.foreach
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.this.headers.foreach[Unit](f)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          23057
+        </td>
+        <td>
+          5689
+          -
+          5689
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headersShow
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.Headers.headersShow
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          19177
+        </td>
+        <td>
+          5689
+          -
+          5698
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Show.Ops.show
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toShow[org.http4s.Headers](this)(http4s.this.Headers.headersShow).show
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          15129
+        </td>
+        <td>
+          5750
+          -
+          5772
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.List.empty
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.empty[org.http4s.Header.Raw]
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          15978
+        </td>
+        <td>
+          5742
+          -
+          5773
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](scala.`package`.List.empty[org.http4s.Header.Raw])(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          19420
+        </td>
+        <td>
+          5750
+          -
+          5772
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](scala.`package`.List.empty[org.http4s.Header.Raw])(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          21585
+        </td>
+        <td>
+          5760
+          -
+          5760
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.rawToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          172
+        </td>
+        <td>
+          14670
+        </td>
+        <td>
+          6200
+          -
+          6227
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Headers(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))).values)
+        </td>
+      </tr><tr>
+        <td>
+          172
+        </td>
+        <td>
+          22364
+        </td>
+        <td>
+          6212
+          -
+          6212
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          172
+        </td>
+        <td>
+          18374
+        </td>
+        <td>
+          6212
+          -
+          6226
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.values
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](headers)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))).values
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          22630
+        </td>
+        <td>
+          6318
+          -
+          6336
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.this.apply((headers: _*))
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          19197
+        </td>
+        <td>
+          6386
+          -
+          6448
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          org.http4s.messagesuite,org.http4s.headersdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$10.headers.iterator.map[String](((x$11: org.http4s.Header.Raw) =&gt; cats.syntax.`package`.all.toShow[org.http4s.Header.Raw](x$11)(Header.this.Raw.catsInstancesForHttp4sHeaderRaw).show)).mkString(&quot;Headers(&quot;, &quot;, &quot;, &quot;)&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          17628
+        </td>
+        <td>
+          6574
+          -
+          6577
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          15016
+        </td>
+        <td>
+          6621
+          -
+          6634
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.empty
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          21610
+        </td>
+        <td>
+          6694
+          -
+          6702
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.++
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          xa.++(xb)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          22651
+        </td>
+        <td>
+          6742
+          -
+          6851
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Set.apply[org.typelevel.ci.CIString](headers.Content-Length.name, headers.Content-Range.name, headers.Trailer.name, headers.Transfer-Encoding.name)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          15571
+        </td>
+        <td>
+          6751
+          -
+          6772
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.Content-Length.name
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          22122
+        </td>
+        <td>
+          6778
+          -
+          6798
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.Content-Range.name
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          18254
+        </td>
+        <td>
+          6804
+          -
+          6816
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Trailer.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.Trailer.name
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          14242
+        </td>
+        <td>
+          6822
+          -
+          6846
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.Transfer-Encoding.name
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          17483
+        </td>
+        <td>
+          6893
+          -
+          6965
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Set.apply[org.typelevel.ci.CIString](headers.Authorization.name, headers.Cookie.name, headers.Set-Cookie.name)
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          18802
+        </td>
+        <td>
+          6902
+          -
+          6920
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Authorization.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.Authorization.name
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          15031
+        </td>
+        <td>
+          6926
+          -
+          6937
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Cookie.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.Cookie.name
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          21627
+        </td>
+        <td>
+          6943
+          -
+          6960
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Set-Cookie.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.Set-Cookie.name
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

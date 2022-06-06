@@ -1,0 +1,2827 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/staticcontent/ResourceService.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package staticcontent
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.data.Kleisli
+</span>22 <span style=''>import cats.data.OptionT
+</span>23 <span style=''>import cats.effect.Async
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>import org.http4s.server.middleware.TranslateUri
+</span>26 <span style=''>import org.log4s.getLogger
+</span>27 <span style=''>
+</span>28 <span style=''>import java.nio.file.Paths
+</span>29 <span style=''>import scala.util.Failure
+</span>30 <span style=''>import scala.util.Success
+</span>31 <span style=''>import scala.util.Try
+</span>32 <span style=''>import scala.util.control.NoStackTrace
+</span>33 <span style=''>
+</span>34 <span style=''>/** [[org.http4s.server.staticcontent.ResourceServiceBuilder]] builder
+</span>35 <span style=''>  *
+</span>36 <span style=''>  * @param basePath prefix of the path files will be served from
+</span>37 <span style=''>  * @param pathPrefix prefix of the Uri that content will be served from
+</span>38 <span style=''>  * @param bufferSize size hint of internal buffers to use when serving resources
+</span>39 <span style=''>  * @param cacheStrategy strategy to use for caching purposes.
+</span>40 <span style=''>  * @param preferGzipped whether to serve pre-gzipped files (with extension &quot;.gz&quot;) if they exist
+</span>41 <span style=''>  * @param classLoader optional classloader for extracting the resources
+</span>42 <span style=''>  */
+</span>43 <span style=''>class ResourceServiceBuilder[F[_]] private (
+</span>44 <span style=''>    basePath: String,
+</span>45 <span style=''>    pathPrefix: String,
+</span>46 <span style=''>    bufferSize: Int,
+</span>47 <span style=''>    cacheStrategy: CacheStrategy[F],
+</span>48 <span style=''>    preferGzipped: Boolean,
+</span>49 <span style=''>    classLoader: Option[ClassLoader],
+</span>50 <span style=''>) {
+</span>51 <span style=''>  private[this] val logger = getLogger
+</span>52 <span style=''>
+</span>53 <span style=''>  private def copy(
+</span>54 <span style=''>      basePath: String = basePath,
+</span>55 <span style=''>      pathPrefix: String = pathPrefix,
+</span>56 <span style=''>      bufferSize: Int = bufferSize,
+</span>57 <span style=''>      cacheStrategy: CacheStrategy[F] = cacheStrategy,
+</span>58 <span style=''>      preferGzipped: Boolean = preferGzipped,
+</span>59 <span style=''>      classLoader: Option[ClassLoader] = classLoader,
+</span>60 <span style=''>  ): ResourceServiceBuilder[F] =
+</span>61 <span style=''>    </span><span style='background: #AEF1AE'>new ResourceServiceBuilder[F](
+</span>62 <span style=''></span><span style='background: #AEF1AE'>      basePath,
+</span>63 <span style=''></span><span style='background: #AEF1AE'>      pathPrefix,
+</span>64 <span style=''></span><span style='background: #AEF1AE'>      bufferSize,
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      cacheStrategy,
+</span>66 <span style=''></span><span style='background: #AEF1AE'>      preferGzipped,
+</span>67 <span style=''></span><span style='background: #AEF1AE'>      classLoader,
+</span>68 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>69 <span style=''>
+</span>70 <span style=''>  def withBasePath(basePath: String): ResourceServiceBuilder[F] = </span><span style='background: #AEF1AE'>copy(basePath = basePath)</span><span style=''>
+</span>71 <span style=''>  def withPathPrefix(pathPrefix: String): ResourceServiceBuilder[F] =
+</span>72 <span style=''>    </span><span style='background: #AEF1AE'>copy(pathPrefix = pathPrefix)</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>  def withCacheStrategy(cacheStrategy: CacheStrategy[F]): ResourceServiceBuilder[F] =
+</span>75 <span style=''>    </span><span style='background: #F0ADAD'>copy(cacheStrategy = cacheStrategy)</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>  def withPreferGzipped(preferGzipped: Boolean): ResourceServiceBuilder[F] =
+</span>78 <span style=''>    </span><span style='background: #AEF1AE'>copy(preferGzipped = preferGzipped)</span><span style=''>
+</span>79 <span style=''>
+</span>80 <span style=''>  def withClassLoader(classLoader: Option[ClassLoader]): ResourceServiceBuilder[F] =
+</span>81 <span style=''>    </span><span style='background: #F0ADAD'>copy(classLoader = classLoader)</span><span style=''>
+</span>82 <span style=''>
+</span>83 <span style=''>  def withBufferSize(bufferSize: Int): ResourceServiceBuilder[F] = </span><span style='background: #F0ADAD'>copy(bufferSize = bufferSize)</span><span style=''>
+</span>84 <span style=''>
+</span>85 <span style=''>  def toRoutes(implicit F: Async[F]): HttpRoutes[F] = {
+</span>86 <span style=''>    val basePath = if (</span><span style='background: #AEF1AE'>this.basePath.isEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>&quot;/&quot;</span><span style=''> else </span><span style='background: #AEF1AE'>this.basePath</span><span style=''>
+</span>87 <span style=''>    object BadTraversal extends Exception with NoStackTrace
+</span>88 <span style=''>
+</span>89 <span style=''>    </span><span style='background: #AEF1AE'>Try(Paths.get(basePath))</span><span style=''> match {
+</span>90 <span style=''>      case Success(rootPath) =&gt;
+</span>91 <span style=''>        </span><span style='background: #AEF1AE'>TranslateUri(pathPrefix)(Kleisli {
+</span>92 <span style=''></span><span style='background: #AEF1AE'>          case request if request.pathInfo.nonEmpty =&gt;
+</span>93 <span style=''></span><span style='background: #AEF1AE'>            val segments = request.pathInfo.segments.map(_.decoded(plusIsSpace = true))
+</span>94 <span style=''></span><span style='background: #AEF1AE'>            OptionT
+</span>95 <span style=''></span><span style='background: #AEF1AE'>              .liftF(F.catchNonFatal {
+</span>96 <span style=''></span><span style='background: #AEF1AE'>                segments.foldLeft(rootPath) {
+</span>97 <span style=''></span><span style='background: #AEF1AE'>                  case (_, &quot;&quot; | &quot;.&quot; | &quot;..&quot;) =&gt; throw BadTraversal
+</span>98 <span style=''></span><span style='background: #AEF1AE'>                  case (path, segment) =&gt;
+</span>99 <span style=''></span><span style='background: #AEF1AE'>                    path.resolve(segment)
+</span>100 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>101 <span style=''></span><span style='background: #AEF1AE'>              })
+</span>102 <span style=''></span><span style='background: #AEF1AE'>              .collect {
+</span>103 <span style=''></span><span style='background: #AEF1AE'>                case path if path.startsWith(rootPath) =&gt; path
+</span>104 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>105 <span style=''></span><span style='background: #AEF1AE'>              .flatMap { path =&gt;
+</span>106 <span style=''></span><span style='background: #AEF1AE'>                StaticFile.fromResource(
+</span>107 <span style=''></span><span style='background: #AEF1AE'>                  path.toString,
+</span>108 <span style=''></span><span style='background: #AEF1AE'>                  Some(request),
+</span>109 <span style=''></span><span style='background: #AEF1AE'>                  preferGzipped = preferGzipped,
+</span>110 <span style=''></span><span style='background: #AEF1AE'>                  classLoader,
+</span>111 <span style=''></span><span style='background: #AEF1AE'>                )
+</span>112 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>113 <span style=''></span><span style='background: #AEF1AE'>              .semiflatMap(cacheStrategy.cache(request.pathInfo, _))
+</span>114 <span style=''></span><span style='background: #AEF1AE'>              .recoverWith { case BadTraversal =&gt;
+</span>115 <span style=''></span><span style='background: #AEF1AE'>                OptionT.some(Response(Status.BadRequest))
+</span>116 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          case _ =&gt; OptionT.none
+</span>118 <span style=''></span><span style='background: #AEF1AE'>        })</span><span style=''>
+</span>119 <span style=''>
+</span>120 <span style=''>      case Failure(e) =&gt;
+</span>121 <span style=''>        logger.error(e)(
+</span>122 <span style=''>          s&quot;Could not get root path from ResourceService config: basePath = $basePath, pathPrefix = $pathPrefix. All requests will fail.&quot;
+</span>123 <span style=''>        )
+</span>124 <span style=''>        </span><span style='background: #F0ADAD'>Kleisli(_ =&gt; OptionT.pure(Response(Status.InternalServerError)))</span><span style=''>
+</span>125 <span style=''>    }
+</span>126 <span style=''>  }
+</span>127 <span style=''>}
+</span>128 <span style=''>
+</span>129 <span style=''>object ResourceServiceBuilder {
+</span>130 <span style=''>  def apply[F[_]](basePath: String): ResourceServiceBuilder[F] =
+</span>131 <span style=''>    </span><span style='background: #AEF1AE'>new ResourceServiceBuilder[F](
+</span>132 <span style=''></span><span style='background: #AEF1AE'>      basePath = basePath,
+</span>133 <span style=''></span><span style='background: #AEF1AE'>      pathPrefix = &quot;&quot;,
+</span>134 <span style=''></span><span style='background: #AEF1AE'>      bufferSize = 50 * 1024,
+</span>135 <span style=''></span><span style='background: #AEF1AE'>      cacheStrategy = NoopCacheStrategy[F],
+</span>136 <span style=''></span><span style='background: #AEF1AE'>      preferGzipped = false,
+</span>137 <span style=''></span><span style='background: #AEF1AE'>      classLoader = None,
+</span>138 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>139 <span style=''>}
+</span>140 <span style=''>
+</span>141 <span style=''>object ResourceService {
+</span>142 <span style=''>  private[this] val logger = getLogger
+</span>143 <span style=''>
+</span>144 <span style=''>  /** [[org.http4s.server.staticcontent.ResourceService]] configuration
+</span>145 <span style=''>    *
+</span>146 <span style=''>    * @param basePath prefix of the path files will be served from
+</span>147 <span style=''>    * @param pathPrefix prefix of the Uri that content will be served from
+</span>148 <span style=''>    * @param bufferSize size hint of internal buffers to use when serving resources
+</span>149 <span style=''>    * @param cacheStrategy strategy to use for caching purposes. Default to no caching.
+</span>150 <span style=''>    * @param preferGzipped whether to serve pre-gzipped files (with extension &quot;.gz&quot;) if they exist
+</span>151 <span style=''>    */
+</span>152 <span style=''>  final case class Config[F[_]](
+</span>153 <span style=''>      basePath: String,
+</span>154 <span style=''>      pathPrefix: String = &quot;&quot;,
+</span>155 <span style=''>      bufferSize: Int = 50 * 1024,
+</span>156 <span style=''>      cacheStrategy: CacheStrategy[F] = NoopCacheStrategy[F],
+</span>157 <span style=''>      preferGzipped: Boolean = false,
+</span>158 <span style=''>  )
+</span>159 <span style=''>
+</span>160 <span style=''>  /** Make a new [[org.http4s.HttpRoutes]] that serves static files. */
+</span>161 <span style=''>  @deprecated(&quot;use ResourceServiceBuilder&quot;, &quot;1.0.0-M1&quot;)
+</span>162 <span style=''>  private[staticcontent] def apply[F[_]](config: Config[F])(implicit F: Async[F]): HttpRoutes[F] = {
+</span>163 <span style=''>    val basePath = if (</span><span style='background: #F0ADAD'>config.basePath.isEmpty</span><span style=''>) </span><span style='background: #F0ADAD'>&quot;/&quot;</span><span style=''> else </span><span style='background: #F0ADAD'>config.basePath</span><span style=''>
+</span>164 <span style=''>    object BadTraversal extends Exception with NoStackTrace
+</span>165 <span style=''>
+</span>166 <span style=''>    </span><span style='background: #F0ADAD'>Try(Paths.get(basePath))</span><span style=''> match {
+</span>167 <span style=''>      case Success(rootPath) =&gt;
+</span>168 <span style=''>        </span><span style='background: #F0ADAD'>TranslateUri(config.pathPrefix)(Kleisli {
+</span>169 <span style=''></span><span style='background: #F0ADAD'>          case request if request.pathInfo.nonEmpty =&gt;
+</span>170 <span style=''></span><span style='background: #F0ADAD'>            val segments = request.pathInfo.segments.map(_.decoded(plusIsSpace = true))
+</span>171 <span style=''></span><span style='background: #F0ADAD'>            OptionT
+</span>172 <span style=''></span><span style='background: #F0ADAD'>              .liftF(F.catchNonFatal {
+</span>173 <span style=''></span><span style='background: #F0ADAD'>                segments.foldLeft(rootPath) {
+</span>174 <span style=''></span><span style='background: #F0ADAD'>                  case (_, &quot;&quot; | &quot;.&quot; | &quot;..&quot;) =&gt; throw BadTraversal
+</span>175 <span style=''></span><span style='background: #F0ADAD'>                  case (path, segment) =&gt;
+</span>176 <span style=''></span><span style='background: #F0ADAD'>                    path.resolve(segment)
+</span>177 <span style=''></span><span style='background: #F0ADAD'>                }
+</span>178 <span style=''></span><span style='background: #F0ADAD'>              })
+</span>179 <span style=''></span><span style='background: #F0ADAD'>              .collect {
+</span>180 <span style=''></span><span style='background: #F0ADAD'>                case path if path.startsWith(rootPath) =&gt; path
+</span>181 <span style=''></span><span style='background: #F0ADAD'>              }
+</span>182 <span style=''></span><span style='background: #F0ADAD'>              .flatMap { path =&gt;
+</span>183 <span style=''></span><span style='background: #F0ADAD'>                StaticFile.fromResource(
+</span>184 <span style=''></span><span style='background: #F0ADAD'>                  path.toString,
+</span>185 <span style=''></span><span style='background: #F0ADAD'>                  Some(request),
+</span>186 <span style=''></span><span style='background: #F0ADAD'>                  preferGzipped = config.preferGzipped,
+</span>187 <span style=''></span><span style='background: #F0ADAD'>                )
+</span>188 <span style=''></span><span style='background: #F0ADAD'>              }
+</span>189 <span style=''></span><span style='background: #F0ADAD'>              .semiflatMap(config.cacheStrategy.cache(request.pathInfo, _))
+</span>190 <span style=''></span><span style='background: #F0ADAD'>              .recoverWith { case BadTraversal =&gt;
+</span>191 <span style=''></span><span style='background: #F0ADAD'>                OptionT.some(Response(Status.BadRequest))
+</span>192 <span style=''></span><span style='background: #F0ADAD'>              }
+</span>193 <span style=''></span><span style='background: #F0ADAD'>          case _ =&gt; OptionT.none
+</span>194 <span style=''></span><span style='background: #F0ADAD'>        })</span><span style=''>
+</span>195 <span style=''>
+</span>196 <span style=''>      case Failure(e) =&gt;
+</span>197 <span style=''>        logger.error(e)(
+</span>198 <span style=''>          s&quot;Could not get root path from ResourceService config: basePath = ${config.basePath}, pathPrefix = ${config.pathPrefix}. All requests will fail.&quot;
+</span>199 <span style=''>        )
+</span>200 <span style=''>        </span><span style='background: #F0ADAD'>Kleisli(_ =&gt; OptionT.pure(Response(Status.InternalServerError)))</span><span style=''>
+</span>201 <span style=''>    }
+</span>202 <span style=''>  }
+</span>203 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          8286
+        </td>
+        <td>
+          2084
+          -
+          2233
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.staticcontent.ResourceServiceBuilder[F](basePath, pathPrefix, bufferSize, cacheStrategy, preferGzipped, classLoader)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          8755
+        </td>
+        <td>
+          2301
+          -
+          2326
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy(basePath, ResourceServiceBuilder.this.copy$default$2, ResourceServiceBuilder.this.copy$default$3, ResourceServiceBuilder.this.copy$default$4, ResourceServiceBuilder.this.copy$default$5, ResourceServiceBuilder.this.copy$default$6)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          7382
+        </td>
+        <td>
+          2301
+          -
+          2301
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$5
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          7211
+        </td>
+        <td>
+          2301
+          -
+          2301
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          9597
+        </td>
+        <td>
+          2301
+          -
+          2301
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          9220
+        </td>
+        <td>
+          2301
+          -
+          2301
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$6
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          8529
+        </td>
+        <td>
+          2301
+          -
+          2301
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          9515
+        </td>
+        <td>
+          2401
+          -
+          2401
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          8536
+        </td>
+        <td>
+          2401
+          -
+          2430
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy(x$2, x$1, x$3, x$4, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          8290
+        </td>
+        <td>
+          2401
+          -
+          2401
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          9681
+        </td>
+        <td>
+          2401
+          -
+          2401
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$6
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          7614
+        </td>
+        <td>
+          2401
+          -
+          2401
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          7213
+        </td>
+        <td>
+          2401
+          -
+          2401
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$5
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          8271
+        </td>
+        <td>
+          2522
+          -
+          2522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          7690
+        </td>
+        <td>
+          2522
+          -
+          2522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          8294
+        </td>
+        <td>
+          2522
+          -
+          2557
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy(x$2, x$3, x$4, x$1, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          7388
+        </td>
+        <td>
+          2522
+          -
+          2522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9203
+        </td>
+        <td>
+          2522
+          -
+          2522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9522
+        </td>
+        <td>
+          2522
+          -
+          2522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9689
+        </td>
+        <td>
+          2640
+          -
+          2640
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$2
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8241
+        </td>
+        <td>
+          2640
+          -
+          2675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy(x$2, x$3, x$4, x$5, x$1, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7520
+        </td>
+        <td>
+          2640
+          -
+          2640
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$4
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8520
+        </td>
+        <td>
+          2640
+          -
+          2640
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$3
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7312
+        </td>
+        <td>
+          2640
+          -
+          2640
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$1
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9205
+        </td>
+        <td>
+          2640
+          -
+          2640
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$6
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          9168
+        </td>
+        <td>
+          2766
+          -
+          2766
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          7696
+        </td>
+        <td>
+          2766
+          -
+          2766
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          7319
+        </td>
+        <td>
+          2766
+          -
+          2766
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          8527
+        </td>
+        <td>
+          2766
+          -
+          2797
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy(x$2, x$3, x$4, x$5, x$6, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          9462
+        </td>
+        <td>
+          2766
+          -
+          2766
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          8433
+        </td>
+        <td>
+          2766
+          -
+          2766
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          7446
+        </td>
+        <td>
+          2866
+          -
+          2866
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          9439
+        </td>
+        <td>
+          2866
+          -
+          2866
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          7612
+        </td>
+        <td>
+          2866
+          -
+          2866
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          9259
+        </td>
+        <td>
+          2866
+          -
+          2866
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          8338
+        </td>
+        <td>
+          2866
+          -
+          2895
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy(x$2, x$3, x$1, x$4, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          8245
+        </td>
+        <td>
+          2866
+          -
+          2866
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResourceServiceBuilder.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          7425
+        </td>
+        <td>
+          3008
+          -
+          3021
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.basePath
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.basePath
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          9171
+        </td>
+        <td>
+          2999
+          -
+          3002
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/&quot;
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          8534
+        </td>
+        <td>
+          2999
+          -
+          3002
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;/&quot;
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          9201
+        </td>
+        <td>
+          3008
+          -
+          3021
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.basePath
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.basePath
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          7271
+        </td>
+        <td>
+          2976
+          -
+          2997
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.basePath.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          8202
+        </td>
+        <td>
+          3091
+          -
+          3110
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.file.Paths.get
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.file.Paths.get(basePath)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          7567
+        </td>
+        <td>
+          3087
+          -
+          3111
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Try.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.util.Try.apply[java.nio.file.Path](java.nio.file.Paths.get(basePath))
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          9443
+        </td>
+        <td>
+          3173
+          -
+          3183
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.pathPrefix
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResourceServiceBuilder.this.pathPrefix
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          7472
+        </td>
+        <td>
+          3185
+          -
+          4221
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[[_]F[_]], org.http4s.Response[F]](((x0$1: org.http4s.Request[[_]F[_]]) =&gt; x0$1 match {
+  case (request @ _) if request.pathInfo.nonEmpty =&gt; {
+    val segments: scala.collection.immutable.Vector[String] = request.pathInfo.segments.map[String](((x$1: org.http4s.Uri.Path.Segment) =&gt; {
+      &lt;artifact&gt; val x$1: Boolean(true) = true;
+      &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$1.decoded$default$1;
+      &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$1.decoded$default$3;
+      x$1.decoded(x$2, true, x$3)
+    }));
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[F]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](rootPath)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).collect[java.nio.file.Path](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[java.nio.file.Path,java.nio.file.Path] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: java.nio.file.Path =&gt; java.nio.file.Path&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: java.nio.file.Path, B1 &gt;: java.nio.file.Path](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; path
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: java.nio.file.Path): Boolean = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[java.nio.file.Path,java.nio.file.Path]))(F).flatMap[org.http4s.Response[[_]F[_]]](((path: java.nio.file.Path) =&gt; StaticFile.fromResource[[_]F[_]](path.toString(), scala.Some.apply[org.http4s.Request[[_]F[_]]](request), ResourceServiceBuilder.this.preferGzipped, ResourceServiceBuilder.this.classLoader)(F)))(F).semiflatMap[org.http4s.Response[F]](((x$2: org.http4s.Response[[_]F[_]]) =&gt; ResourceServiceBuilder.this.cacheStrategy.cache(request.pathInfo, x$2)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recoverWith(({
+      @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]] with java.io.Serializable {
+        def &lt;init&gt;(): &lt;$anon: Throwable =&gt; cats.data.OptionT[F,org.http4s.Response[F]]&gt; = {
+          $anonfun.super.&lt;init&gt;();
+          ()
+        };
+        final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: cats.data.OptionT[F,org.http4s.Response[F]]](x2: A1, default: A1 =&gt; B1): B1 = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+          case (defaultCase$ @ _) =&gt; default.apply(x2)
+        };
+        final def isDefinedAt(x2: Throwable): Boolean = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; true
+          case (defaultCase$ @ _) =&gt; false
+        }
+      };
+      new $anonfun()
+    }: PartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+  }
+  case _ =&gt; cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          8111
+        </td>
+        <td>
+          3160
+          -
+          4222
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.TranslateUri.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.server.middleware.TranslateUri.apply[[A]cats.data.OptionT[F,A], [_]F[_], org.http4s.Response[F]](ResourceServiceBuilder.this.pathPrefix)(cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[[_]F[_]], org.http4s.Response[F]](((x0$1: org.http4s.Request[[_]F[_]]) =&gt; x0$1 match {
+  case (request @ _) if request.pathInfo.nonEmpty =&gt; {
+    val segments: scala.collection.immutable.Vector[String] = request.pathInfo.segments.map[String](((x$1: org.http4s.Uri.Path.Segment) =&gt; {
+      &lt;artifact&gt; val x$1: Boolean(true) = true;
+      &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$1.decoded$default$1;
+      &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$1.decoded$default$3;
+      x$1.decoded(x$2, true, x$3)
+    }));
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[F]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](rootPath)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).collect[java.nio.file.Path](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[java.nio.file.Path,java.nio.file.Path] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: java.nio.file.Path =&gt; java.nio.file.Path&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: java.nio.file.Path, B1 &gt;: java.nio.file.Path](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; path
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: java.nio.file.Path): Boolean = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[java.nio.file.Path,java.nio.file.Path]))(F).flatMap[org.http4s.Response[[_]F[_]]](((path: java.nio.file.Path) =&gt; StaticFile.fromResource[[_]F[_]](path.toString(), scala.Some.apply[org.http4s.Request[[_]F[_]]](request), ResourceServiceBuilder.this.preferGzipped, ResourceServiceBuilder.this.classLoader)(F)))(F).semiflatMap[org.http4s.Response[F]](((x$2: org.http4s.Response[[_]F[_]]) =&gt; ResourceServiceBuilder.this.cacheStrategy.cache(request.pathInfo, x$2)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recoverWith(({
+      @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]] with java.io.Serializable {
+        def &lt;init&gt;(): &lt;$anon: Throwable =&gt; cats.data.OptionT[F,org.http4s.Response[F]]&gt; = {
+          $anonfun.super.&lt;init&gt;();
+          ()
+        };
+        final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: cats.data.OptionT[F,org.http4s.Response[F]]](x2: A1, default: A1 =&gt; B1): B1 = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+          case (defaultCase$ @ _) =&gt; default.apply(x2)
+        };
+        final def isDefinedAt(x2: Throwable): Boolean = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; true
+          case (defaultCase$ @ _) =&gt; false
+        }
+      };
+      new $anonfun()
+    }: PartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+  }
+  case _ =&gt; cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+})))(data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          9352
+        </td>
+        <td>
+          3184
+          -
+          3184
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonoidKForOptionT
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          8425
+        </td>
+        <td>
+          3221
+          -
+          3246
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.nonEmpty
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          request.pathInfo.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          7431
+        </td>
+        <td>
+          3307
+          -
+          3336
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.decoded(x$2, true, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          7194
+        </td>
+        <td>
+          3331
+          -
+          3335
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          9347
+        </td>
+        <td>
+          3277
+          -
+          3337
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.map
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          request.pathInfo.segments.map[String](((x$1: org.http4s.Uri.Path.Segment) =&gt; {
+  &lt;artifact&gt; val x$1: Boolean(true) = true;
+  &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$1.decoded$default$1;
+  &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$1.decoded$default$3;
+  x$1.decoded(x$2, true, x$3)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          8480
+        </td>
+        <td>
+          3309
+          -
+          3309
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$3
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.decoded$default$3
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          9173
+        </td>
+        <td>
+          3309
+          -
+          3309
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$1
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.decoded$default$1
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          8107
+        </td>
+        <td>
+          3350
+          -
+          4054
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.semiflatMap
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](rootPath)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).collect[java.nio.file.Path](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[java.nio.file.Path,java.nio.file.Path] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: java.nio.file.Path =&gt; java.nio.file.Path&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: java.nio.file.Path, B1 &gt;: java.nio.file.Path](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; path
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: java.nio.file.Path): Boolean = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[java.nio.file.Path,java.nio.file.Path]))(F).flatMap[org.http4s.Response[[_]F[_]]](((path: java.nio.file.Path) =&gt; StaticFile.fromResource[[_]F[_]](path.toString(), scala.Some.apply[org.http4s.Request[[_]F[_]]](request), ResourceServiceBuilder.this.preferGzipped, ResourceServiceBuilder.this.classLoader)(F)))(F).semiflatMap[org.http4s.Response[F]](((x$2: org.http4s.Response[[_]F[_]]) =&gt; ResourceServiceBuilder.this.cacheStrategy.cache(request.pathInfo, x$2)(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          9992
+        </td>
+        <td>
+          4012
+          -
+          4012
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          8430
+        </td>
+        <td>
+          4082
+          -
+          4082
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          7354
+        </td>
+        <td>
+          4082
+          -
+          4082
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          9166
+        </td>
+        <td>
+          3350
+          -
+          4178
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recoverWith
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[F]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](rootPath)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).collect[java.nio.file.Path](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[java.nio.file.Path,java.nio.file.Path] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: java.nio.file.Path =&gt; java.nio.file.Path&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: java.nio.file.Path, B1 &gt;: java.nio.file.Path](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; path
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: java.nio.file.Path): Boolean = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[java.nio.file.Path,java.nio.file.Path]))(F).flatMap[org.http4s.Response[[_]F[_]]](((path: java.nio.file.Path) =&gt; StaticFile.fromResource[[_]F[_]](path.toString(), scala.Some.apply[org.http4s.Request[[_]F[_]]](request), ResourceServiceBuilder.this.preferGzipped, ResourceServiceBuilder.this.classLoader)(F)))(F).semiflatMap[org.http4s.Response[F]](((x$2: org.http4s.Response[[_]F[_]]) =&gt; ResourceServiceBuilder.this.cacheStrategy.cache(request.pathInfo, x$2)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; cats.data.OptionT[F,org.http4s.Response[F]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: cats.data.OptionT[F,org.http4s.Response[F]]](x2: A1, default: A1 =&gt; B1): B1 = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+      case (defaultCase$ @ _) =&gt; default.apply(x2)
+    };
+    final def isDefinedAt(x2: Throwable): Boolean = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          9401
+        </td>
+        <td>
+          4121
+          -
+          4162
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.PurePartiallyApplied.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          8489
+        </td>
+        <td>
+          4199
+          -
+          4211
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.none
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          9408
+        </td>
+        <td>
+          4430
+          -
+          4494
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[[_]F[_],A], org.http4s.Request[F], org.http4s.Response[[_]F[_]]](((x$3: org.http4s.Request[F]) =&gt; cats.data.OptionT.pure[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.InternalServerError, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          10056
+        </td>
+        <td>
+          4443
+          -
+          4493
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.PurePartiallyApplied.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.pure[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.InternalServerError, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          9356
+        </td>
+        <td>
+          4609
+          -
+          4824
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceServiceBuilder.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.staticcontent.ResourceServiceBuilder[F](basePath, &quot;&quot;, 51200, NoopCacheStrategy.apply[F], false, scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          8383
+        </td>
+        <td>
+          4686
+          -
+          4688
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          7358
+        </td>
+        <td>
+          4709
+          -
+          4718
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          51200
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          9169
+        </td>
+        <td>
+          4742
+          -
+          4762
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.NoopCacheStrategy.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          NoopCacheStrategy.apply[F]
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          8570
+        </td>
+        <td>
+          4786
+          -
+          4791
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          7477
+        </td>
+        <td>
+          4813
+          -
+          4817
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          8391
+        </td>
+        <td>
+          5905
+          -
+          5920
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceService.Config.basePath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          config.basePath
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          9390
+        </td>
+        <td>
+          5896
+          -
+          5899
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;/&quot;
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          10058
+        </td>
+        <td>
+          5896
+          -
+          5899
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;/&quot;
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          7363
+        </td>
+        <td>
+          5905
+          -
+          5920
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceService.Config.basePath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          config.basePath
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          8200
+        </td>
+        <td>
+          5871
+          -
+          5894
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          config.basePath.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          8044
+        </td>
+        <td>
+          5986
+          -
+          6010
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Try.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.util.Try.apply[java.nio.file.Path](java.nio.file.Paths.get(basePath))
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          9131
+        </td>
+        <td>
+          5990
+          -
+          6009
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.file.Paths.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.nio.file.Paths.get(basePath)
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          9094
+        </td>
+        <td>
+          6059
+          -
+          7111
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.TranslateUri.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.server.middleware.TranslateUri.apply[[A]cats.data.OptionT[F,A], [_]F[_], org.http4s.Response[F]](config.pathPrefix)(cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[[_]F[_]], org.http4s.Response[F]](((x0$1: org.http4s.Request[[_]F[_]]) =&gt; x0$1 match {
+  case (request @ _) if request.pathInfo.nonEmpty =&gt; {
+    val segments: scala.collection.immutable.Vector[String] = request.pathInfo.segments.map[String](((x$4: org.http4s.Uri.Path.Segment) =&gt; {
+      &lt;artifact&gt; val x$1: Boolean(true) = true;
+      &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$4.decoded$default$1;
+      &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$4.decoded$default$3;
+      x$4.decoded(x$2, true, x$3)
+    }));
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[F]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](rootPath)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).collect[java.nio.file.Path](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[java.nio.file.Path,java.nio.file.Path] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: java.nio.file.Path =&gt; java.nio.file.Path&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: java.nio.file.Path, B1 &gt;: java.nio.file.Path](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; path
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: java.nio.file.Path): Boolean = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[java.nio.file.Path,java.nio.file.Path]))(F).flatMap[org.http4s.Response[[_]F[_]]](((path: java.nio.file.Path) =&gt; StaticFile.fromResource[[_]F[_]](path.toString(), scala.Some.apply[org.http4s.Request[[_]F[_]]](request), config.preferGzipped, StaticFile.fromResource$default$4[Nothing])(F)))(F).semiflatMap[org.http4s.Response[F]](((x$5: org.http4s.Response[[_]F[_]]) =&gt; config.cacheStrategy.cache(request.pathInfo, x$5)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recoverWith(({
+      @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]] with java.io.Serializable {
+        def &lt;init&gt;(): &lt;$anon: Throwable =&gt; cats.data.OptionT[F,org.http4s.Response[F]]&gt; = {
+          $anonfun.super.&lt;init&gt;();
+          ()
+        };
+        final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: cats.data.OptionT[F,org.http4s.Response[F]]](x2: A1, default: A1 =&gt; B1): B1 = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+          case (defaultCase$ @ _) =&gt; default.apply(x2)
+        };
+        final def isDefinedAt(x2: Throwable): Boolean = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; true
+          case (defaultCase$ @ _) =&gt; false
+        }
+      };
+      new $anonfun()
+    }: PartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+  }
+  case _ =&gt; cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+})))(data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          7356
+        </td>
+        <td>
+          6090
+          -
+          6090
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonoidKForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          8301
+        </td>
+        <td>
+          6091
+          -
+          7110
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[[_]F[_]], org.http4s.Response[F]](((x0$1: org.http4s.Request[[_]F[_]]) =&gt; x0$1 match {
+  case (request @ _) if request.pathInfo.nonEmpty =&gt; {
+    val segments: scala.collection.immutable.Vector[String] = request.pathInfo.segments.map[String](((x$4: org.http4s.Uri.Path.Segment) =&gt; {
+      &lt;artifact&gt; val x$1: Boolean(true) = true;
+      &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$4.decoded$default$1;
+      &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$4.decoded$default$3;
+      x$4.decoded(x$2, true, x$3)
+    }));
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[F]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](rootPath)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).collect[java.nio.file.Path](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[java.nio.file.Path,java.nio.file.Path] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: java.nio.file.Path =&gt; java.nio.file.Path&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: java.nio.file.Path, B1 &gt;: java.nio.file.Path](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; path
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: java.nio.file.Path): Boolean = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[java.nio.file.Path,java.nio.file.Path]))(F).flatMap[org.http4s.Response[[_]F[_]]](((path: java.nio.file.Path) =&gt; StaticFile.fromResource[[_]F[_]](path.toString(), scala.Some.apply[org.http4s.Request[[_]F[_]]](request), config.preferGzipped, StaticFile.fromResource$default$4[Nothing])(F)))(F).semiflatMap[org.http4s.Response[F]](((x$5: org.http4s.Response[[_]F[_]]) =&gt; config.cacheStrategy.cache(request.pathInfo, x$5)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recoverWith(({
+      @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]] with java.io.Serializable {
+        def &lt;init&gt;(): &lt;$anon: Throwable =&gt; cats.data.OptionT[F,org.http4s.Response[F]]&gt; = {
+          $anonfun.super.&lt;init&gt;();
+          ()
+        };
+        final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: cats.data.OptionT[F,org.http4s.Response[F]]](x2: A1, default: A1 =&gt; B1): B1 = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+          case (defaultCase$ @ _) =&gt; default.apply(x2)
+        };
+        final def isDefinedAt(x2: Throwable): Boolean = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+          case BadTraversal =&gt; true
+          case (defaultCase$ @ _) =&gt; false
+        }
+      };
+      new $anonfun()
+    }: PartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+  }
+  case _ =&gt; cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          7387
+        </td>
+        <td>
+          6072
+          -
+          6089
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceService.Config.pathPrefix
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          config.pathPrefix
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          9317
+        </td>
+        <td>
+          6127
+          -
+          6152
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          request.pathInfo.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          9399
+        </td>
+        <td>
+          6215
+          -
+          6215
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$4.decoded$default$3
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          8205
+        </td>
+        <td>
+          6237
+          -
+          6241
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          10037
+        </td>
+        <td>
+          6215
+          -
+          6215
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$4.decoded$default$1
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          7229
+        </td>
+        <td>
+          6183
+          -
+          6243
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          request.pathInfo.segments.map[String](((x$4: org.http4s.Uri.Path.Segment) =&gt; {
+  &lt;artifact&gt; val x$1: Boolean(true) = true;
+  &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$4.decoded$default$1;
+  &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$4.decoded$default$3;
+  x$4.decoded(x$2, true, x$3)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          8323
+        </td>
+        <td>
+          6213
+          -
+          6242
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$4.decoded(x$2, true, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          7938
+        </td>
+        <td>
+          6894
+          -
+          6894
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          9139
+        </td>
+        <td>
+          6256
+          -
+          6943
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.semiflatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](rootPath)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).collect[java.nio.file.Path](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[java.nio.file.Path,java.nio.file.Path] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: java.nio.file.Path =&gt; java.nio.file.Path&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: java.nio.file.Path, B1 &gt;: java.nio.file.Path](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; path
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: java.nio.file.Path): Boolean = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[java.nio.file.Path,java.nio.file.Path]))(F).flatMap[org.http4s.Response[[_]F[_]]](((path: java.nio.file.Path) =&gt; StaticFile.fromResource[[_]F[_]](path.toString(), scala.Some.apply[org.http4s.Request[[_]F[_]]](request), config.preferGzipped, StaticFile.fromResource$default$4[Nothing])(F)))(F).semiflatMap[org.http4s.Response[F]](((x$5: org.http4s.Response[[_]F[_]]) =&gt; config.cacheStrategy.cache(request.pathInfo, x$5)(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          8160
+        </td>
+        <td>
+          6971
+          -
+          6971
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          10041
+        </td>
+        <td>
+          6256
+          -
+          7067
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recoverWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[F]](cats.data.OptionT.liftF[F, java.nio.file.Path](F.catchNonFatal[java.nio.file.Path](segments.foldLeft[java.nio.file.Path](rootPath)(((x0$2: java.nio.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[java.nio.file.Path, String](x0$2, x1$1) match {
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: java.nio.file.Path, _2: String): (java.nio.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable]))(F).collect[java.nio.file.Path](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[java.nio.file.Path,java.nio.file.Path] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: java.nio.file.Path =&gt; java.nio.file.Path&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: java.nio.file.Path, B1 &gt;: java.nio.file.Path](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; path
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: java.nio.file.Path): Boolean = ((x1.asInstanceOf[java.nio.file.Path]: java.nio.file.Path): java.nio.file.Path @unchecked) match {
+      case (path @ _) if path.startsWith(rootPath) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[java.nio.file.Path,java.nio.file.Path]))(F).flatMap[org.http4s.Response[[_]F[_]]](((path: java.nio.file.Path) =&gt; StaticFile.fromResource[[_]F[_]](path.toString(), scala.Some.apply[org.http4s.Request[[_]F[_]]](request), config.preferGzipped, StaticFile.fromResource$default$4[Nothing])(F)))(F).semiflatMap[org.http4s.Response[F]](((x$5: org.http4s.Response[[_]F[_]]) =&gt; config.cacheStrategy.cache(request.pathInfo, x$5)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; cats.data.OptionT[F,org.http4s.Response[F]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: cats.data.OptionT[F,org.http4s.Response[F]]](x2: A1, default: A1 =&gt; B1): B1 = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+      case (defaultCase$ @ _) =&gt; default.apply(x2)
+    };
+    final def isDefinedAt(x2: Throwable): Boolean = ((x2.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          9229
+        </td>
+        <td>
+          6971
+          -
+          6971
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.ResourceService.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          7396
+        </td>
+        <td>
+          7010
+          -
+          7051
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.PurePartiallyApplied.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          8851
+        </td>
+        <td>
+          7088
+          -
+          7100
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.none
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](F)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          7948
+        </td>
+        <td>
+          7350
+          -
+          7400
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.PurePartiallyApplied.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.pure[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.InternalServerError, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          7405
+        </td>
+        <td>
+          7337
+          -
+          7401
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[[_]F[_],A], org.http4s.Request[F], org.http4s.Response[[_]F[_]]](((x$6: org.http4s.Request[F]) =&gt; cats.data.OptionT.pure[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.InternalServerError, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)))
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

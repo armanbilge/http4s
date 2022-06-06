@@ -1,0 +1,887 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/middleware/ResponseLogger.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package client
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.effect.Ref
+</span>22 <span style=''>import cats.effect._
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import fs2._
+</span>25 <span style=''>import org.http4s.internal.{Logger =&gt; InternalLogger}
+</span>26 <span style=''>import org.log4s.getLogger
+</span>27 <span style=''>import org.typelevel.ci.CIString
+</span>28 <span style=''>
+</span>29 <span style=''>/** Client middlewares that logs the HTTP responses it receives as soon as they are received locally.
+</span>30 <span style=''>  *
+</span>31 <span style=''>  * The &quot;logging&quot; is represented as an effectful action `String =&gt; F[Unit]`
+</span>32 <span style=''>  */
+</span>33 <span style=''>object ResponseLogger {
+</span>34 <span style=''>  private[this] val logger = getLogger
+</span>35 <span style=''>
+</span>36 <span style=''>  private def defaultLogAction[F[_]: Sync](s: String): F[Unit] = </span><span style='background: #AEF1AE'>Sync[F].delay(logger.info(s))</span><span style=''>
+</span>37 <span style=''>
+</span>38 <span style=''>  def apply[F[_]: Async](
+</span>39 <span style=''>      logHeaders: Boolean,
+</span>40 <span style=''>      logBody: Boolean,
+</span>41 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>42 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>43 <span style=''>  )(client: Client[F]): Client[F] =
+</span>44 <span style=''>    </span><span style='background: #AEF1AE'>impl(client, logBody) { response =&gt;
+</span>45 <span style=''></span><span style='background: #AEF1AE'>      Logger.logMessage[F, Response[F]](response)(
+</span>46 <span style=''></span><span style='background: #AEF1AE'>        logHeaders,
+</span>47 <span style=''></span><span style='background: #AEF1AE'>        logBody,
+</span>48 <span style=''></span><span style='background: #AEF1AE'>        redactHeadersWhen,
+</span>49 <span style=''></span><span style='background: #AEF1AE'>      )(logAction.getOrElse(defaultLogAction[F]))
+</span>50 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>51 <span style=''>
+</span>52 <span style=''>  def logBodyText[F[_]: Async](
+</span>53 <span style=''>      logHeaders: Boolean,
+</span>54 <span style=''>      logBody: Stream[F, Byte] =&gt; Option[F[String]],
+</span>55 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>56 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>57 <span style=''>  )(client: Client[F]): Client[F] =
+</span>58 <span style=''>    </span><span style='background: #F0ADAD'>impl(client, logBody = true) { response =&gt;
+</span>59 <span style=''></span><span style='background: #F0ADAD'>      InternalLogger.logMessageWithBodyText[F, Response[F]](response)(
+</span>60 <span style=''></span><span style='background: #F0ADAD'>        logHeaders,
+</span>61 <span style=''></span><span style='background: #F0ADAD'>        logBody,
+</span>62 <span style=''></span><span style='background: #F0ADAD'>        redactHeadersWhen,
+</span>63 <span style=''></span><span style='background: #F0ADAD'>      )(logAction.getOrElse(defaultLogAction[F]))
+</span>64 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>  def customized[F[_]: Async](
+</span>67 <span style=''>      client: Client[F],
+</span>68 <span style=''>      logBody: Boolean = true,
+</span>69 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>70 <span style=''>  )(responseToText: Response[F] =&gt; F[String]): Client[F] =
+</span>71 <span style=''>    </span><span style='background: #F0ADAD'>impl(client, logBody) { response =&gt;
+</span>72 <span style=''></span><span style='background: #F0ADAD'>      val log = logAction.getOrElse(defaultLogAction[F] _)
+</span>73 <span style=''></span><span style='background: #F0ADAD'>      responseToText(response).flatMap(log)
+</span>74 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>75 <span style=''>
+</span>76 <span style=''>  private def impl[F[_]](client: Client[F], logBody: Boolean)(
+</span>77 <span style=''>      logMessage: Response[F] =&gt; F[Unit]
+</span>78 <span style=''>  )(implicit F: Async[F]): Client[F] = {
+</span>79 <span style=''>    def logResponse(response: Response[F]): Resource[F, Response[F]] =
+</span>80 <span style=''>      if (</span><span style='background: #AEF1AE'>!logBody</span><span style=''>)
+</span>81 <span style=''>        </span><span style='background: #F0ADAD'>Resource.eval(logMessage(response) *&gt; F.delay(response))</span><span style=''>
+</span>82 <span style=''>      else
+</span>83 <span style=''>        </span><span style='background: #AEF1AE'>Resource.suspend {
+</span>84 <span style=''></span><span style='background: #AEF1AE'>          Ref[F].of(Vector.empty[Chunk[Byte]]).map { vec =&gt;
+</span>85 <span style=''></span><span style='background: #AEF1AE'>            val dumpChunksToVec: Pipe[F, Byte, Nothing] =
+</span>86 <span style=''></span><span style='background: #AEF1AE'>              _.chunks.flatMap(s =&gt; Stream.exec(vec.update(_ :+ s)))
+</span>87 <span style=''></span><span style='background: #AEF1AE'>
+</span>88 <span style=''></span><span style='background: #AEF1AE'>            Resource.make(
+</span>89 <span style=''></span><span style='background: #AEF1AE'>              // Cannot Be Done Asynchronously - Otherwise All Chunks May Not Be Appended before Finalization
+</span>90 <span style=''></span><span style='background: #AEF1AE'>              F.pure(response.pipeBodyThrough(_.observe(dumpChunksToVec)))
+</span>91 <span style=''></span><span style='background: #AEF1AE'>            ) { _ =&gt;
+</span>92 <span style=''></span><span style='background: #AEF1AE'>              val newBody = Stream.eval(vec.get).flatMap(Stream.emits).unchunks
+</span>93 <span style=''></span><span style='background: #AEF1AE'>              logMessage(response.withBodyStream(newBody))
+</span>94 <span style=''></span><span style='background: #AEF1AE'>                .handleErrorWith(t =&gt; F.delay(logger.error(t)(&quot;Error logging response body&quot;)))
+</span>95 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>96 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>97 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>98 <span style=''>
+</span>99 <span style=''>    </span><span style='background: #AEF1AE'>Client(req =&gt; client.run(req).flatMap(logResponse))</span><span style=''>
+</span>100 <span style=''>  }
+</span>101 <span style=''>
+</span>102 <span style=''>  def defaultResponseColor[F[_]](response: Response[F]): String =
+</span>103 <span style=''>    </span><span style='background: #F0ADAD'>response.status.responseClass</span><span style=''> match {
+</span>104 <span style=''>      case Status.Informational | Status.Successful | Status.Redirection =&gt; </span><span style='background: #F0ADAD'>Console.GREEN</span><span style=''>
+</span>105 <span style=''>      case Status.ClientError =&gt; </span><span style='background: #F0ADAD'>Console.YELLOW</span><span style=''>
+</span>106 <span style=''>      case Status.ServerError =&gt; </span><span style='background: #F0ADAD'>Console.RED</span><span style=''>
+</span>107 <span style=''>    }
+</span>108 <span style=''>
+</span>109 <span style=''>  def colored[F[_]: Async](
+</span>110 <span style=''>      logHeaders: Boolean,
+</span>111 <span style=''>      logBody: Boolean,
+</span>112 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>113 <span style=''>      color: Response[F] =&gt; String = defaultResponseColor _,
+</span>114 <span style=''>      logAction: Option[String =&gt; F[Unit]] = None,
+</span>115 <span style=''>  )(client: Client[F]): Client[F] =
+</span>116 <span style=''>    </span><span style='background: #F0ADAD'>customized(client, logBody, logAction) { response =&gt;
+</span>117 <span style=''></span><span style='background: #F0ADAD'>      val prelude = s&quot;${response.httpVersion} ${response.status}&quot;
+</span>118 <span style=''></span><span style='background: #F0ADAD'>
+</span>119 <span style=''></span><span style='background: #F0ADAD'>      val headers: String =
+</span>120 <span style=''></span><span style='background: #F0ADAD'>        InternalLogger.defaultLogHeaders[F, Response[F]](response)(logHeaders, redactHeadersWhen)
+</span>121 <span style=''></span><span style='background: #F0ADAD'>
+</span>122 <span style=''></span><span style='background: #F0ADAD'>      val bodyText: F[String] =
+</span>123 <span style=''></span><span style='background: #F0ADAD'>        InternalLogger.defaultLogBody[F, Response[F]](response)(logBody) match {
+</span>124 <span style=''></span><span style='background: #F0ADAD'>          case Some(textF) =&gt; textF.map(text =&gt; s&quot;&quot;&quot;body=&quot;$text&quot;&quot;&quot;&quot;)
+</span>125 <span style=''></span><span style='background: #F0ADAD'>          case None =&gt; Sync[F].pure(&quot;&quot;)
+</span>126 <span style=''></span><span style='background: #F0ADAD'>        }
+</span>127 <span style=''></span><span style='background: #F0ADAD'>
+</span>128 <span style=''></span><span style='background: #F0ADAD'>      def spaced(x: String): String = if (x.isEmpty) x else s&quot; $x&quot;
+</span>129 <span style=''></span><span style='background: #F0ADAD'>
+</span>130 <span style=''></span><span style='background: #F0ADAD'>      bodyText
+</span>131 <span style=''></span><span style='background: #F0ADAD'>        .map(body =&gt; s&quot;${color(response)}$prelude${spaced(headers)}${spaced(body)}${Console.RESET}&quot;)
+</span>132 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>133 <span style=''>
+</span>134 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          11855
+        </td>
+        <td>
+          1162
+          -
+          1191
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Sync.apply[F](evidence$1).delay[Unit](if (ResponseLogger.this.logger.logger.isInfoEnabled())
+  ResponseLogger.this.logger.logger.info(s)
+else
+  ())
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          11397
+        </td>
+        <td>
+          1443
+          -
+          1649
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.ResponseLogger.impl
+        </td>
+        <td>
+          org.http4s.client.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ResponseLogger.this.impl[[_]F[_]](client, logBody)(((response: org.http4s.Response[[_]F[_]]) =&gt; Logger.logMessage[F, org.http4s.Response[F]](response)(logHeaders, logBody, redactHeadersWhen)(logAction.getOrElse[String =&gt; F[Unit]](((s: String) =&gt; ResponseLogger.this.defaultLogAction[F](s)(evidence$2))))(evidence$2)))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          11213
+        </td>
+        <td>
+          1936
+          -
+          2169
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.ResponseLogger.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResponseLogger.this.impl[[_]F[_]](client, true)(((response: org.http4s.Response[[_]F[_]]) =&gt; org.http4s.internal.Logger.logMessageWithBodyText[F, org.http4s.Response[F]](response)(logHeaders, logBody, redactHeadersWhen)(logAction.getOrElse[String =&gt; F[Unit]](((s: String) =&gt; ResponseLogger.this.defaultLogAction[F](s)(evidence$3))))(evidence$3)))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          11925
+        </td>
+        <td>
+          2372
+          -
+          2516
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.ResponseLogger.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResponseLogger.this.impl[[_]F[_]](client, logBody)(((response: org.http4s.Response[[_]F[_]]) =&gt; {
+  val log: String =&gt; F[Unit] = logAction.getOrElse[String =&gt; F[Unit]](((s: String) =&gt; ResponseLogger.this.defaultLogAction[F](s)(evidence$4)));
+  cats.syntax.`package`.all.toFlatMapOps[F, String](responseToText.apply(response))(evidence$4).flatMap[Unit](log)
+}))(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11465
+        </td>
+        <td>
+          2744
+          -
+          2752
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          logBody.unary_!
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          11570
+        </td>
+        <td>
+          2776
+          -
+          2817
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApply[F, Unit](logMessage.apply(response))(F).*&gt;[org.http4s.Response[F]](F.delay[org.http4s.Response[F]](response))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          11836
+        </td>
+        <td>
+          2762
+          -
+          2818
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.effect.kernel.Resource.eval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApply[F, Unit](logMessage.apply(response))(F).*&gt;[org.http4s.Response[F]](F.delay[org.http4s.Response[F]](response)))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          11097
+        </td>
+        <td>
+          2762
+          -
+          2818
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.eval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApply[F, Unit](logMessage.apply(response))(F).*&gt;[org.http4s.Response[F]](F.delay[org.http4s.Response[F]](response)))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          11063
+        </td>
+        <td>
+          2776
+          -
+          2796
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          logMessage.apply(response)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          11766
+        </td>
+        <td>
+          2800
+          -
+          2817
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.delay[org.http4s.Response[F]](response)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11869
+        </td>
+        <td>
+          2838
+          -
+          3547
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.effect.kernel.Resource.suspend
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.suspend[F, response.Self](cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]]))(F).map[cats.effect.kernel.Resource[F,response.Self]](((vec: cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]) =&gt; {
+  val dumpChunksToVec: fs2.Pipe[F,Byte,Nothing] = ((x$1: fs2.Stream[F,Byte]) =&gt; x$1.chunks.flatMap[[x]F[x], fs2.INothing](((s: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$2: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$2.:+[fs2.Chunk[Byte]](s))))))(compat.this.NotGiven.default[Nothing]));
+  cats.effect.`package`.Resource.make[F, response.Self](F.pure[response.Self](response.pipeBodyThrough(((x$3: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$3).observe(dumpChunksToVec)(F)))))(((x$4: response.Self) =&gt; {
+    val newBody: fs2.Stream[[x]F[x],Byte] = fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((os: scala.collection.Seq[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](os)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]);
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](logMessage.apply(response.withBodyStream(newBody)))(F).handleErrorWith(((t: Throwable) =&gt; F.delay[Unit](ResponseLogger.this.logger.logger.error(&quot;Error logging response body&quot;, t))))(F)
+  }))(F)
+})))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11176
+        </td>
+        <td>
+          2838
+          -
+          3547
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.suspend
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.suspend[F, response.Self](cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]]))(F).map[cats.effect.kernel.Resource[F,response.Self]](((vec: cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]) =&gt; {
+  val dumpChunksToVec: fs2.Pipe[F,Byte,Nothing] = ((x$1: fs2.Stream[F,Byte]) =&gt; x$1.chunks.flatMap[[x]F[x], fs2.INothing](((s: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$2: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$2.:+[fs2.Chunk[Byte]](s))))))(compat.this.NotGiven.default[Nothing]));
+  cats.effect.`package`.Resource.make[F, response.Self](F.pure[response.Self](response.pipeBodyThrough(((x$3: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$3).observe(dumpChunksToVec)(F)))))(((x$4: response.Self) =&gt; {
+    val newBody: fs2.Stream[[x]F[x],Byte] = fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((os: scala.collection.Seq[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](os)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]);
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](logMessage.apply(response.withBodyStream(newBody)))(F).handleErrorWith(((t: Throwable) =&gt; F.delay[Unit](ResponseLogger.this.logger.logger.error(&quot;Error logging response body&quot;, t))))(F)
+  }))(F)
+})))
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          11399
+        </td>
+        <td>
+          2870
+          -
+          2870
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Ref.MakeInstances.concurrentInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Ref.this.Make.concurrentInstance[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          11894
+        </td>
+        <td>
+          2867
+          -
+          2903
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.ApplyBuilders.of
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]])
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          11173
+        </td>
+        <td>
+          2877
+          -
+          2902
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Vector.empty[fs2.Chunk[Byte]]
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          11376
+        </td>
+        <td>
+          2867
+          -
+          3537
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[scala.collection.immutable.Vector[fs2.Chunk[Byte]]](scala.`package`.Vector.empty[fs2.Chunk[Byte]]))(F).map[cats.effect.kernel.Resource[F,response.Self]](((vec: cats.effect.kernel.Ref[F,scala.collection.immutable.Vector[fs2.Chunk[Byte]]]) =&gt; {
+  val dumpChunksToVec: fs2.Pipe[F,Byte,Nothing] = ((x$1: fs2.Stream[F,Byte]) =&gt; x$1.chunks.flatMap[[x]F[x], fs2.INothing](((s: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$2: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$2.:+[fs2.Chunk[Byte]](s))))))(compat.this.NotGiven.default[Nothing]));
+  cats.effect.`package`.Resource.make[F, response.Self](F.pure[response.Self](response.pipeBodyThrough(((x$3: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$3).observe(dumpChunksToVec)(F)))))(((x$4: response.Self) =&gt; {
+    val newBody: fs2.Stream[[x]F[x],Byte] = fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((os: scala.collection.Seq[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](os)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]);
+    cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](logMessage.apply(response.withBodyStream(newBody)))(F).handleErrorWith(((t: Throwable) =&gt; F.delay[Unit](ResponseLogger.this.logger.logger.error(&quot;Error logging response body&quot;, t))))(F)
+  }))(F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          11546
+        </td>
+        <td>
+          3005
+          -
+          3005
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          11468
+        </td>
+        <td>
+          3034
+          -
+          3040
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.:+[fs2.Chunk[Byte]](s)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          11004
+        </td>
+        <td>
+          3023
+          -
+          3041
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          vec.update(((x$2: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$2.:+[fs2.Chunk[Byte]](s)))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          11147
+        </td>
+        <td>
+          2989
+          -
+          3043
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.chunks.flatMap[[x]F[x], fs2.INothing](((s: fs2.Chunk[Byte]) =&gt; fs2.Stream.exec[F](vec.update(((x$2: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$2.:+[fs2.Chunk[Byte]](s))))))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          11769
+        </td>
+        <td>
+          3011
+          -
+          3042
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.exec
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.exec[F](vec.update(((x$2: scala.collection.immutable.Vector[fs2.Chunk[Byte]]) =&gt; x$2.:+[fs2.Chunk[Byte]](s))))
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          11841
+        </td>
+        <td>
+          3057
+          -
+          3525
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Resource.make
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.make[F, response.Self](F.pure[response.Self](response.pipeBodyThrough(((x$3: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](x$3).observe(dumpChunksToVec)(F)))))(((x$4: response.Self) =&gt; {
+  val newBody: fs2.Stream[[x]F[x],Byte] = fs2.Stream.eval[F, scala.collection.immutable.Vector[fs2.Chunk[Byte]]](vec.get).flatMap[[x]F[x], fs2.Chunk[Byte]](((os: scala.collection.Seq[fs2.Chunk[Byte]]) =&gt; fs2.Stream.emits[[x]fs2.Pure[x], fs2.Chunk[Byte]](os)))(compat.this.NotGiven.default[Nothing]).unchunks[Byte](scala.this.&lt;:&lt;.refl[fs2.Chunk[Byte]]);
+  cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](logMessage.apply(response.withBodyStream(newBody)))(F).handleErrorWith(((t: Throwable) =&gt; F.delay[Unit](ResponseLogger.this.logger.logger.error(&quot;Error logging response body&quot;, t))))(F)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          11507
+        </td>
+        <td>
+          3553
+          -
+          3604
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.loggersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Client.apply[[_]F[_]](((req: org.http4s.Request[[_]F[_]]) =&gt; client.run(req).flatMap[org.http4s.Response[F]](((response: org.http4s.Response[F]) =&gt; logResponse(response)))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          11006
+        </td>
+        <td>
+          3680
+          -
+          3709
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.responseClass
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          response.status.responseClass
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          11747
+        </td>
+        <td>
+          3794
+          -
+          3807
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;\u001B[32m&quot;
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          11563
+        </td>
+        <td>
+          3841
+          -
+          3855
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;\u001B[33m&quot;
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          11071
+        </td>
+        <td>
+          3889
+          -
+          3900
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;\u001B[31m&quot;
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11828
+        </td>
+        <td>
+          4221
+          -
+          4890
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.ResponseLogger.customized
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ResponseLogger.this.customized[F](client, logBody, logAction)(((response: org.http4s.Response[F]) =&gt; {
+  val prelude: String = (&quot;&quot;.+(response.httpVersion).+(&quot; &quot;).+(response.status): String);
+  val headers: String = org.http4s.internal.Logger.defaultLogHeaders[F, org.http4s.Response[F]](response)(logHeaders, redactHeadersWhen);
+  val bodyText: F[String] = org.http4s.internal.Logger.defaultLogBody[F, org.http4s.Response[F]](response)(logBody)(evidence$5) match {
+    case (value: F[String]): Some[F[String]]((textF @ _)) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](textF)(evidence$5).map[String](((text: String) =&gt; (&quot;body=\&quot;&quot;.+(text).+(&quot;\&quot;&quot;): String)))
+    case scala.None =&gt; cats.effect.`package`.Sync.apply[F](evidence$5).pure[String](&quot;&quot;)
+  };
+  def spaced(x: String): String = if (x.isEmpty())
+    x
+  else
+    (&quot; &quot;.+(x): String);
+  cats.syntax.`package`.all.toFunctorOps[F, String](bodyText)(evidence$5).map[String](((body: String) =&gt; (&quot;&quot;.+(color.apply(response)).+(prelude).+(spaced(headers)).+(spaced(body)).+(&quot;\u001B[0m&quot;): String)))
+}))(evidence$5)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

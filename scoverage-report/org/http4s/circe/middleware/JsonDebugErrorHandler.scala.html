@@ -1,0 +1,4068 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/circe/middleware/JsonDebugErrorHandler.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2015 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.circe.middleware
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data._
+</span>20 <span style=''>import cats.effect._
+</span>21 <span style=''>import io.circe._
+</span>22 <span style=''>import io.circe.syntax._
+</span>23 <span style=''>import org.http4s._
+</span>24 <span style=''>import org.http4s.circe._
+</span>25 <span style=''>import org.http4s.headers.Connection
+</span>26 <span style=''>import org.typelevel.ci._
+</span>27 <span style=''>
+</span>28 <span style=''>object JsonDebugErrorHandler {
+</span>29 <span style=''>  private[this] val messageFailureLogger =
+</span>30 <span style=''>    </span><span style='background: #AEF1AE'>org.log4s.getLogger(&quot;org.http4s.circe.middleware.jsondebugerrorhandler.message-failures&quot;)</span><span style=''>
+</span>31 <span style=''>  private[this] val serviceErrorLogger =
+</span>32 <span style=''>    </span><span style='background: #AEF1AE'>org.log4s.getLogger(&quot;org.http4s.circe.middleware.jsondebugerrorhandler.service-errors&quot;)</span><span style=''>
+</span>33 <span style=''>
+</span>34 <span style=''>  // Can be parametric on my other PR is merged.
+</span>35 <span style=''>  def apply[F[_]: Concurrent, G[_]](
+</span>36 <span style=''>      service: Kleisli[F, Request[G], Response[G]],
+</span>37 <span style=''>      redactWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>38 <span style=''>  ): Kleisli[F, Request[G], Response[G]] =
+</span>39 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>40 <span style=''></span><span style='background: #AEF1AE'>      import cats.syntax.applicative._
+</span>41 <span style=''></span><span style='background: #AEF1AE'>      import cats.syntax.applicativeError._
+</span>42 <span style=''></span><span style='background: #AEF1AE'>      implicit def entEnc[M[_], N[_]]: EntityEncoder[M, JsonErrorHandlerResponse[N]] =
+</span>43 <span style=''></span><span style='background: #AEF1AE'>        JsonErrorHandlerResponse.entEnc[M, N](redactWhen)
+</span>44 <span style=''></span><span style='background: #AEF1AE'>
+</span>45 <span style=''></span><span style='background: #AEF1AE'>      service
+</span>46 <span style=''></span><span style='background: #AEF1AE'>        .run(req)
+</span>47 <span style=''></span><span style='background: #AEF1AE'>        .handleErrorWith {
+</span>48 <span style=''></span><span style='background: #AEF1AE'>          case mf: MessageFailure =&gt;
+</span>49 <span style=''></span><span style='background: #AEF1AE'>            messageFailureLogger.debug(mf)(
+</span>50 <span style=''></span><span style='background: #AEF1AE'>              s&quot;&quot;&quot;Message failure handling request: ${req.method} ${req.pathInfo} from ${req.remoteAddr
+</span>51 <span style=''></span><span style='background: #AEF1AE'>                  .getOrElse(&quot;&lt;unknown&gt;&quot;)}&quot;&quot;&quot;
+</span>52 <span style=''></span><span style='background: #AEF1AE'>            )
+</span>53 <span style=''></span><span style='background: #AEF1AE'>            val firstResp = mf.toHttpResponse[G](req.httpVersion)
+</span>54 <span style=''></span><span style='background: #AEF1AE'>            Response[G](
+</span>55 <span style=''></span><span style='background: #AEF1AE'>              status = firstResp.status,
+</span>56 <span style=''></span><span style='background: #AEF1AE'>              httpVersion = firstResp.httpVersion,
+</span>57 <span style=''></span><span style='background: #AEF1AE'>              headers = firstResp.headers.redactSensitive(redactWhen),
+</span>58 <span style=''></span><span style='background: #AEF1AE'>            ).withEntity(JsonErrorHandlerResponse[G](req, mf)).pure[F]
+</span>59 <span style=''></span><span style='background: #AEF1AE'>          case t =&gt;
+</span>60 <span style=''></span><span style='background: #AEF1AE'>            serviceErrorLogger.error(t)(
+</span>61 <span style=''></span><span style='background: #AEF1AE'>              s&quot;&quot;&quot;Error servicing request: ${req.method} ${req.pathInfo} from ${req.remoteAddr
+</span>62 <span style=''></span><span style='background: #AEF1AE'>                  .getOrElse(&quot;&lt;unknown&gt;&quot;)}&quot;&quot;&quot;
+</span>63 <span style=''></span><span style='background: #AEF1AE'>            )
+</span>64 <span style=''></span><span style='background: #AEF1AE'>            Response[G](
+</span>65 <span style=''></span><span style='background: #AEF1AE'>              Status.InternalServerError,
+</span>66 <span style=''></span><span style='background: #AEF1AE'>              req.httpVersion,
+</span>67 <span style=''></span><span style='background: #AEF1AE'>              Headers(Connection.close),
+</span>68 <span style=''></span><span style='background: #AEF1AE'>            )
+</span>69 <span style=''></span><span style='background: #AEF1AE'>              .withEntity(JsonErrorHandlerResponse[G](req, t))
+</span>70 <span style=''></span><span style='background: #AEF1AE'>              .pure[F]
+</span>71 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>72 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>  private final case class JsonErrorHandlerResponse[F[_]](
+</span>75 <span style=''>      req: Request[F],
+</span>76 <span style=''>      caught: Throwable,
+</span>77 <span style=''>  )
+</span>78 <span style=''>  private object JsonErrorHandlerResponse {
+</span>79 <span style=''>    def entEnc[F[_], G[_]](
+</span>80 <span style=''>        redactWhen: CIString =&gt; Boolean
+</span>81 <span style=''>    ): EntityEncoder[F, JsonErrorHandlerResponse[G]] =
+</span>82 <span style=''>      </span><span style='background: #AEF1AE'>jsonEncoderOf(
+</span>83 <span style=''></span><span style='background: #AEF1AE'>        encoder(redactWhen)
+</span>84 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>85 <span style=''>    def encoder[F[_]](
+</span>86 <span style=''>        redactWhen: CIString =&gt; Boolean
+</span>87 <span style=''>    ): Encoder[JsonErrorHandlerResponse[F]] =
+</span>88 <span style=''>      (a: JsonErrorHandlerResponse[F]) =&gt;
+</span>89 <span style=''>        </span><span style='background: #AEF1AE'>Json.obj(
+</span>90 <span style=''></span><span style='background: #AEF1AE'>          &quot;request&quot; -&gt; encodeRequest(a.req, redactWhen),
+</span>91 <span style=''></span><span style='background: #AEF1AE'>          &quot;throwable&quot; -&gt; encodeThrowable(a.caught),
+</span>92 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''>
+</span>93 <span style=''>  }
+</span>94 <span style=''>
+</span>95 <span style=''>  private def encodeRequest[F[_]](req: Request[F], redactWhen: CIString =&gt; Boolean): Json =
+</span>96 <span style=''>    </span><span style='background: #AEF1AE'>Json
+</span>97 <span style=''></span><span style='background: #AEF1AE'>      .obj(
+</span>98 <span style=''></span><span style='background: #AEF1AE'>        &quot;method&quot; -&gt; req.method.name.asJson,
+</span>99 <span style=''></span><span style='background: #AEF1AE'>        &quot;uri&quot; -&gt; Json
+</span>100 <span style=''></span><span style='background: #AEF1AE'>          .obj(
+</span>101 <span style=''></span><span style='background: #AEF1AE'>            &quot;scheme&quot; -&gt; req.uri.scheme.map(</span><span style='background: #F0ADAD'>_.value</span><span style='background: #AEF1AE'>).asJson,
+</span>102 <span style=''></span><span style='background: #AEF1AE'>            &quot;authority&quot; -&gt; req.uri.authority
+</span>103 <span style=''></span><span style='background: #AEF1AE'>              .map(auth =&gt;
+</span>104 <span style=''></span><span style='background: #AEF1AE'>                </span><span style='background: #F0ADAD'>Json
+</span>105 <span style=''></span><span style='background: #F0ADAD'>                  .obj(
+</span>106 <span style=''></span><span style='background: #F0ADAD'>                    &quot;host&quot; -&gt; auth.host.toString().asJson,
+</span>107 <span style=''></span><span style='background: #F0ADAD'>                    &quot;port&quot; -&gt; auth.port.asJson,
+</span>108 <span style=''></span><span style='background: #F0ADAD'>                    &quot;user_info&quot; -&gt; auth.userInfo
+</span>109 <span style=''></span><span style='background: #F0ADAD'>                      .map(_.toString())
+</span>110 <span style=''></span><span style='background: #F0ADAD'>                      .asJson,
+</span>111 <span style=''></span><span style='background: #F0ADAD'>                  )
+</span>112 <span style=''></span><span style='background: #F0ADAD'>                  .dropNullValues</span><span style='background: #AEF1AE'>
+</span>113 <span style=''></span><span style='background: #AEF1AE'>              )
+</span>114 <span style=''></span><span style='background: #AEF1AE'>              .asJson,
+</span>115 <span style=''></span><span style='background: #AEF1AE'>            &quot;path&quot; -&gt; req.uri.path.renderString.asJson,
+</span>116 <span style=''></span><span style='background: #AEF1AE'>            &quot;query&quot; -&gt; req.uri.query.multiParams.asJson,
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>118 <span style=''></span><span style='background: #AEF1AE'>          .dropNullValues,
+</span>119 <span style=''></span><span style='background: #AEF1AE'>        &quot;headers&quot; -&gt; req.headers
+</span>120 <span style=''></span><span style='background: #AEF1AE'>          .redactSensitive(redactWhen)
+</span>121 <span style=''></span><span style='background: #AEF1AE'>          .headers
+</span>122 <span style=''></span><span style='background: #AEF1AE'>          .map { h =&gt;
+</span>123 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>Json.obj(
+</span>124 <span style=''></span><span style='background: #F0ADAD'>              &quot;name&quot; -&gt; h.name.toString.asJson,
+</span>125 <span style=''></span><span style='background: #F0ADAD'>              &quot;value&quot; -&gt; h.value.asJson,
+</span>126 <span style=''></span><span style='background: #F0ADAD'>            )</span><span style='background: #AEF1AE'>
+</span>127 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>128 <span style=''></span><span style='background: #AEF1AE'>          .asJson,
+</span>129 <span style=''></span><span style='background: #AEF1AE'>        &quot;path_info&quot; -&gt; req.pathInfo.renderString.asJson,
+</span>130 <span style=''></span><span style='background: #AEF1AE'>        &quot;remote_address&quot; -&gt; req.remoteAddr.toString.asJson,
+</span>131 <span style=''></span><span style='background: #AEF1AE'>        &quot;http_version&quot; -&gt; req.httpVersion.toString.asJson,
+</span>132 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>133 <span style=''></span><span style='background: #AEF1AE'>      .dropNullValues</span><span style=''>
+</span>134 <span style=''>
+</span>135 <span style=''>  private def encodeThrowable(a: Throwable): Json =
+</span>136 <span style=''>    </span><span style='background: #AEF1AE'>Json
+</span>137 <span style=''></span><span style='background: #AEF1AE'>      .obj(
+</span>138 <span style=''></span><span style='background: #AEF1AE'>        &quot;message&quot; -&gt; Option(a.getMessage).asJson,
+</span>139 <span style=''></span><span style='background: #AEF1AE'>        &quot;stack_trace&quot; -&gt; Option(a.getStackTrace())
+</span>140 <span style=''></span><span style='background: #AEF1AE'>          .map(_.toList)
+</span>141 <span style=''></span><span style='background: #AEF1AE'>          .map(_.map(stackTraceElem =&gt; stackTraceElem.toString))
+</span>142 <span style=''></span><span style='background: #AEF1AE'>          .asJson,
+</span>143 <span style=''></span><span style='background: #AEF1AE'>        &quot;localized_message&quot; -&gt;
+</span>144 <span style=''></span><span style='background: #AEF1AE'>          Option(a.getLocalizedMessage()).asJson,
+</span>145 <span style=''></span><span style='background: #AEF1AE'>        &quot;cause&quot; -&gt; Option(a.getCause())
+</span>146 <span style=''></span><span style='background: #AEF1AE'>          .map(</span><span style='background: #F0ADAD'>encodeThrowable(_)</span><span style='background: #AEF1AE'>)
+</span>147 <span style=''></span><span style='background: #AEF1AE'>          .asJson,
+</span>148 <span style=''></span><span style='background: #AEF1AE'>        &quot;suppressed&quot; -&gt; Option(a.getSuppressed())
+</span>149 <span style=''></span><span style='background: #AEF1AE'>          .map(_.toList.map(</span><span style='background: #F0ADAD'>encodeThrowable(_)</span><span style='background: #AEF1AE'>))
+</span>150 <span style=''></span><span style='background: #AEF1AE'>          .asJson,
+</span>151 <span style=''></span><span style='background: #AEF1AE'>        &quot;class_name&quot; -&gt; Option(a.getClass())
+</span>152 <span style=''></span><span style='background: #AEF1AE'>          .flatMap(c =&gt;
+</span>153 <span style=''></span><span style='background: #AEF1AE'>            if (Platform.isJvm)
+</span>154 <span style=''></span><span style='background: #AEF1AE'>              Option(c.getCanonicalName())
+</span>155 <span style=''></span><span style='background: #AEF1AE'>            else
+</span>156 <span style=''></span><span style='background: #AEF1AE'>              </span><span style='background: #F0ADAD'>Option(c.getName())</span><span style='background: #AEF1AE'>
+</span>157 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>158 <span style=''></span><span style='background: #AEF1AE'>          .asJson,
+</span>159 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>160 <span style=''></span><span style='background: #AEF1AE'>      .dropNullValues</span><span style=''>
+</span>161 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          30
+        </td>
+        <td>
+          5615
+        </td>
+        <td>
+          903
+          -
+          992
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.log4s.getLogger
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.log4s.`package`.getLogger(&quot;org.http4s.circe.middleware.jsondebugerrorhandler.message-failures&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          5483
+        </td>
+        <td>
+          1038
+          -
+          1125
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.log4s.getLogger
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.log4s.`package`.getLogger(&quot;org.http4s.circe.middleware.jsondebugerrorhandler.service-errors&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          5453
+        </td>
+        <td>
+          1387
+          -
+          2732
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; {
+  import cats.syntax.`package`.applicative._;
+  import cats.syntax.`package`.applicativeError._;
+  implicit def entEnc[M[_] &gt;: [_]Nothing &lt;: [_]Any, N[_] &gt;: [_]Nothing &lt;: [_]Any]: org.http4s.EntityEncoder[M,org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse[N]] = JsonDebugErrorHandler.this.JsonErrorHandlerResponse.entEnc[M, N](redactWhen);
+  cats.syntax.`package`.applicativeError.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](service.run.apply(req))(evidence$1).handleErrorWith(((x0$1: Throwable) =&gt; x0$1 match {
+    case (mf @ (_: org.http4s.MessageFailure)) =&gt; {
+      if (JsonDebugErrorHandler.this.messageFailureLogger.logger.isDebugEnabled())
+        JsonDebugErrorHandler.this.messageFailureLogger.logger.debug((&quot;Message failure handling request: &quot;.+(req.method).+(&quot; &quot;).+(req.pathInfo).+(&quot; from &quot;).+(req.remoteAddr.getOrElse[Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Object]] with java.io.Serializable](&quot;&lt;unknown&gt;&quot;)): String), mf)
+      else
+        ();
+      val firstResp: org.http4s.Response[G] = mf.toHttpResponse[G](req.httpVersion);
+      cats.syntax.`package`.applicative.catsSyntaxApplicativeId[org.http4s.Response[G]](org.http4s.Response.apply[G](firstResp.status, firstResp.httpVersion, firstResp.headers.redactSensitive(redactWhen), org.http4s.Response.apply$default$4[G], org.http4s.Response.apply$default$5[G]).withEntity[org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse[G]](JsonDebugErrorHandler.this.JsonErrorHandlerResponse.apply[G](req, mf))(entEnc[[_]G[_], [_]G[_]])).pure[F](evidence$1)
+    }
+    case (t @ _) =&gt; {
+      if (JsonDebugErrorHandler.this.serviceErrorLogger.logger.isErrorEnabled())
+        JsonDebugErrorHandler.this.serviceErrorLogger.logger.error((&quot;Error servicing request: &quot;.+(req.method).+(&quot; &quot;).+(req.pathInfo).+(&quot; from &quot;).+(req.remoteAddr.getOrElse[Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Object]] with java.io.Serializable](&quot;&lt;unknown&gt;&quot;)): String), t)
+      else
+        ();
+      cats.syntax.`package`.applicative.catsSyntaxApplicativeId[org.http4s.Response[G]](org.http4s.Response.apply[G](org.http4s.Status.InternalServerError, req.httpVersion, org.http4s.Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.close)(headers.this.Connection.headerInstance)), org.http4s.Response.apply$default$4[G], org.http4s.Response.apply$default$5[G]).withEntity[org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse[G]](JsonDebugErrorHandler.this.JsonErrorHandlerResponse.apply[G](req, t))(entEnc[[_]G[_], [_]G[_]])).pure[F](evidence$1)
+    }
+  }))(evidence$1)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          5377
+        </td>
+        <td>
+          1582
+          -
+          1631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse.entEnc
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JsonDebugErrorHandler.this.JsonErrorHandlerResponse.entEnc[M, N](redactWhen)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          5578
+        </td>
+        <td>
+          1639
+          -
+          2726
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.handleErrorWith
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.applicativeError.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[G]](service.run.apply(req))(evidence$1).handleErrorWith(((x0$1: Throwable) =&gt; x0$1 match {
+  case (mf @ (_: org.http4s.MessageFailure)) =&gt; {
+    if (JsonDebugErrorHandler.this.messageFailureLogger.logger.isDebugEnabled())
+      JsonDebugErrorHandler.this.messageFailureLogger.logger.debug((&quot;Message failure handling request: &quot;.+(req.method).+(&quot; &quot;).+(req.pathInfo).+(&quot; from &quot;).+(req.remoteAddr.getOrElse[Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Object]] with java.io.Serializable](&quot;&lt;unknown&gt;&quot;)): String), mf)
+    else
+      ();
+    val firstResp: org.http4s.Response[G] = mf.toHttpResponse[G](req.httpVersion);
+    cats.syntax.`package`.applicative.catsSyntaxApplicativeId[org.http4s.Response[G]](org.http4s.Response.apply[G](firstResp.status, firstResp.httpVersion, firstResp.headers.redactSensitive(redactWhen), org.http4s.Response.apply$default$4[G], org.http4s.Response.apply$default$5[G]).withEntity[org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse[G]](JsonDebugErrorHandler.this.JsonErrorHandlerResponse.apply[G](req, mf))(entEnc[[_]G[_], [_]G[_]])).pure[F](evidence$1)
+  }
+  case (t @ _) =&gt; {
+    if (JsonDebugErrorHandler.this.serviceErrorLogger.logger.isErrorEnabled())
+      JsonDebugErrorHandler.this.serviceErrorLogger.logger.error((&quot;Error servicing request: &quot;.+(req.method).+(&quot; &quot;).+(req.pathInfo).+(&quot; from &quot;).+(req.remoteAddr.getOrElse[Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Object]] with java.io.Serializable](&quot;&lt;unknown&gt;&quot;)): String), t)
+    else
+      ();
+    cats.syntax.`package`.applicative.catsSyntaxApplicativeId[org.http4s.Response[G]](org.http4s.Response.apply[G](org.http4s.Status.InternalServerError, req.httpVersion, org.http4s.Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.close)(headers.this.Connection.headerInstance)), org.http4s.Response.apply$default$4[G], org.http4s.Response.apply$default$5[G]).withEntity[org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse[G]](JsonDebugErrorHandler.this.JsonErrorHandlerResponse.apply[G](req, t))(entEnc[[_]G[_], [_]G[_]])).pure[F](evidence$1)
+  }
+}))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          5590
+        </td>
+        <td>
+          3018
+          -
+          3068
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.CirceInstances.jsonEncoderOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.circe.`package`.jsonEncoderOf[[_]F[_], org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse[[_]G[_]]](JsonErrorHandlerResponse.this.encoder[[_]G[_]](redactWhen))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          5394
+        </td>
+        <td>
+          3041
+          -
+          3060
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse.encoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JsonErrorHandlerResponse.this.encoder[[_]G[_]](redactWhen)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          5591
+        </td>
+        <td>
+          3228
+          -
+          3356
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.circe.Json.obj
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;request&quot;).-&gt;[io.circe.Json](JsonDebugErrorHandler.this.encodeRequest[[_]F[_]](a.req, redactWhen)), scala.Predef.ArrowAssoc[String](&quot;throwable&quot;).-&gt;[io.circe.Json](JsonDebugErrorHandler.this.encodeThrowable(a.caught)))
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          5475
+        </td>
+        <td>
+          3248
+          -
+          3257
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;request&quot;
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          5484
+        </td>
+        <td>
+          3248
+          -
+          3293
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;request&quot;).-&gt;[io.circe.Json](JsonDebugErrorHandler.this.encodeRequest[[_]F[_]](a.req, redactWhen))
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          5609
+        </td>
+        <td>
+          3261
+          -
+          3293
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.middleware.JsonDebugErrorHandler.encodeRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JsonDebugErrorHandler.this.encodeRequest[[_]F[_]](a.req, redactWhen)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          5670
+        </td>
+        <td>
+          3275
+          -
+          3280
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse.req
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          a.req
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          5448
+        </td>
+        <td>
+          3320
+          -
+          3345
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.middleware.JsonDebugErrorHandler.encodeThrowable
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          JsonDebugErrorHandler.this.encodeThrowable(a.caught)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          5370
+        </td>
+        <td>
+          3305
+          -
+          3316
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;throwable&quot;
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          5566
+        </td>
+        <td>
+          3336
+          -
+          3344
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.circe.middleware.JsonDebugErrorHandler.JsonErrorHandlerResponse.caught
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          a.caught
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          5389
+        </td>
+        <td>
+          3305
+          -
+          3345
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;throwable&quot;).-&gt;[io.circe.Json](JsonDebugErrorHandler.this.encodeThrowable(a.caught))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          5372
+        </td>
+        <td>
+          3483
+          -
+          3517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;method&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.method.name).asJson(circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          5548
+        </td>
+        <td>
+          3511
+          -
+          3511
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          5665
+        </td>
+        <td>
+          3495
+          -
+          3510
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.method.name
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          5482
+        </td>
+        <td>
+          3495
+          -
+          3517
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[String](req.method.name).asJson(circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          5476
+        </td>
+        <td>
+          3483
+          -
+          3491
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;method&quot;
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          5568
+        </td>
+        <td>
+          3527
+          -
+          3532
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;uri&quot;
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          5458
+        </td>
+        <td>
+          3527
+          -
+          4205
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;uri&quot;).-&gt;[io.circe.Json](io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;scheme&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](req.uri.scheme.map[String](((x$1: org.http4s.Uri.Scheme) =&gt; x$1.value))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))), scala.Predef.ArrowAssoc[String](&quot;authority&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[io.circe.Json]](req.uri.authority.map[io.circe.Json](((auth: org.http4s.Uri.Authority) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;host&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;port&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt))), scala.Predef.ArrowAssoc[String](&quot;user_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))).dropNullValues))).asJson(circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson))), scala.Predef.ArrowAssoc[String](&quot;path&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.uri.path.renderString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;query&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Map[String,Seq[String]]](req.uri.query.multiParams).asJson(circe.this.Encoder.encodeMap[String, Seq[String]](circe.this.KeyEncoder.encodeKeyString, circe.this.Encoder.encodeSeq[String](circe.this.Encoder.encodeString))))).dropNullValues)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5496
+        </td>
+        <td>
+          3569
+          -
+          3615
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;scheme&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](req.uri.scheme.map[String](((x$1: org.http4s.Uri.Scheme) =&gt; x$1.value))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5478
+        </td>
+        <td>
+          3609
+          -
+          3609
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5586
+        </td>
+        <td>
+          3581
+          -
+          3608
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.scheme.map[String](((x$1: org.http4s.Uri.Scheme) =&gt; x$1.value))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5544
+        </td>
+        <td>
+          3581
+          -
+          3615
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Option[String]](req.uri.scheme.map[String](((x$1: org.http4s.Uri.Scheme) =&gt; x$1.value))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5666
+        </td>
+        <td>
+          3609
+          -
+          3609
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5444
+        </td>
+        <td>
+          3569
+          -
+          3577
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;scheme&quot;
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          5393
+        </td>
+        <td>
+          3600
+          -
+          3607
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$1.value
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          5671
+        </td>
+        <td>
+          3629
+          -
+          4053
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;authority&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[io.circe.Json]](req.uri.authority.map[io.circe.Json](((auth: org.http4s.Uri.Authority) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;host&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;port&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt))), scala.Predef.ArrowAssoc[String](&quot;user_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))).dropNullValues))).asJson(circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson)))
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          5374
+        </td>
+        <td>
+          3629
+          -
+          3640
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;authority&quot;
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          5450
+        </td>
+        <td>
+          3644
+          -
+          4031
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.authority.map[io.circe.Json](((auth: org.http4s.Uri.Authority) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;host&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;port&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt))), scala.Predef.ArrowAssoc[String](&quot;user_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))).dropNullValues))
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          5445
+        </td>
+        <td>
+          3764
+          -
+          3784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderable.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          auth.host.toString()
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          5388
+        </td>
+        <td>
+          3785
+          -
+          3785
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          5599
+        </td>
+        <td>
+          3764
+          -
+          3791
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          5479
+        </td>
+        <td>
+          3754
+          -
+          3791
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;host&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          5581
+        </td>
+        <td>
+          3754
+          -
+          3760
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;host&quot;
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          5582
+        </td>
+        <td>
+          3823
+          -
+          3839
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          5459
+        </td>
+        <td>
+          3813
+          -
+          3839
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;port&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt)))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          5677
+        </td>
+        <td>
+          3813
+          -
+          3819
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;port&quot;
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          5369
+        </td>
+        <td>
+          3833
+          -
+          3833
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          5488
+        </td>
+        <td>
+          3833
+          -
+          3833
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeInt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          circe.this.Encoder.encodeInt
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          5554
+        </td>
+        <td>
+          3823
+          -
+          3832
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Authority.port
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          auth.port
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          5655
+        </td>
+        <td>
+          3861
+          -
+          3872
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;user_info&quot;
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          5371
+        </td>
+        <td>
+          3861
+          -
+          3960
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;user_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          5472
+        </td>
+        <td>
+          3876
+          -
+          3930
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          5600
+        </td>
+        <td>
+          3917
+          -
+          3929
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.UserInfo.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$2.toString()
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          5550
+        </td>
+        <td>
+          3954
+          -
+          3954
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          5490
+        </td>
+        <td>
+          3876
+          -
+          3960
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          5680
+        </td>
+        <td>
+          3954
+          -
+          3954
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          5574
+        </td>
+        <td>
+          3705
+          -
+          4015
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Json.dropNullValues
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;host&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;port&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt))), scala.Predef.ArrowAssoc[String](&quot;user_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))).dropNullValues
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          5585
+        </td>
+        <td>
+          4047
+          -
+          4047
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          5657
+        </td>
+        <td>
+          4047
+          -
+          4047
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeJson
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          5473
+        </td>
+        <td>
+          3644
+          -
+          4053
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Option[io.circe.Json]](req.uri.authority.map[io.circe.Json](((auth: org.http4s.Uri.Authority) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;host&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;port&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt))), scala.Predef.ArrowAssoc[String](&quot;user_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))).dropNullValues))).asJson(circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson))
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          5457
+        </td>
+        <td>
+          4067
+          -
+          4109
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;path&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.uri.path.renderString).asJson(circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          5575
+        </td>
+        <td>
+          4077
+          -
+          4109
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[String](req.uri.path.renderString).asJson(circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          5551
+        </td>
+        <td>
+          4067
+          -
+          4073
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;path&quot;
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          5491
+        </td>
+        <td>
+          4077
+          -
+          4102
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.renderString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.path.renderString
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          5365
+        </td>
+        <td>
+          4103
+          -
+          4103
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          5466
+        </td>
+        <td>
+          4160
+          -
+          4160
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          5433
+        </td>
+        <td>
+          4134
+          -
+          4166
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Map[String,Seq[String]]](req.uri.query.multiParams).asJson(circe.this.Encoder.encodeMap[String, Seq[String]](circe.this.KeyEncoder.encodeKeyString, circe.this.Encoder.encodeSeq[String](circe.this.Encoder.encodeString)))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          5366
+        </td>
+        <td>
+          4123
+          -
+          4166
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;query&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Map[String,Seq[String]]](req.uri.query.multiParams).asJson(circe.this.Encoder.encodeMap[String, Seq[String]](circe.this.KeyEncoder.encodeKeyString, circe.this.Encoder.encodeSeq[String](circe.this.Encoder.encodeString))))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          5587
+        </td>
+        <td>
+          4160
+          -
+          4160
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.KeyEncoder.encodeKeyString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.KeyEncoder.encodeKeyString
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          5545
+        </td>
+        <td>
+          4160
+          -
+          4160
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeMap[String, Seq[String]](circe.this.KeyEncoder.encodeKeyString, circe.this.Encoder.encodeSeq[String](circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          5676
+        </td>
+        <td>
+          4160
+          -
+          4160
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeSeq
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeSeq[String](circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          5652
+        </td>
+        <td>
+          4123
+          -
+          4130
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;query&quot;
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          5570
+        </td>
+        <td>
+          3536
+          -
+          4205
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Json.dropNullValues
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;scheme&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](req.uri.scheme.map[String](((x$1: org.http4s.Uri.Scheme) =&gt; x$1.value))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))), scala.Predef.ArrowAssoc[String](&quot;authority&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[io.circe.Json]](req.uri.authority.map[io.circe.Json](((auth: org.http4s.Uri.Authority) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;host&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;port&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt))), scala.Predef.ArrowAssoc[String](&quot;user_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))).dropNullValues))).asJson(circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson))), scala.Predef.ArrowAssoc[String](&quot;path&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.uri.path.renderString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;query&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Map[String,Seq[String]]](req.uri.query.multiParams).asJson(circe.this.Encoder.encodeMap[String, Seq[String]](circe.this.KeyEncoder.encodeKeyString, circe.this.Encoder.encodeSeq[String](circe.this.Encoder.encodeString))))).dropNullValues
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          5644
+        </td>
+        <td>
+          4215
+          -
+          4224
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;headers&quot;
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          5580
+        </td>
+        <td>
+          4215
+          -
+          4474
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;headers&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[List[io.circe.Json]](req.headers.redactSensitive(redactWhen).headers.map[io.circe.Json](((h: org.http4s.Header.Raw) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;name&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.name.toString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;value&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.value).asJson(circe.this.Encoder.encodeString)))))).asJson(circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson)))
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          5674
+        </td>
+        <td>
+          4228
+          -
+          4456
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.redactSensitive(redactWhen).headers.map[io.circe.Json](((h: org.http4s.Header.Raw) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;name&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.name.toString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;value&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.value).asJson(circe.this.Encoder.encodeString)))))
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          5481
+        </td>
+        <td>
+          4332
+          -
+          4444
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.circe.Json.obj
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;name&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.name.toString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;value&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.value).asJson(circe.this.Encoder.encodeString)))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          5436
+        </td>
+        <td>
+          4356
+          -
+          4388
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;name&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.name.toString).asJson(circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          5603
+        </td>
+        <td>
+          4356
+          -
+          4362
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;name&quot;
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          5561
+        </td>
+        <td>
+          4366
+          -
+          4388
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.circe.syntax.`package`.EncoderOps[String](h.name.toString).asJson(circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          5468
+        </td>
+        <td>
+          4366
+          -
+          4381
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          h.name.toString
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          5679
+        </td>
+        <td>
+          4382
+          -
+          4382
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          5460
+        </td>
+        <td>
+          4423
+          -
+          4423
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          5541
+        </td>
+        <td>
+          4404
+          -
+          4429
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;value&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.value).asJson(circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          5382
+        </td>
+        <td>
+          4404
+          -
+          4411
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;value&quot;
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          5579
+        </td>
+        <td>
+          4415
+          -
+          4422
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          h.value
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          5662
+        </td>
+        <td>
+          4415
+          -
+          4429
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          io.circe.syntax.`package`.EncoderOps[String](h.value).asJson(circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          5378
+        </td>
+        <td>
+          4228
+          -
+          4474
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[List[io.circe.Json]](req.headers.redactSensitive(redactWhen).headers.map[io.circe.Json](((h: org.http4s.Header.Raw) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;name&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.name.toString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;value&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.value).asJson(circe.this.Encoder.encodeString)))))).asJson(circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson))
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          5431
+        </td>
+        <td>
+          4468
+          -
+          4468
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson)
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          5562
+        </td>
+        <td>
+          4468
+          -
+          4468
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeJson
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          5535
+        </td>
+        <td>
+          4525
+          -
+          4525
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          5675
+        </td>
+        <td>
+          4484
+          -
+          4531
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;path_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.pathInfo.renderString).asJson(circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          5651
+        </td>
+        <td>
+          4499
+          -
+          4524
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.renderString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.pathInfo.renderString
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          5465
+        </td>
+        <td>
+          4499
+          -
+          4531
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[String](req.pathInfo.renderString).asJson(circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          5455
+        </td>
+        <td>
+          4484
+          -
+          4495
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;path_info&quot;
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          5373
+        </td>
+        <td>
+          4585
+          -
+          4585
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          5432
+        </td>
+        <td>
+          4561
+          -
+          4584
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.remoteAddr.toString()
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          5557
+        </td>
+        <td>
+          4541
+          -
+          4557
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;remote_address&quot;
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          5569
+        </td>
+        <td>
+          4561
+          -
+          4591
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[String](req.remoteAddr.toString()).asJson(circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          5449
+        </td>
+        <td>
+          4541
+          -
+          4591
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;remote_address&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.remoteAddr.toString()).asJson(circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          5537
+        </td>
+        <td>
+          4619
+          -
+          4643
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderable.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.httpVersion.toString()
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          5647
+        </td>
+        <td>
+          4601
+          -
+          4615
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;http_version&quot;
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          5560
+        </td>
+        <td>
+          4601
+          -
+          4650
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;http_version&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.httpVersion.toString()).asJson(circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          5467
+        </td>
+        <td>
+          4644
+          -
+          4644
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          5667
+        </td>
+        <td>
+          4619
+          -
+          4650
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[String](req.httpVersion.toString()).asJson(circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          5426
+        </td>
+        <td>
+          3458
+          -
+          4681
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Json.dropNullValues
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;method&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.method.name).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;uri&quot;).-&gt;[io.circe.Json](io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;scheme&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](req.uri.scheme.map[String](((x$1: org.http4s.Uri.Scheme) =&gt; x$1.value))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))), scala.Predef.ArrowAssoc[String](&quot;authority&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[io.circe.Json]](req.uri.authority.map[io.circe.Json](((auth: org.http4s.Uri.Authority) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;host&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](auth.host.toString()).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;port&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[Int]](auth.port).asJson(circe.this.Encoder.encodeOption[Int](circe.this.Encoder.encodeInt))), scala.Predef.ArrowAssoc[String](&quot;user_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](auth.userInfo.map[String](((x$2: org.http4s.Uri.UserInfo) =&gt; x$2.toString()))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))).dropNullValues))).asJson(circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson))), scala.Predef.ArrowAssoc[String](&quot;path&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.uri.path.renderString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;query&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Map[String,Seq[String]]](req.uri.query.multiParams).asJson(circe.this.Encoder.encodeMap[String, Seq[String]](circe.this.KeyEncoder.encodeKeyString, circe.this.Encoder.encodeSeq[String](circe.this.Encoder.encodeString))))).dropNullValues), scala.Predef.ArrowAssoc[String](&quot;headers&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[List[io.circe.Json]](req.headers.redactSensitive(redactWhen).headers.map[io.circe.Json](((h: org.http4s.Header.Raw) =&gt; io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;name&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.name.toString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;value&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](h.value).asJson(circe.this.Encoder.encodeString)))))).asJson(circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson))), scala.Predef.ArrowAssoc[String](&quot;path_info&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.pathInfo.renderString).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;remote_address&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.remoteAddr.toString()).asJson(circe.this.Encoder.encodeString)), scala.Predef.ArrowAssoc[String](&quot;http_version&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[String](req.httpVersion.toString()).asJson(circe.this.Encoder.encodeString))).dropNullValues
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          5538
+        </td>
+        <td>
+          4798
+          -
+          4798
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          5668
+        </td>
+        <td>
+          4764
+          -
+          4804
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;message&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[String](a.getMessage())).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          5480
+        </td>
+        <td>
+          4777
+          -
+          4804
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[String](a.getMessage())).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          5626
+        </td>
+        <td>
+          4764
+          -
+          4773
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;message&quot;
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          5446
+        </td>
+        <td>
+          4777
+          -
+          4797
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[String](a.getMessage())
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          5661
+        </td>
+        <td>
+          4798
+          -
+          4798
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          5571
+        </td>
+        <td>
+          4784
+          -
+          4796
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getMessage
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          a.getMessage()
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          5555
+        </td>
+        <td>
+          4814
+          -
+          4827
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;stack_trace&quot;
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          5441
+        </td>
+        <td>
+          4814
+          -
+          4964
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;stack_trace&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[List[String]]](scala.Option.apply[Array[StackTraceElement]](a.getStackTrace()).map[List[StackTraceElement]](((x$3: Array[StackTraceElement]) =&gt; scala.Predef.wrapRefArray[StackTraceElement](x$3).toList)).map[List[String]](((x$4: List[StackTraceElement]) =&gt; x$4.map[String](((stackTraceElem: StackTraceElement) =&gt; stackTraceElem.toString()))))).asJson(circe.this.Encoder.encodeOption[List[String]](circe.this.Encoder.encodeList[String](circe.this.Encoder.encodeString))))
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          5440
+        </td>
+        <td>
+          4838
+          -
+          4855
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getStackTrace
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          a.getStackTrace()
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          5627
+        </td>
+        <td>
+          4872
+          -
+          4880
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.wrapRefArray[StackTraceElement](x$3).toList
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          5583
+        </td>
+        <td>
+          4921
+          -
+          4944
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StackTraceElement.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          stackTraceElem.toString()
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          5454
+        </td>
+        <td>
+          4897
+          -
+          4945
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.map[String](((stackTraceElem: StackTraceElement) =&gt; stackTraceElem.toString()))
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          5656
+        </td>
+        <td>
+          4831
+          -
+          4946
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[Array[StackTraceElement]](a.getStackTrace()).map[List[StackTraceElement]](((x$3: Array[StackTraceElement]) =&gt; scala.Predef.wrapRefArray[StackTraceElement](x$3).toList)).map[List[String]](((x$4: List[StackTraceElement]) =&gt; x$4.map[String](((stackTraceElem: StackTraceElement) =&gt; stackTraceElem.toString()))))
+        </td>
+      </tr><tr>
+        <td>
+          142
+        </td>
+        <td>
+          5556
+        </td>
+        <td>
+          4831
+          -
+          4964
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Option[List[String]]](scala.Option.apply[Array[StackTraceElement]](a.getStackTrace()).map[List[StackTraceElement]](((x$3: Array[StackTraceElement]) =&gt; scala.Predef.wrapRefArray[StackTraceElement](x$3).toList)).map[List[String]](((x$4: List[StackTraceElement]) =&gt; x$4.map[String](((stackTraceElem: StackTraceElement) =&gt; stackTraceElem.toString()))))).asJson(circe.this.Encoder.encodeOption[List[String]](circe.this.Encoder.encodeList[String](circe.this.Encoder.encodeString)))
+        </td>
+      </tr><tr>
+        <td>
+          142
+        </td>
+        <td>
+          5534
+        </td>
+        <td>
+          4958
+          -
+          4958
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          142
+        </td>
+        <td>
+          5462
+        </td>
+        <td>
+          4958
+          -
+          4958
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeList[String](circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          142
+        </td>
+        <td>
+          5682
+        </td>
+        <td>
+          4958
+          -
+          4958
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeOption[List[String]](circe.this.Encoder.encodeList[String](circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          5637
+        </td>
+        <td>
+          4974
+          -
+          4993
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;localized_message&quot;
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          5672
+        </td>
+        <td>
+          4974
+          -
+          5045
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;localized_message&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[String](a.getLocalizedMessage())).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          5451
+        </td>
+        <td>
+          5007
+          -
+          5038
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[String](a.getLocalizedMessage())
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          5415
+        </td>
+        <td>
+          5007
+          -
+          5045
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[String](a.getLocalizedMessage())).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          5564
+        </td>
+        <td>
+          5014
+          -
+          5037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getLocalizedMessage
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          a.getLocalizedMessage()
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          5659
+        </td>
+        <td>
+          5039
+          -
+          5039
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          5536
+        </td>
+        <td>
+          5039
+          -
+          5039
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          5552
+        </td>
+        <td>
+          5055
+          -
+          5062
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;cause&quot;
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          5438
+        </td>
+        <td>
+          5073
+          -
+          5085
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getCause
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          a.getCause()
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          5416
+        </td>
+        <td>
+          5055
+          -
+          5139
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;cause&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[io.circe.Json]](scala.Option.apply[Throwable](a.getCause()).map[io.circe.Json](((x$5: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$5)))).asJson(circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson)))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          5576
+        </td>
+        <td>
+          5066
+          -
+          5121
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[Throwable](a.getCause()).map[io.circe.Json](((x$5: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$5)))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          5638
+        </td>
+        <td>
+          5102
+          -
+          5120
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.middleware.JsonDebugErrorHandler.encodeThrowable
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JsonDebugErrorHandler.this.encodeThrowable(x$5)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          5529
+        </td>
+        <td>
+          5066
+          -
+          5139
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Option[io.circe.Json]](scala.Option.apply[Throwable](a.getCause()).map[io.circe.Json](((x$5: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$5)))).asJson(circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson))
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          5660
+        </td>
+        <td>
+          5133
+          -
+          5133
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          5452
+        </td>
+        <td>
+          5133
+          -
+          5133
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeJson
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          5553
+        </td>
+        <td>
+          5172
+          -
+          5189
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getSuppressed
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          a.getSuppressed()
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          5681
+        </td>
+        <td>
+          5149
+          -
+          5257
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;suppressed&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[List[io.circe.Json]]](scala.Option.apply[Array[Throwable]](a.getSuppressed()).map[List[io.circe.Json]](((x$6: Array[Throwable]) =&gt; scala.Predef.wrapRefArray[Throwable](x$6).toList.map[io.circe.Json](((x$7: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$7)))))).asJson(circe.this.Encoder.encodeOption[List[io.circe.Json]](circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson))))
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          5678
+        </td>
+        <td>
+          5149
+          -
+          5161
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;suppressed&quot;
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          5427
+        </td>
+        <td>
+          5219
+          -
+          5237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.circe.middleware.JsonDebugErrorHandler.encodeThrowable
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          JsonDebugErrorHandler.this.encodeThrowable(x$7)
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          5507
+        </td>
+        <td>
+          5165
+          -
+          5239
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[Array[Throwable]](a.getSuppressed()).map[List[io.circe.Json]](((x$6: Array[Throwable]) =&gt; scala.Predef.wrapRefArray[Throwable](x$6).toList.map[io.circe.Json](((x$7: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$7)))))
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          5634
+        </td>
+        <td>
+          5206
+          -
+          5238
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.wrapRefArray[Throwable](x$6).toList.map[io.circe.Json](((x$7: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$7)))
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          5654
+        </td>
+        <td>
+          5251
+          -
+          5251
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          5412
+        </td>
+        <td>
+          5165
+          -
+          5257
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Option[List[io.circe.Json]]](scala.Option.apply[Array[Throwable]](a.getSuppressed()).map[List[io.circe.Json]](((x$6: Array[Throwable]) =&gt; scala.Predef.wrapRefArray[Throwable](x$6).toList.map[io.circe.Json](((x$7: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$7)))))).asJson(circe.this.Encoder.encodeOption[List[io.circe.Json]](circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson)))
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          5447
+        </td>
+        <td>
+          5251
+          -
+          5251
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeJson
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          5530
+        </td>
+        <td>
+          5251
+          -
+          5251
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeOption[List[io.circe.Json]](circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson))
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          5442
+        </td>
+        <td>
+          5267
+          -
+          5483
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;class_name&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[Class[T]](a.getClass()).flatMap[String](((c: Class[T]) =&gt; if (true)
+  scala.Option.apply[String](c.getCanonicalName())
+else
+  scala.Option.apply[String](c.getName())))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          5546
+        </td>
+        <td>
+          5267
+          -
+          5279
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;class_name&quot;
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          5423
+        </td>
+        <td>
+          5290
+          -
+          5302
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.getClass
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          a.getClass()
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          5563
+        </td>
+        <td>
+          5283
+          -
+          5465
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[Class[T]](a.getClass()).flatMap[String](((c: Class[T]) =&gt; if (true)
+  scala.Option.apply[String](c.getCanonicalName())
+else
+  scala.Option.apply[String](c.getName())))
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          5635
+        </td>
+        <td>
+          5344
+          -
+          5358
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          5521
+        </td>
+        <td>
+          5381
+          -
+          5401
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Class.getCanonicalName
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.getCanonicalName()
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          5658
+        </td>
+        <td>
+          5374
+          -
+          5402
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[String](c.getCanonicalName())
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          5461
+        </td>
+        <td>
+          5374
+          -
+          5402
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[String](c.getCanonicalName())
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          5663
+        </td>
+        <td>
+          5434
+          -
+          5453
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Option.apply[String](c.getName())
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          5421
+        </td>
+        <td>
+          5434
+          -
+          5453
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Option.apply[String](c.getName())
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          5525
+        </td>
+        <td>
+          5441
+          -
+          5452
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Class.getName
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          c.getName()
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          5628
+        </td>
+        <td>
+          5477
+          -
+          5477
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.Encoder.encodeOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          5522
+        </td>
+        <td>
+          5283
+          -
+          5483
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          io.circe.syntax.EncoderOps.asJson
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[Class[T]](a.getClass()).flatMap[String](((c: Class[T]) =&gt; if (true)
+  scala.Option.apply[String](c.getCanonicalName())
+else
+  scala.Option.apply[String](c.getName())))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          5437
+        </td>
+        <td>
+          5477
+          -
+          5477
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Encoder.encodeString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          circe.this.Encoder.encodeString
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          5653
+        </td>
+        <td>
+          4739
+          -
+          5514
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          io.circe.Json.dropNullValues
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          io.circe.Json.obj(scala.Predef.ArrowAssoc[String](&quot;message&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[String](a.getMessage())).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))), scala.Predef.ArrowAssoc[String](&quot;stack_trace&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[List[String]]](scala.Option.apply[Array[StackTraceElement]](a.getStackTrace()).map[List[StackTraceElement]](((x$3: Array[StackTraceElement]) =&gt; scala.Predef.wrapRefArray[StackTraceElement](x$3).toList)).map[List[String]](((x$4: List[StackTraceElement]) =&gt; x$4.map[String](((stackTraceElem: StackTraceElement) =&gt; stackTraceElem.toString()))))).asJson(circe.this.Encoder.encodeOption[List[String]](circe.this.Encoder.encodeList[String](circe.this.Encoder.encodeString)))), scala.Predef.ArrowAssoc[String](&quot;localized_message&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[String](a.getLocalizedMessage())).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString))), scala.Predef.ArrowAssoc[String](&quot;cause&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[io.circe.Json]](scala.Option.apply[Throwable](a.getCause()).map[io.circe.Json](((x$5: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$5)))).asJson(circe.this.Encoder.encodeOption[io.circe.Json](circe.this.Encoder.encodeJson))), scala.Predef.ArrowAssoc[String](&quot;suppressed&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[List[io.circe.Json]]](scala.Option.apply[Array[Throwable]](a.getSuppressed()).map[List[io.circe.Json]](((x$6: Array[Throwable]) =&gt; scala.Predef.wrapRefArray[Throwable](x$6).toList.map[io.circe.Json](((x$7: Throwable) =&gt; JsonDebugErrorHandler.this.encodeThrowable(x$7)))))).asJson(circe.this.Encoder.encodeOption[List[io.circe.Json]](circe.this.Encoder.encodeList[io.circe.Json](circe.this.Encoder.encodeJson)))), scala.Predef.ArrowAssoc[String](&quot;class_name&quot;).-&gt;[io.circe.Json](io.circe.syntax.`package`.EncoderOps[Option[String]](scala.Option.apply[Class[T]](a.getClass()).flatMap[String](((c: Class[T]) =&gt; if (true)
+  scala.Option.apply[String](c.getCanonicalName())
+else
+  scala.Option.apply[String](c.getName())))).asJson(circe.this.Encoder.encodeOption[String](circe.this.Encoder.encodeString)))).dropNullValues
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

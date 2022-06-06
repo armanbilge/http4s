@@ -1,0 +1,2599 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ContentCoding.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>/*
+</span>18 <span style=''> * Copyright 2013-2020 http4s.org
+</span>19 <span style=''> *
+</span>20 <span style=''> * SPDX-License-Identifier: Apache-2.0
+</span>21 <span style=''> *
+</span>22 <span style=''> * Based on https://github.com/spray/spray/blob/v1.1-M7/spray-http/src/main/scala/spray/http/HttpEncoding.scala
+</span>23 <span style=''> * Copyright (C) 2011-2012 spray.io
+</span>24 <span style=''> * Based on code copyright (C) 2010-2011 by the BlueEyes Web Framework Team
+</span>25 <span style=''> */
+</span>26 <span style=''>
+</span>27 <span style=''>package org.http4s
+</span>28 <span style=''>
+</span>29 <span style=''>import cats.Order
+</span>30 <span style=''>import cats.Show
+</span>31 <span style=''>import cats.parse.Parser
+</span>32 <span style=''>import cats.syntax.all._
+</span>33 <span style=''>import org.http4s.util._
+</span>34 <span style=''>
+</span>35 <span style=''>import java.{util =&gt; ju}
+</span>36 <span style=''>import scala.util.hashing.MurmurHash3
+</span>37 <span style=''>
+</span>38 <span style=''>class ContentCoding private (val coding: String, override val qValue: QValue = QValue.One)
+</span>39 <span style=''>    extends HasQValue
+</span>40 <span style=''>    with Ordered[ContentCoding]
+</span>41 <span style=''>    with Renderable {
+</span>42 <span style=''>  def withQValue(q: QValue): ContentCoding = </span><span style='background: #AEF1AE'>new ContentCoding(coding, q)</span><span style=''>
+</span>43 <span style=''>
+</span>44 <span style=''>  def matches(encoding: ContentCoding): Boolean =
+</span>45 <span style=''>    </span><span style='background: #AEF1AE'>this === ContentCoding.`*` || this.coding.equalsIgnoreCase(encoding.coding)</span><span style=''>
+</span>46 <span style=''>
+</span>47 <span style=''>  override def equals(o: Any): Boolean =
+</span>48 <span style=''>    o match {
+</span>49 <span style=''>      case that: ContentCoding =&gt;
+</span>50 <span style=''>        </span><span style='background: #AEF1AE'>this.coding.equalsIgnoreCase(that.coding) &amp;&amp; this.qValue === that.qValue</span><span style=''>
+</span>51 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>false</span><span style=''>
+</span>52 <span style=''>    }
+</span>53 <span style=''>
+</span>54 <span style=''>  private[this] var hash = </span><span style='background: #AEF1AE'>0</span><span style=''>
+</span>55 <span style=''>  override def hashCode(): Int = {
+</span>56 <span style=''>    if (</span><span style='background: #AEF1AE'>hash == 0</span><span style=''>)
+</span>57 <span style=''>      </span><span style='background: #AEF1AE'>hash = MurmurHash3.mixLast(coding.toLowerCase.##, qValue.##)</span><span style=''>
+</span>58 <span style=''>    </span><span style='background: #AEF1AE'>hash</span><span style=''>
+</span>59 <span style=''>  }
+</span>60 <span style=''>
+</span>61 <span style=''>  override def toString: String = s&quot;ContentCoding(${coding.toLowerCase}, $qValue)&quot;
+</span>62 <span style=''>
+</span>63 <span style=''>  override def compare(other: ContentCoding): Int =
+</span>64 <span style=''>    </span><span style='background: #AEF1AE'>ContentCoding.http4sOrderForContentCoding.compare(this, other)</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>  override def render(writer: Writer): writer.type =
+</span>67 <span style=''>    </span><span style='background: #AEF1AE'>ContentCoding.http4sHttpCodecForContentCoding.render(writer, this)</span><span style=''>
+</span>68 <span style=''>}
+</span>69 <span style=''>
+</span>70 <span style=''>object ContentCoding {
+</span>71 <span style=''>  def unsafeFromString(coding: String): ContentCoding =
+</span>72 <span style=''>    </span><span style='background: #AEF1AE'>fromString(coding).valueOr(</span><span style='background: #F0ADAD'>throw _</span><span style='background: #AEF1AE'>)</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>  def fromString(coding: String): ParseResult[ContentCoding] =
+</span>75 <span style=''>    </span><span style='background: #AEF1AE'>parse(coding)</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>  val `*` : ContentCoding = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;*&quot;)</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>  // http://www.iana.org/assignments/http-parameters/http-parameters.xml#http-parameters-1
+</span>80 <span style=''>  val aes128gcm = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;aes128gcm&quot;)</span><span style=''>
+</span>81 <span style=''>  val br = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;br&quot;)</span><span style=''>
+</span>82 <span style=''>  val compress = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;compress&quot;)</span><span style=''>
+</span>83 <span style=''>  val deflate = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;deflate&quot;)</span><span style=''>
+</span>84 <span style=''>  val exi = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;exi&quot;)</span><span style=''>
+</span>85 <span style=''>  val gzip = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;gzip&quot;)</span><span style=''>
+</span>86 <span style=''>  val identity = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;identity&quot;)</span><span style=''>
+</span>87 <span style=''>  val `pack200-gzip` = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;pack200-gzip&quot;)</span><span style=''>
+</span>88 <span style=''>  val zstd = </span><span style='background: #AEF1AE'>new ContentCoding(&quot;zstd&quot;)</span><span style=''>
+</span>89 <span style=''>
+</span>90 <span style=''>  // Legacy encodings defined by RFC2616 3.5.
+</span>91 <span style=''>  val `x-compress`: ContentCoding = </span><span style='background: #AEF1AE'>compress</span><span style=''>
+</span>92 <span style=''>  val `x-gzip`: ContentCoding = </span><span style='background: #AEF1AE'>gzip</span><span style=''>
+</span>93 <span style=''>
+</span>94 <span style=''>  val standard: Map[String, ContentCoding] =
+</span>95 <span style=''>    </span><span style='background: #AEF1AE'>List(`*`, aes128gcm, br, compress, deflate, exi, gzip, identity, `pack200-gzip`, zstd)
+</span>96 <span style=''></span><span style='background: #AEF1AE'>      .map(c =&gt; c.coding -&gt; c)
+</span>97 <span style=''></span><span style='background: #AEF1AE'>      .toMap</span><span style=''>
+</span>98 <span style=''>
+</span>99 <span style=''>  private[http4s] val parser: Parser[ContentCoding] = {
+</span>100 <span style=''>    import org.http4s.internal.parsing.Rfc7230.token
+</span>101 <span style=''>
+</span>102 <span style=''>    val contentCoding = </span><span style='background: #AEF1AE'>token.map(s =&gt; ContentCoding.standard.getOrElse(s, new ContentCoding(s)))</span><span style=''>
+</span>103 <span style=''>
+</span>104 <span style=''>    </span><span style='background: #AEF1AE'>(contentCoding ~ QValue.parser).map { case (coding, q) =&gt;
+</span>105 <span style=''></span><span style='background: #AEF1AE'>      if (q === QValue.One) coding
+</span>106 <span style=''></span><span style='background: #AEF1AE'>      else coding.withQValue(q)
+</span>107 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>108 <span style=''>  }
+</span>109 <span style=''>
+</span>110 <span style=''>  /** Parse a Content Coding
+</span>111 <span style=''>    */
+</span>112 <span style=''>  def parse(s: String): ParseResult[ContentCoding] =
+</span>113 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;content coding&quot;)(s)</span><span style=''>
+</span>114 <span style=''>
+</span>115 <span style=''>  implicit val http4sOrderForContentCoding: Order[ContentCoding] =
+</span>116 <span style=''>    </span><span style='background: #AEF1AE'>Order.by(c =&gt; (c.coding.toLowerCase(ju.Locale.ENGLISH), c.qValue))</span><span style=''>
+</span>117 <span style=''>
+</span>118 <span style=''>  implicit val http4sShowForContentCoding: Show[ContentCoding] =
+</span>119 <span style=''>    </span><span style='background: #AEF1AE'>Show.fromToString</span><span style=''>
+</span>120 <span style=''>  implicit val http4sHttpCodecForContentCoding: HttpCodec[ContentCoding] =
+</span>121 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> HttpCodec[ContentCoding] {
+</span>122 <span style=''>      override def parse(s: String): ParseResult[ContentCoding] =
+</span>123 <span style=''>        </span><span style='background: #AEF1AE'>ContentCoding.parse(s)</span><span style=''>
+</span>124 <span style=''>
+</span>125 <span style=''>      override def render(writer: Writer, coding: ContentCoding): writer.type =
+</span>126 <span style=''>        </span><span style='background: #AEF1AE'>writer &lt;&lt; coding.coding.toLowerCase &lt;&lt; coding.qValue</span><span style=''>
+</span>127 <span style=''>    }
+</span>128 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          23030
+        </td>
+        <td>
+          1313
+          -
+          1341
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(ContentCoding.this.coding, q)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          16434
+        </td>
+        <td>
+          1331
+          -
+          1337
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.coding
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.coding
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          13191
+        </td>
+        <td>
+          1456
+          -
+          1471
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.coding
+        </td>
+        <td>
+          org.http4s.headers.acceptencodingsuite,org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          encoding.coding
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          16955
+        </td>
+        <td>
+          1406
+          -
+          1423
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.*
+        </td>
+        <td>
+          org.http4s.headers.acceptencodingsuite,org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.*
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          19688
+        </td>
+        <td>
+          1427
+          -
+          1472
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.equalsIgnoreCase
+        </td>
+        <td>
+          org.http4s.headers.acceptencodingsuite,org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.coding.equalsIgnoreCase(encoding.coding)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          21090
+        </td>
+        <td>
+          1397
+          -
+          1397
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.http4sOrderForContentCoding
+        </td>
+        <td>
+          org.http4s.headers.acceptencodingsuite,org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.http4sOrderForContentCoding
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          15949
+        </td>
+        <td>
+          1397
+          -
+          1472
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.headers.acceptencodingsuite,org.http4s.server.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEq[org.http4s.ContentCoding](this)(http4s.this.ContentCoding.http4sOrderForContentCoding).===(ContentCoding.*).||(this.coding.equalsIgnoreCase(encoding.coding))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          20987
+        </td>
+        <td>
+          1616
+          -
+          1643
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EqOps.===
+        </td>
+        <td>
+          munit.funsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEq[org.http4s.QValue](this.qValue)(http4s.this.QValue.catsInstancesForHttp4sQValue).===(that.qValue)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          16456
+        </td>
+        <td>
+          1621
+          -
+          1621
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QValue.catsInstancesForHttp4sQValue
+        </td>
+        <td>
+          munit.funsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.QValue.catsInstancesForHttp4sQValue
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          22756
+        </td>
+        <td>
+          1632
+          -
+          1643
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.qValue
+        </td>
+        <td>
+          munit.funsuite
+        </td>
+        <td style="background: #AEF1AE">
+          that.qValue
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          16972
+        </td>
+        <td>
+          1571
+          -
+          1643
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          munit.funsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.coding.equalsIgnoreCase(that.coding).&amp;&amp;(cats.syntax.`package`.all.catsSyntaxEq[org.http4s.QValue](this.qValue)(http4s.this.QValue.catsInstancesForHttp4sQValue).===(that.qValue))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          20163
+        </td>
+        <td>
+          1616
+          -
+          1627
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.qValue
+        </td>
+        <td>
+          munit.funsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.qValue
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          13993
+        </td>
+        <td>
+          1600
+          -
+          1611
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.coding
+        </td>
+        <td>
+          munit.funsuite
+        </td>
+        <td style="background: #AEF1AE">
+          that.coding
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          13063
+        </td>
+        <td>
+          1660
+          -
+          1665
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          19414
+        </td>
+        <td>
+          1700
+          -
+          1701
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          15694
+        </td>
+        <td>
+          1745
+          -
+          1754
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.hash.==(0)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          18911
+        </td>
+        <td>
+          1741
+          -
+          1741
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          16861
+        </td>
+        <td>
+          1741
+          -
+          1741
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          20180
+        </td>
+        <td>
+          1812
+          -
+          1821
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Any.##
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.qValue.##
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          13887
+        </td>
+        <td>
+          1789
+          -
+          1810
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.lang.Object.##
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.coding.toLowerCase().##
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          22619
+        </td>
+        <td>
+          1762
+          -
+          1822
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.hash = scala.util.hashing.MurmurHash3.mixLast(ContentCoding.this.coding.toLowerCase().##, ContentCoding.this.qValue.##)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          16472
+        </td>
+        <td>
+          1769
+          -
+          1822
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.hashing.MurmurHash3.mixLast
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.util.hashing.MurmurHash3.mixLast(ContentCoding.this.coding.toLowerCase().##, ContentCoding.this.qValue.##)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          13083
+        </td>
+        <td>
+          1827
+          -
+          1831
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.hash
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.hash
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          19429
+        </td>
+        <td>
+          1977
+          -
+          2039
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.kernel.Order.compare
+        </td>
+        <td>
+          org.http4s.contentcodingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.http4sOrderForContentCoding.compare(this, other)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          15559
+        </td>
+        <td>
+          2098
+          -
+          2164
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.render
+        </td>
+        <td>
+          org.http4s.parser.acceptencodingspec
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.http4sHttpCodecForContentCoding.render(writer, this)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          13965
+        </td>
+        <td>
+          2251
+          -
+          2269
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.fromString
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.fromString(coding)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          16733
+        </td>
+        <td>
+          2251
+          -
+          2286
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherOps.valueOr
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.ContentCoding](ContentCoding.this.fromString(coding)).valueOr[org.http4s.ContentCoding](((x$1: org.http4s.ParseFailure) =&gt; throw x$1))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          20073
+        </td>
+        <td>
+          2278
+          -
+          2285
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          throw x$1
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          22638
+        </td>
+        <td>
+          2355
+          -
+          2368
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.parse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.parse(coding)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          18792
+        </td>
+        <td>
+          2416
+          -
+          2419
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;*&quot;
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          13099
+        </td>
+        <td>
+          2398
+          -
+          2420
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;*&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          17196
+        </td>
+        <td>
+          2398
+          -
+          2398
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          19955
+        </td>
+        <td>
+          2549
+          -
+          2560
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;aes128gcm&quot;
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          15582
+        </td>
+        <td>
+          2531
+          -
+          2531
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          13868
+        </td>
+        <td>
+          2531
+          -
+          2561
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;aes128gcm&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          16749
+        </td>
+        <td>
+          2573
+          -
+          2573
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          23155
+        </td>
+        <td>
+          2573
+          -
+          2596
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;br&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          20430
+        </td>
+        <td>
+          2591
+          -
+          2595
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;br&quot;
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          19157
+        </td>
+        <td>
+          2632
+          -
+          2642
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;compress&quot;
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          17083
+        </td>
+        <td>
+          2614
+          -
+          2614
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          13055
+        </td>
+        <td>
+          2614
+          -
+          2643
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;compress&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          22340
+        </td>
+        <td>
+          2660
+          -
+          2688
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;deflate&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          16087
+        </td>
+        <td>
+          2660
+          -
+          2660
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          19971
+        </td>
+        <td>
+          2678
+          -
+          2687
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;deflate&quot;
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          16322
+        </td>
+        <td>
+          2701
+          -
+          2701
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          20448
+        </td>
+        <td>
+          2719
+          -
+          2724
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;exi&quot;
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          23175
+        </td>
+        <td>
+          2701
+          -
+          2725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;exi&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          19048
+        </td>
+        <td>
+          2757
+          -
+          2763
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;gzip&quot;
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          13073
+        </td>
+        <td>
+          2739
+          -
+          2764
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;gzip&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          17097
+        </td>
+        <td>
+          2739
+          -
+          2739
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          22362
+        </td>
+        <td>
+          2782
+          -
+          2811
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;identity&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          19574
+        </td>
+        <td>
+          2800
+          -
+          2810
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;identity&quot;
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          15862
+        </td>
+        <td>
+          2782
+          -
+          2782
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          16339
+        </td>
+        <td>
+          2835
+          -
+          2835
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          22781
+        </td>
+        <td>
+          2835
+          -
+          2868
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;pack200-gzip&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          20068
+        </td>
+        <td>
+          2853
+          -
+          2867
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;pack200-gzip&quot;
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          17110
+        </td>
+        <td>
+          2882
+          -
+          2882
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          12968
+        </td>
+        <td>
+          2882
+          -
+          2907
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(&quot;zstd&quot;, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          19068
+        </td>
+        <td>
+          2900
+          -
+          2906
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;zstd&quot;
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          19592
+        </td>
+        <td>
+          2991
+          -
+          2999
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.compress
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.compress
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          16065
+        </td>
+        <td>
+          3032
+          -
+          3036
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.gzip
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.gzip
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          22235
+        </td>
+        <td>
+          3092
+          -
+          3095
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.*
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.*
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          19456
+        </td>
+        <td>
+          3142
+          -
+          3150
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.identity
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.identity
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          18804
+        </td>
+        <td>
+          3122
+          -
+          3129
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.deflate
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.deflate
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          23152
+        </td>
+        <td>
+          3112
+          -
+          3120
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.compress
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.compress
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          16085
+        </td>
+        <td>
+          3152
+          -
+          3166
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.pack200-gzip
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.pack200-gzip
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          15155
+        </td>
+        <td>
+          3131
+          -
+          3134
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.exi
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.exi
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          20086
+        </td>
+        <td>
+          3097
+          -
+          3106
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.aes128gcm
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.aes128gcm
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          16216
+        </td>
+        <td>
+          3108
+          -
+          3110
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.br
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.br
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          21993
+        </td>
+        <td>
+          3168
+          -
+          3172
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.zstd
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.zstd
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          12982
+        </td>
+        <td>
+          3136
+          -
+          3140
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.gzip
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.this.gzip
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          20617
+        </td>
+        <td>
+          3190
+          -
+          3203
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](c.coding).-&gt;[org.http4s.ContentCoding](c)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          23168
+        </td>
+        <td>
+          3087
+          -
+          3217
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toMap
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[org.http4s.ContentCoding](ContentCoding.this.*, ContentCoding.this.aes128gcm, ContentCoding.this.br, ContentCoding.this.compress, ContentCoding.this.deflate, ContentCoding.this.exi, ContentCoding.this.gzip, ContentCoding.this.identity, ContentCoding.this.pack200-gzip, ContentCoding.this.zstd).map[(String, org.http4s.ContentCoding)](((c: org.http4s.ContentCoding) =&gt; scala.Predef.ArrowAssoc[String](c.coding).-&gt;[org.http4s.ContentCoding](c))).toMap[String, org.http4s.ContentCoding](scala.this.&lt;:&lt;.refl[(String, org.http4s.ContentCoding)])
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          16234
+        </td>
+        <td>
+          3212
+          -
+          3212
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[(String, org.http4s.ContentCoding)]
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          19310
+        </td>
+        <td>
+          3404
+          -
+          3404
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;$default$2
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.ContentCoding.&lt;init&gt;$default$2
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          19868
+        </td>
+        <td>
+          3353
+          -
+          3426
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.map[org.http4s.ContentCoding](((s: String) =&gt; ContentCoding.standard.getOrElse[org.http4s.ContentCoding](s, new ContentCoding(s, http4s.this.ContentCoding.&lt;init&gt;$default$2))))
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          15271
+        </td>
+        <td>
+          3404
+          -
+          3424
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new ContentCoding(s, http4s.this.ContentCoding.&lt;init&gt;$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          13530
+        </td>
+        <td>
+          3368
+          -
+          3425
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.getOrElse
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.standard.getOrElse[org.http4s.ContentCoding](s, new ContentCoding(s, http4s.this.ContentCoding.&lt;init&gt;$default$2))
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          16099
+        </td>
+        <td>
+          3449
+          -
+          3462
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QValue.parser
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          QValue.parser
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          15133
+        </td>
+        <td>
+          3432
+          -
+          3562
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          contentCoding.~[org.http4s.QValue](QValue.parser).map[org.http4s.ContentCoding](((x0$1: (org.http4s.ContentCoding, org.http4s.QValue)) =&gt; x0$1 match {
+  case (_1: org.http4s.ContentCoding, _2: org.http4s.QValue): (org.http4s.ContentCoding, org.http4s.QValue)((coding @ _), (q @ _)) =&gt; if (cats.syntax.`package`.all.catsSyntaxEq[org.http4s.QValue](q)(http4s.this.QValue.catsInstancesForHttp4sQValue).===(QValue.One))
+    coding
+  else
+    coding.withQValue(q)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          18526
+        </td>
+        <td>
+          3500
+          -
+          3516
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EqOps.===
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEq[org.http4s.QValue](q)(http4s.this.QValue.catsInstancesForHttp4sQValue).===(QValue.One)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          16766
+        </td>
+        <td>
+          3518
+          -
+          3524
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.ContentCoding.coding
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          coding
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          22507
+        </td>
+        <td>
+          3500
+          -
+          3500
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QValue.catsInstancesForHttp4sQValue
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.QValue.catsInstancesForHttp4sQValue
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          23066
+        </td>
+        <td>
+          3536
+          -
+          3556
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.withQValue
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          coding.withQValue(q)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          19326
+        </td>
+        <td>
+          3536
+          -
+          3556
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ContentCoding.withQValue
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          coding.withQValue(q)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          13226
+        </td>
+        <td>
+          3661
+          -
+          3712
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.ContentCoding](ContentCoding.this.parser, &quot;content coding&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          19884
+        </td>
+        <td>
+          3821
+          -
+          3838
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.util.Locale.ENGLISH
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.util.Locale.ENGLISH
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          23078
+        </td>
+        <td>
+          3793
+          -
+          3793
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QValue.catsInstancesForHttp4sQValue
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.QValue.catsInstancesForHttp4sQValue
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          18379
+        </td>
+        <td>
+          3799
+          -
+          3850
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, org.http4s.QValue](c.coding.toLowerCase(java.util.Locale.ENGLISH), c.qValue)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          16208
+        </td>
+        <td>
+          3793
+          -
+          3793
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Eq.catsKernelInstancesForString
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelInstancesForString
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          15152
+        </td>
+        <td>
+          3785
+          -
+          3851
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.Order.by
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.`package`.Order.by[org.http4s.ContentCoding, (String, org.http4s.QValue)](((c: org.http4s.ContentCoding) =&gt; scala.Tuple2.apply[String, org.http4s.QValue](c.coding.toLowerCase(java.util.Locale.ENGLISH), c.qValue)))(kernel.this.Eq.catsKernelOrderForTuple2[String, org.http4s.QValue](kernel.this.Eq.catsKernelInstancesForString, http4s.this.QValue.catsInstancesForHttp4sQValue))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          19201
+        </td>
+        <td>
+          3793
+          -
+          3793
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.instances.TupleOrderInstances.catsKernelOrderForTuple2
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelOrderForTuple2[String, org.http4s.QValue](kernel.this.Eq.catsKernelInstancesForString, http4s.this.QValue.catsInstancesForHttp4sQValue)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          15986
+        </td>
+        <td>
+          3800
+          -
+          3839
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.toLowerCase
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.coding.toLowerCase(java.util.Locale.ENGLISH)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          22233
+        </td>
+        <td>
+          3841
+          -
+          3849
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.qValue
+        </td>
+        <td>
+          org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.qValue
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          13100
+        </td>
+        <td>
+          3922
+          -
+          3939
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.Show.fromToString
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Show.fromToString[org.http4s.ContentCoding]
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          22662
+        </td>
+        <td>
+          4019
+          -
+          4022
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.junit.runners.suite,org.http4s.client.middleware.gzipsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          19448
+        </td>
+        <td>
+          4124
+          -
+          4146
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContentCoding.parse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.parse(s)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          18404
+        </td>
+        <td>
+          4272
+          -
+          4272
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.QValue.catsInstancesForHttp4sQValue
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.QValue.catsInstancesForHttp4sQValue
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          16225
+        </td>
+        <td>
+          4236
+          -
+          4288
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(coding.coding.toLowerCase()).&lt;&lt;[org.http4s.QValue](coding.qValue)(http4s.this.QValue.catsInstancesForHttp4sQValue)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          15731
+        </td>
+        <td>
+          4246
+          -
+          4271
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.toLowerCase
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          coding.coding.toLowerCase()
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          22124
+        </td>
+        <td>
+          4275
+          -
+          4288
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.qValue
+        </td>
+        <td>
+          org.http4s.client.middleware.gzipsuite,org.http4s.server.middleware.gzipsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          coding.qValue
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

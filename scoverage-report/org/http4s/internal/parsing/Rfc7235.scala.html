@@ -1,0 +1,1057 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/internal/parsing/Rfc7235.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.internal.parsing
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data.NonEmptyList
+</span>20 <span style=''>import cats.parse.Parser
+</span>21 <span style=''>import cats.parse.Parser.char
+</span>22 <span style=''>import cats.parse.Parser.charIn
+</span>23 <span style=''>import cats.parse.Parser0
+</span>24 <span style=''>import cats.parse.Rfc5234.alpha
+</span>25 <span style=''>import cats.parse.Rfc5234.digit
+</span>26 <span style=''>import cats.parse.Rfc5234.sp
+</span>27 <span style=''>import org.http4s.Challenge
+</span>28 <span style=''>import org.http4s.Credentials
+</span>29 <span style=''>import org.http4s.internal.parsing.Rfc7230.bws
+</span>30 <span style=''>import org.http4s.internal.parsing.Rfc7230.headerRep1
+</span>31 <span style=''>import org.http4s.internal.parsing.Rfc7230.ows
+</span>32 <span style=''>import org.http4s.internal.parsing.Rfc7230.quotedString
+</span>33 <span style=''>import org.http4s.internal.parsing.Rfc7230.token
+</span>34 <span style=''>import org.typelevel.ci.CIString
+</span>35 <span style=''>
+</span>36 <span style=''>private[http4s] object Rfc7235 {
+</span>37 <span style=''>  /*  token68 = 1*( ALPHA / DIGIT / &quot;-&quot; / &quot;.&quot; / &quot;_&quot; / &quot;~&quot; / &quot;+&quot; / &quot;/&quot; )
+</span>38 <span style=''>   *  *&quot;=&quot;
+</span>39 <span style=''>   * */
+</span>40 <span style=''>  val t68Chars: Parser[Char] = </span><span style='background: #AEF1AE'>charIn(&quot;-._~+/&quot;).orElse(digit).orElse(alpha)</span><span style=''>
+</span>41 <span style=''>
+</span>42 <span style=''>  val token68: Parser[String] = </span><span style='background: #AEF1AE'>(t68Chars.rep ~ charIn('=').rep0).string</span><span style=''>
+</span>43 <span style=''>
+</span>44 <span style=''>  val authParamValue: Parser0[String] = </span><span style='background: #AEF1AE'>token.orElse(quotedString)</span><span style=''>
+</span>45 <span style=''>  // auth-param = token BWS &quot;=&quot; BWS ( token / quoted-string )
+</span>46 <span style=''>  val authParam: Parser[(String, String)] =
+</span>47 <span style=''>    </span><span style='background: #AEF1AE'>(token &lt;* char('=').void.surroundedBy(bws)) ~ authParamValue</span><span style=''>
+</span>48 <span style=''>
+</span>49 <span style=''>  // auth-scheme = token
+</span>50 <span style=''>  val scheme: Parser[CIString] = </span><span style='background: #AEF1AE'>token.map(CIString(_))</span><span style=''>
+</span>51 <span style=''>
+</span>52 <span style=''>  /*
+</span>53 <span style=''>    challenge = auth-scheme [ 1*SP ( token68 / [ ( &quot;,&quot; / auth-param ) *(
+</span>54 <span style=''>    OWS &quot;,&quot; [ OWS auth-param ] ) ] ) ]
+</span>55 <span style=''>   */
+</span>56 <span style=''>  val challenge: Parser[Challenge] =
+</span>57 <span style=''>    </span><span style='background: #AEF1AE'>((scheme &lt;* sp) ~ authParam.backtrack
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      .repSep0(char(',').surroundedBy(ows))
+</span>59 <span style=''></span><span style='background: #AEF1AE'>      .map(_.toMap))
+</span>60 <span style=''></span><span style='background: #AEF1AE'>      .map { case (scheme, params) =&gt;
+</span>61 <span style=''></span><span style='background: #AEF1AE'>        // Model does not support token68 challenges
+</span>62 <span style=''></span><span style='background: #AEF1AE'>        // challenge scheme should have been CIS
+</span>63 <span style=''></span><span style='background: #AEF1AE'>        Challenge(scheme.toString, params.getOrElse(&quot;realm&quot;, &quot;&quot;), params - &quot;realm&quot;)
+</span>64 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>  val challenges: Parser[NonEmptyList[Challenge]] = </span><span style='background: #AEF1AE'>headerRep1(challenge)</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>  val credentials: Parser[Credentials] =
+</span>69 <span style=''>    </span><span style='background: #AEF1AE'>((scheme &lt;* sp) ~ headerRep1(authParam.backtrack).map(Right(_)).orElse(token68.map(Left(_))))
+</span>70 <span style=''></span><span style='background: #AEF1AE'>      .map {
+</span>71 <span style=''></span><span style='background: #AEF1AE'>        case (scheme, Left(token)) =&gt; Credentials.Token(scheme, token)
+</span>72 <span style=''></span><span style='background: #AEF1AE'>        case (scheme, Right(nel)) =&gt; Credentials.AuthParams(scheme, nel)
+</span>73 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>74 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          16439
+        </td>
+        <td>
+          1368
+          -
+          1412
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn(scala.Predef.wrapString(&quot;-._~+/&quot;)).orElse[Char](cats.parse.Rfc5234.digit).orElse[Char](cats.parse.Rfc5234.alpha)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          15658
+        </td>
+        <td>
+          1375
+          -
+          1383
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          scala.LowPriorityImplicits.wrapString
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.wrapString(&quot;-._~+/&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          18336
+        </td>
+        <td>
+          1406
+          -
+          1411
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.alpha
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.alpha
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          22044
+        </td>
+        <td>
+          1392
+          -
+          1397
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          22584
+        </td>
+        <td>
+          1469
+          -
+          1472
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          18877
+        </td>
+        <td>
+          1462
+          -
+          1478
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep0
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn('=').rep0
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          15336
+        </td>
+        <td>
+          1446
+          -
+          1486
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7235.this.t68Chars.rep.~[List[Char]](cats.parse.Parser.charIn('=').rep0).string
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          21563
+        </td>
+        <td>
+          1541
+          -
+          1553
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          19401
+        </td>
+        <td>
+          1528
+          -
+          1554
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          16307
+        </td>
+        <td>
+          1711
+          -
+          1725
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7235.authParamValue
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7235.this.authParamValue
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          22061
+        </td>
+        <td>
+          1703
+          -
+          1706
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.bws
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.bws
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          15519
+        </td>
+        <td>
+          1680
+          -
+          1683
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          18587
+        </td>
+        <td>
+          1675
+          -
+          1707
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.surroundedBy
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('=').void.surroundedBy(org.http4s.internal.parsing.Rfc7230.bws)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          22603
+        </td>
+        <td>
+          1665
+          -
+          1725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.&lt;*[Unit](cats.parse.Parser.char('=').void.surroundedBy(org.http4s.internal.parsing.Rfc7230.bws)).~[String](Rfc7235.this.authParamValue)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          15356
+        </td>
+        <td>
+          1785
+          -
+          1807
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.map[org.typelevel.ci.CIString](((x$1: String) =&gt; org.typelevel.ci.CIString.apply(x$1)))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          18753
+        </td>
+        <td>
+          1795
+          -
+          1806
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIString.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.parser.wwwauthenticateheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.CIString.apply(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          21272
+        </td>
+        <td>
+          1985
+          -
+          1987
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.sp
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          22291
+        </td>
+        <td>
+          2026
+          -
+          2053
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.surroundedBy
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(',').surroundedBy(org.http4s.internal.parsing.Rfc7230.ows)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          19925
+        </td>
+        <td>
+          2031
+          -
+          2034
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          ','
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          15538
+        </td>
+        <td>
+          2049
+          -
+          2052
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          18609
+        </td>
+        <td>
+          2068
+          -
+          2068
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.parser.wwwauthenticateheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[(String, String)]
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          23124
+        </td>
+        <td>
+          1991
+          -
+          2074
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser0.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7235.this.authParam.backtrack.repSep0(cats.parse.Parser.char(',').surroundedBy(org.http4s.internal.parsing.Rfc7230.ows)).map[scala.collection.immutable.Map[String,String]](((x$2: List[(String, String)]) =&gt; x$2.toMap[String, String](scala.this.&lt;:&lt;.refl[(String, String)])))
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          16416
+        </td>
+        <td>
+          2066
+          -
+          2073
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toMap
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.parser.wwwauthenticateheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.toMap[String, String](scala.this.&lt;:&lt;.refl[(String, String)])
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          16054
+        </td>
+        <td>
+          1973
+          -
+          2307
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7235.this.scheme.&lt;*[Unit](cats.parse.Rfc5234.sp).~[scala.collection.immutable.Map[String,String]](Rfc7235.this.authParam.backtrack.repSep0(cats.parse.Parser.char(',').surroundedBy(org.http4s.internal.parsing.Rfc7230.ows)).map[scala.collection.immutable.Map[String,String]](((x$2: List[(String, String)]) =&gt; x$2.toMap[String, String](scala.this.&lt;:&lt;.refl[(String, String)])))).map[org.http4s.Challenge](((x0$1: (org.typelevel.ci.CIString, scala.collection.immutable.Map[String,String])) =&gt; x0$1 match {
+  case (_1: org.typelevel.ci.CIString, _2: scala.collection.immutable.Map[String,String]): (org.typelevel.ci.CIString, scala.collection.immutable.Map[String,String])((scheme @ _), (params @ _)) =&gt; org.http4s.Challenge.apply(scheme.toString, params.getOrElse[String](&quot;realm&quot;, &quot;&quot;), params.-(&quot;realm&quot;))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          15218
+        </td>
+        <td>
+          2251
+          -
+          2280
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.getOrElse
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.parser.wwwauthenticateheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          params.getOrElse[String](&quot;realm&quot;, &quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          21818
+        </td>
+        <td>
+          2282
+          -
+          2298
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.-
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.parser.wwwauthenticateheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          params.-(&quot;realm&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          19670
+        </td>
+        <td>
+          2224
+          -
+          2299
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Challenge.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.parser.wwwauthenticateheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Challenge.apply(scheme.toString, params.getOrElse[String](&quot;realm&quot;, &quot;&quot;), params.-(&quot;realm&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          18773
+        </td>
+        <td>
+          2234
+          -
+          2249
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.parser.wwwauthenticateheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scheme.toString
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          18627
+        </td>
+        <td>
+          2361
+          -
+          2382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.headerRep1
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.headerRep1[org.http4s.Challenge](Rfc7235.this.challenge)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          22301
+        </td>
+        <td>
+          2372
+          -
+          2381
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7235.challenge
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7235.this.challenge
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          19023
+        </td>
+        <td>
+          2483
+          -
+          2491
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          org.http4s.parser.authorizationheadersuite,org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, cats.data.NonEmptyList[(String, String)]](x$3)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          14470
+        </td>
+        <td>
+          2441
+          -
+          2443
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.sp
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          19533
+        </td>
+        <td>
+          2447
+          -
+          2521
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.headerRep1[(String, String)](Rfc7235.this.authParam.backtrack).map[scala.util.Right[Nothing,cats.data.NonEmptyList[(String, String)]]](((x$3: cats.data.NonEmptyList[(String, String)]) =&gt; scala.`package`.Right.apply[Nothing, cats.data.NonEmptyList[(String, String)]](x$3))).orElse[scala.util.Either[String,cats.data.NonEmptyList[(String, String)]]](Rfc7235.this.token68.map[scala.util.Left[String,Nothing]](((x$4: String) =&gt; scala.`package`.Left.apply[String, Nothing](x$4))))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          22879
+        </td>
+        <td>
+          2458
+          -
+          2477
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.backtrack
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7235.this.authParam.backtrack
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          21554
+        </td>
+        <td>
+          2500
+          -
+          2520
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7235.this.token68.map[scala.util.Left[String,Nothing]](((x$4: String) =&gt; scala.`package`.Left.apply[String, Nothing](x$4)))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          15237
+        </td>
+        <td>
+          2512
+          -
+          2519
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          org.http4s.parser.authorizationheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[String, Nothing](x$4)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          18492
+        </td>
+        <td>
+          2429
+          -
+          2687
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7235.this.scheme.&lt;*[Unit](cats.parse.Rfc5234.sp).~[scala.util.Either[String,cats.data.NonEmptyList[(String, String)]]](org.http4s.internal.parsing.Rfc7230.headerRep1[(String, String)](Rfc7235.this.authParam.backtrack).map[scala.util.Right[Nothing,cats.data.NonEmptyList[(String, String)]]](((x$3: cats.data.NonEmptyList[(String, String)]) =&gt; scala.`package`.Right.apply[Nothing, cats.data.NonEmptyList[(String, String)]](x$3))).orElse[scala.util.Either[String,cats.data.NonEmptyList[(String, String)]]](Rfc7235.this.token68.map[scala.util.Left[String,Nothing]](((x$4: String) =&gt; scala.`package`.Left.apply[String, Nothing](x$4))))).map[org.http4s.Credentials](((x0$2: (org.typelevel.ci.CIString, scala.util.Either[String,cats.data.NonEmptyList[(String, String)]])) =&gt; x0$2 match {
+  case (_1: org.typelevel.ci.CIString, _2: scala.util.Either[String,cats.data.NonEmptyList[(String, String)]]): (org.typelevel.ci.CIString, scala.util.Either[String,cats.data.NonEmptyList[(String, String)]])((scheme @ _), (value: String): scala.util.Left[String,cats.data.NonEmptyList[(String, String)]]((token @ _))) =&gt; org.http4s.Credentials.Token.apply(scheme, token)
+  case (_1: org.typelevel.ci.CIString, _2: scala.util.Either[String,cats.data.NonEmptyList[(String, String)]]): (org.typelevel.ci.CIString, scala.util.Either[String,cats.data.NonEmptyList[(String, String)]])((scheme @ _), (value: cats.data.NonEmptyList[(String, String)]): scala.util.Right[String,cats.data.NonEmptyList[(String, String)]]((nel @ _))) =&gt; org.http4s.Credentials.AuthParams.apply(scheme, nel)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          15810
+        </td>
+        <td>
+          2574
+          -
+          2606
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Credentials.Token.apply
+        </td>
+        <td>
+          org.http4s.parser.authorizationheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Credentials.Token.apply(scheme, token)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          22323
+        </td>
+        <td>
+          2644
+          -
+          2679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Credentials.AuthParams.apply
+        </td>
+        <td>
+          org.http4s.parser.authorizationheadersuite,org.http4s.server.middleware.authentication.authenticationsuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Credentials.AuthParams.apply(scheme, nel)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

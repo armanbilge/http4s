@@ -1,0 +1,4193 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/HttpDate.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Functor
+</span>20 <span style=''>import cats.Hash
+</span>21 <span style=''>import cats.Order
+</span>22 <span style=''>import cats.effect.Clock
+</span>23 <span style=''>import cats.parse.Parser
+</span>24 <span style=''>import cats.parse.Rfc5234
+</span>25 <span style=''>import cats.syntax.all._
+</span>26 <span style=''>import org.http4s.util.Renderable
+</span>27 <span style=''>import org.http4s.util.Writer
+</span>28 <span style=''>
+</span>29 <span style=''>import java.time.DateTimeException
+</span>30 <span style=''>import java.time.Instant
+</span>31 <span style=''>import java.time.ZoneOffset
+</span>32 <span style=''>import java.time.ZonedDateTime
+</span>33 <span style=''>
+</span>34 <span style=''>/** An HTTP-date value represents time as an instance of Coordinated Universal
+</span>35 <span style=''>  * Time (UTC). It expresses time at a resolution of one second.  By using it
+</span>36 <span style=''>  * over java.time.Instant in the model, we assure that if two headers render
+</span>37 <span style=''>  * equally, their values are equal.
+</span>38 <span style=''>  *
+</span>39 <span style=''>  * @see [[https://datatracker.ietf.org/doc/html/rfc7231#section-7.1.1 RFC 7231, Section 7.1.1, Origination Date]]
+</span>40 <span style=''>  */
+</span>41 <span style=''>class HttpDate private (val epochSecond: Long) extends Renderable with Ordered[HttpDate] {
+</span>42 <span style=''>  def compare(that: HttpDate): Int =
+</span>43 <span style=''>    </span><span style='background: #AEF1AE'>this.epochSecond.compare(that.epochSecond)</span><span style=''>
+</span>44 <span style=''>
+</span>45 <span style=''>  def toInstant: Instant =
+</span>46 <span style=''>    </span><span style='background: #AEF1AE'>Instant.ofEpochSecond(epochSecond)</span><span style=''>
+</span>47 <span style=''>
+</span>48 <span style=''>  def render(writer: Writer): writer.type =
+</span>49 <span style=''>    </span><span style='background: #AEF1AE'>writer &lt;&lt; toInstant</span><span style=''>
+</span>50 <span style=''>
+</span>51 <span style=''>  override def equals(o: Any): Boolean =
+</span>52 <span style=''>    o match {
+</span>53 <span style=''>      case that: HttpDate =&gt; </span><span style='background: #AEF1AE'>this.epochSecond == that.epochSecond</span><span style=''>
+</span>54 <span style=''>      case _ =&gt; </span><span style='background: #AEF1AE'>false</span><span style=''>
+</span>55 <span style=''>    }
+</span>56 <span style=''>
+</span>57 <span style=''>  override def hashCode(): Int =
+</span>58 <span style=''>    </span><span style='background: #F0ADAD'>epochSecond.##</span><span style=''>
+</span>59 <span style=''>}
+</span>60 <span style=''>
+</span>61 <span style=''>object HttpDate {
+</span>62 <span style=''>  private val MinEpochSecond = </span><span style='background: #AEF1AE'>-2208988800L</span><span style=''>
+</span>63 <span style=''>  private val MaxEpochSecond = </span><span style='background: #AEF1AE'>253402300799L</span><span style=''>
+</span>64 <span style=''>  implicit val catsOrderForHttp4sHttpDate: Order[HttpDate] with Hash[HttpDate] =
+</span>65 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Order[HttpDate] with Hash[HttpDate] {
+</span>66 <span style=''>      override def compare(x: HttpDate, y: HttpDate): Int =
+</span>67 <span style=''>        </span><span style='background: #F0ADAD'>x.epochSecond.compareTo(y.epochSecond)</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>      override def hash(x: HttpDate): Int =
+</span>70 <span style=''>        </span><span style='background: #F0ADAD'>x.hashCode</span><span style=''>
+</span>71 <span style=''>    }
+</span>72 <span style=''>
+</span>73 <span style=''>  /** The earliest value reprsentable as an HTTP-date, `Mon, 01 Jan 1900 00:00:00 GMT`.
+</span>74 <span style=''>    *
+</span>75 <span style=''>    * The minimum year is specified by RFC5322 as 1900.
+</span>76 <span style=''>    *
+</span>77 <span style=''>    * @see [[https://datatracker.ietf.org/doc/html/rfc7231#section-7.1.1 RFC 7231, Section 7.1.1, Origination Date]]
+</span>78 <span style=''>    * @see [[https://datatracker.ietf.org/doc/html/rfc5322#section-3.3 RFC 5322, Section 3.3, Date and Time Specification]]
+</span>79 <span style=''>    */
+</span>80 <span style=''>  val MinValue: HttpDate = </span><span style='background: #AEF1AE'>HttpDate.unsafeFromEpochSecond(MinEpochSecond)</span><span style=''>
+</span>81 <span style=''>
+</span>82 <span style=''>  /** The latest value reprsentable by RFC1123, `Fri, 31 Dec 9999 23:59:59 GMT`. */
+</span>83 <span style=''>  val MaxValue: HttpDate = </span><span style='background: #AEF1AE'>HttpDate.unsafeFromEpochSecond(MaxEpochSecond)</span><span style=''>
+</span>84 <span style=''>
+</span>85 <span style=''>  /** Constructs an `HttpDate` from the current time. Starting on January 1,n
+</span>86 <span style=''>    * 10000, this will throw an exception. The author intends to leave this
+</span>87 <span style=''>    * problem for future generations.
+</span>88 <span style=''>    */
+</span>89 <span style=''>  @deprecated(&quot;0.20.16&quot;, &quot;Use HttpDate.current instead, this breaks referential transparency&quot;)
+</span>90 <span style=''>  def now: HttpDate =
+</span>91 <span style=''>    </span><span style='background: #F0ADAD'>unsafeFromInstant(Instant.now)</span><span style=''>
+</span>92 <span style=''>
+</span>93 <span style=''>  /** Constructs an [[HttpDate]] from the current time. Starting on January 1,n
+</span>94 <span style=''>    * 10000, this will throw an exception. The author intends to leave this
+</span>95 <span style=''>    * problem for future generations.
+</span>96 <span style=''>    */
+</span>97 <span style=''>  def current[F[_]: Functor: Clock]: F[HttpDate] =
+</span>98 <span style=''>    </span><span style='background: #AEF1AE'>Clock[F].realTime.map(v =&gt; unsafeFromEpochSecond(v.toSeconds))</span><span style=''>
+</span>99 <span style=''>
+</span>100 <span style=''>  /** The `HttpDate` equal to `Thu, Jan 01 1970 00:00:00 GMT` */
+</span>101 <span style=''>  val Epoch: HttpDate =
+</span>102 <span style=''>    </span><span style='background: #AEF1AE'>unsafeFromEpochSecond(0)</span><span style=''>
+</span>103 <span style=''>
+</span>104 <span style=''>  /** Parses a date according to RFC7231, Section 7.1.1.1
+</span>105 <span style=''>    *
+</span>106 <span style=''>    * @see [[https://datatracker.ietf.org/doc/html/rfc7231#section-7.1.1 RFC 7231, Section 7.1.1, Origination Date]]
+</span>107 <span style=''>    */
+</span>108 <span style=''>  def fromString(s: String): ParseResult[HttpDate] =
+</span>109 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid HTTP date&quot;)(s)</span><span style=''>
+</span>110 <span style=''>
+</span>111 <span style=''>  /** Like `fromString`, but throws on invalid input */
+</span>112 <span style=''>  def unsafeFromString(s: String): HttpDate =
+</span>113 <span style=''>    </span><span style='background: #F0ADAD'>fromString(s).fold(throw _, identity)</span><span style=''>
+</span>114 <span style=''>
+</span>115 <span style=''>  /** Constructs a date from the seconds since the [[Epoch]]. If out of range,
+</span>116 <span style=''>    *  returns a ParseFailure.
+</span>117 <span style=''>    */
+</span>118 <span style=''>  def fromEpochSecond(epochSecond: Long): ParseResult[HttpDate] =
+</span>119 <span style=''>    if (</span><span style='background: #AEF1AE'>epochSecond &lt; MinEpochSecond || epochSecond &gt; MaxEpochSecond</span><span style=''>)
+</span>120 <span style=''>      </span><span style='background: #F0ADAD'>ParseResult.fail(
+</span>121 <span style=''></span><span style='background: #F0ADAD'>        &quot;Invalid HTTP date&quot;,
+</span>122 <span style=''></span><span style='background: #F0ADAD'>        s&quot;${epochSecond} out of range for HTTP date. Must be between ${MinEpochSecond} and ${MaxEpochSecond}, inclusive&quot;,
+</span>123 <span style=''></span><span style='background: #F0ADAD'>      )</span><span style=''>
+</span>124 <span style=''>    else
+</span>125 <span style=''>      </span><span style='background: #AEF1AE'>ParseResult.success(new HttpDate(epochSecond))</span><span style=''>
+</span>126 <span style=''>
+</span>127 <span style=''>  /** Like `fromEpochSecond`, but throws any parse failures */
+</span>128 <span style=''>  def unsafeFromEpochSecond(epochSecond: Long): HttpDate =
+</span>129 <span style=''>    </span><span style='background: #AEF1AE'>fromEpochSecond(epochSecond).fold(</span><span style='background: #F0ADAD'>throw _</span><span style='background: #AEF1AE'>, identity)</span><span style=''>
+</span>130 <span style=''>
+</span>131 <span style=''>  /** Constructs a date from an instant, truncating to the most recent second. If
+</span>132 <span style=''>    *  out of range, returns a ParseFailure.
+</span>133 <span style=''>    */
+</span>134 <span style=''>  def fromInstant(instant: Instant): ParseResult[HttpDate] =
+</span>135 <span style=''>    </span><span style='background: #F0ADAD'>fromEpochSecond(instant.toEpochMilli / 1000)</span><span style=''>
+</span>136 <span style=''>
+</span>137 <span style=''>  /** Like `fromInstant`, but throws any parse failures */
+</span>138 <span style=''>  def unsafeFromInstant(instant: Instant): HttpDate =
+</span>139 <span style=''>    </span><span style='background: #AEF1AE'>unsafeFromEpochSecond(instant.toEpochMilli / 1000)</span><span style=''>
+</span>140 <span style=''>
+</span>141 <span style=''>  /** Constructs a date from an zoned date-time, truncating to the most recent
+</span>142 <span style=''>    *  second. If out of range, returns a ParseFailure.
+</span>143 <span style=''>    */
+</span>144 <span style=''>  def fromZonedDateTime(dateTime: ZonedDateTime): ParseResult[HttpDate] =
+</span>145 <span style=''>    </span><span style='background: #F0ADAD'>fromInstant(dateTime.toInstant)</span><span style=''>
+</span>146 <span style=''>
+</span>147 <span style=''>  /** Like `fromZonedDateTime`, but throws any parse failures */
+</span>148 <span style=''>  def unsafeFromZonedDateTime(dateTime: ZonedDateTime): HttpDate =
+</span>149 <span style=''>    </span><span style='background: #AEF1AE'>unsafeFromInstant(dateTime.toInstant)</span><span style=''>
+</span>150 <span style=''>
+</span>151 <span style=''>  /** `HTTP-date = IMF-fixdate / obs-date` */
+</span>152 <span style=''>  private[http4s] val parser: Parser[HttpDate] = {
+</span>153 <span style=''>    import Parser.{char, string}
+</span>154 <span style=''>    import Rfc5234.{digit, sp}
+</span>155 <span style=''>
+</span>156 <span style=''>    def mkHttpDate(
+</span>157 <span style=''>        year: Int,
+</span>158 <span style=''>        month: Int,
+</span>159 <span style=''>        day: Int,
+</span>160 <span style=''>        hour: Int,
+</span>161 <span style=''>        min: Int,
+</span>162 <span style=''>        sec: Int,
+</span>163 <span style=''>    ): Option[HttpDate] =
+</span>164 <span style=''>      try </span><span style='background: #AEF1AE'>{
+</span>165 <span style=''></span><span style='background: #AEF1AE'>        val dt = ZonedDateTime.of(year, month, day, hour, min, sec, 0, ZoneOffset.UTC)
+</span>166 <span style=''></span><span style='background: #AEF1AE'>        Some(org.http4s.HttpDate.unsafeFromZonedDateTime(dt))
+</span>167 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''> catch {
+</span>168 <span style=''>        case _: DateTimeException =&gt;
+</span>169 <span style=''>          </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>170 <span style=''>      }
+</span>171 <span style=''>
+</span>172 <span style=''>    /* day-name     = %x4D.6F.6E ; &quot;Mon&quot;, case-sensitive
+</span>173 <span style=''>     *              / %x54.75.65 ; &quot;Tue&quot;, case-sensitive
+</span>174 <span style=''>     *              / %x57.65.64 ; &quot;Wed&quot;, case-sensitive
+</span>175 <span style=''>     *              / %x54.68.75 ; &quot;Thu&quot;, case-sensitive
+</span>176 <span style=''>     *              / %x46.72.69 ; &quot;Fri&quot;, case-sensitive
+</span>177 <span style=''>     *              / %x53.61.74 ; &quot;Sat&quot;, case-sensitive
+</span>178 <span style=''>     *              / %x53.75.6E ; &quot;Sun&quot;, case-sensitive
+</span>179 <span style=''>     */
+</span>180 <span style=''>    val dayName =
+</span>181 <span style=''>      </span><span style='background: #AEF1AE'>List(&quot;Mon&quot;, &quot;Tue&quot;, &quot;Wed&quot;, &quot;Thu&quot;, &quot;Fri&quot;, &quot;Sat&quot;, &quot;Sun&quot;)
+</span>182 <span style=''></span><span style='background: #AEF1AE'>        .map(string)
+</span>183 <span style=''></span><span style='background: #AEF1AE'>        .zipWithIndex
+</span>184 <span style=''></span><span style='background: #AEF1AE'>        .map { case (s, i) =&gt; string(s).as(i) }
+</span>185 <span style=''></span><span style='background: #AEF1AE'>        .reduceLeft(_.orElse(_))
+</span>186 <span style=''></span><span style='background: #AEF1AE'>        .soft</span><span style=''>
+</span>187 <span style=''>
+</span>188 <span style=''>    /* day          = 2DIGIT */
+</span>189 <span style=''>    val day = </span><span style='background: #AEF1AE'>(digit ~ digit).string.map(_.toInt)</span><span style=''>
+</span>190 <span style=''>
+</span>191 <span style=''>    /* month        = %x4A.61.6E ; &quot;Jan&quot;, case-sensitive
+</span>192 <span style=''>     *              / %x46.65.62 ; &quot;Feb&quot;, case-sensitive
+</span>193 <span style=''>     *              / %x4D.61.72 ; &quot;Mar&quot;, case-sensitive
+</span>194 <span style=''>     *              / %x41.70.72 ; &quot;Apr&quot;, case-sensitive
+</span>195 <span style=''>     *              / %x4D.61.79 ; &quot;May&quot;, case-sensitive
+</span>196 <span style=''>     *              / %x4A.75.6E ; &quot;Jun&quot;, case-sensitive
+</span>197 <span style=''>     *              / %x4A.75.6C ; &quot;Jul&quot;, case-sensitive
+</span>198 <span style=''>     *              / %x41.75.67 ; &quot;Aug&quot;, case-sensitive
+</span>199 <span style=''>     *              / %x53.65.70 ; &quot;Sep&quot;, case-sensitive
+</span>200 <span style=''>     *              / %x4F.63.74 ; &quot;Oct&quot;, case-sensitive
+</span>201 <span style=''>     *              / %x4E.6F.76 ; &quot;Nov&quot;, case-sensitive
+</span>202 <span style=''>     *              / %x44.65.63 ; &quot;Dec&quot;, case-sensitive
+</span>203 <span style=''>     */
+</span>204 <span style=''>    val month =
+</span>205 <span style=''>      </span><span style='background: #AEF1AE'>List(
+</span>206 <span style=''></span><span style='background: #AEF1AE'>        &quot;Jan&quot;,
+</span>207 <span style=''></span><span style='background: #AEF1AE'>        &quot;Feb&quot;,
+</span>208 <span style=''></span><span style='background: #AEF1AE'>        &quot;Mar&quot;,
+</span>209 <span style=''></span><span style='background: #AEF1AE'>        &quot;Apr&quot;,
+</span>210 <span style=''></span><span style='background: #AEF1AE'>        &quot;May&quot;,
+</span>211 <span style=''></span><span style='background: #AEF1AE'>        &quot;Jun&quot;,
+</span>212 <span style=''></span><span style='background: #AEF1AE'>        &quot;Jul&quot;,
+</span>213 <span style=''></span><span style='background: #AEF1AE'>        &quot;Aug&quot;,
+</span>214 <span style=''></span><span style='background: #AEF1AE'>        &quot;Sep&quot;,
+</span>215 <span style=''></span><span style='background: #AEF1AE'>        &quot;Oct&quot;,
+</span>216 <span style=''></span><span style='background: #AEF1AE'>        &quot;Nov&quot;,
+</span>217 <span style=''></span><span style='background: #AEF1AE'>        &quot;Dec&quot;,
+</span>218 <span style=''></span><span style='background: #AEF1AE'>      ).zipWithIndex
+</span>219 <span style=''></span><span style='background: #AEF1AE'>        .map { case (s, i) =&gt; string(s).as(i + 1) }
+</span>220 <span style=''></span><span style='background: #AEF1AE'>        .reduceLeft(_.orElse(_))</span><span style=''>
+</span>221 <span style=''>
+</span>222 <span style=''>    /* year         = 4DIGIT */
+</span>223 <span style=''>    val year = </span><span style='background: #AEF1AE'>(digit ~ digit ~ digit ~ digit).string.map(_.toInt)</span><span style=''>
+</span>224 <span style=''>
+</span>225 <span style=''>    /* date1        = day SP month SP year
+</span>226 <span style=''>     *              ; e.g., 02 Jun 1982
+</span>227 <span style=''>     */
+</span>228 <span style=''>    val date1 = </span><span style='background: #AEF1AE'>(day &lt;* sp) ~ (month &lt;* sp) ~ year</span><span style=''>
+</span>229 <span style=''>
+</span>230 <span style=''>    /* hour         = 2DIGIT */
+</span>231 <span style=''>    val hour = </span><span style='background: #AEF1AE'>(digit ~ digit).string.map(_.toInt)</span><span style=''>
+</span>232 <span style=''>
+</span>233 <span style=''>    /* minute       = 2DIGIT */
+</span>234 <span style=''>    val minute = </span><span style='background: #AEF1AE'>(digit ~ digit).string.map(_.toInt)</span><span style=''>
+</span>235 <span style=''>
+</span>236 <span style=''>    /* second       = 2DIGIT */
+</span>237 <span style=''>    val second = </span><span style='background: #AEF1AE'>(digit ~ digit).string.map(_.toInt)</span><span style=''>
+</span>238 <span style=''>
+</span>239 <span style=''>    val colon = </span><span style='background: #AEF1AE'>char(':')</span><span style=''>
+</span>240 <span style=''>    /* time-of-day  = hour &quot;:&quot; minute &quot;:&quot; second
+</span>241 <span style=''>     *              ; 00:00:00 - 23:59:60 (leap second)
+</span>242 <span style=''>     */
+</span>243 <span style=''>    val timeOfDay = </span><span style='background: #AEF1AE'>(hour &lt;* colon) ~ (minute &lt;* colon) ~ second</span><span style=''>
+</span>244 <span style=''>
+</span>245 <span style=''>    /* IMF-fixdate  = day-name &quot;,&quot; SP date1 SP time-of-day SP GMT
+</span>246 <span style=''>     * ; fixed length/zone/capitalization subset of the format
+</span>247 <span style=''>     * ; see Section 3.3 of [RFC5322]
+</span>248 <span style=''>     *
+</span>249 <span style=''>     * GMT          = %x47.4D.54 ; &quot;GMT&quot;, case-sensitive
+</span>250 <span style=''>     */
+</span>251 <span style=''>    val imfFixdate =
+</span>252 <span style=''>      </span><span style='background: #AEF1AE'>((dayName &lt;* string(&quot;, &quot;)) ~ (date1 &lt;* sp) ~ (timeOfDay &lt;* string(&quot; GMT&quot;))).mapFilter {
+</span>253 <span style=''></span><span style='background: #AEF1AE'>        case ((_, ((day, month), year)), ((hour, min), sec)) =&gt;
+</span>254 <span style=''></span><span style='background: #AEF1AE'>          mkHttpDate(year, month, day, hour, min, sec)
+</span>255 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>256 <span style=''>
+</span>257 <span style=''>    val twoDigit = </span><span style='background: #AEF1AE'>(digit ~ digit).string.map(_.toInt)</span><span style=''>
+</span>258 <span style=''>
+</span>259 <span style=''>    /* date2        = day &quot;-&quot; month &quot;-&quot; 2DIGIT
+</span>260 <span style=''>     *              ; e.g., 02-Jun-82
+</span>261 <span style=''>     */
+</span>262 <span style=''>    val date2 = </span><span style='background: #AEF1AE'>(day &lt;* char('-')) ~ (month &lt;* char('-')) ~ twoDigit</span><span style=''>
+</span>263 <span style=''>
+</span>264 <span style=''>    /* day-name-l   = %x4D.6F.6E.64.61.79    ; &quot;Monday&quot;, case-sensitive
+</span>265 <span style=''>     *              / %x54.75.65.73.64.61.79       ; &quot;Tuesday&quot;, case-sensitive
+</span>266 <span style=''>     *              / %x57.65.64.6E.65.73.64.61.79 ; &quot;Wednesday&quot;, case-sensitive
+</span>267 <span style=''>     *              / %x54.68.75.72.73.64.61.79    ; &quot;Thursday&quot;, case-sensitive
+</span>268 <span style=''>     *              / %x46.72.69.64.61.79          ; &quot;Friday&quot;, case-sensitive
+</span>269 <span style=''>     *              / %x53.61.74.75.72.64.61.79    ; &quot;Saturday&quot;, case-sensitive
+</span>270 <span style=''>     *              / %x53.75.6E.64.61.79          ; &quot;Sunday&quot;, case-sensitive
+</span>271 <span style=''>     */
+</span>272 <span style=''>    val dayNameL =
+</span>273 <span style=''>      </span><span style='background: #AEF1AE'>List(&quot;Monday&quot;, &quot;Tuesday&quot;, &quot;Wednesday&quot;, &quot;Thursday&quot;, &quot;Friday&quot;, &quot;Saturday&quot;, &quot;Sunday&quot;)
+</span>274 <span style=''></span><span style='background: #AEF1AE'>        .map(string)
+</span>275 <span style=''></span><span style='background: #AEF1AE'>        .reduceLeft(_.orElse(_))</span><span style=''>
+</span>276 <span style=''>
+</span>277 <span style=''>    /* rfc850-date  = day-name-l &quot;,&quot; SP date2 SP time-of-day SP GMT
+</span>278 <span style=''>     *
+</span>279 <span style=''>     * &quot;Recipients of a timestamp value in rfc850-date format, which uses a
+</span>280 <span style=''>     * two-digit year, MUST interpret a timestamp that appears to be more
+</span>281 <span style=''>     * than 50 years in the future as representing the most recent year in
+</span>282 <span style=''>     * the past that had the same last two digits.&quot;
+</span>283 <span style=''>     *
+</span>284 <span style=''>     * Following that rule would make the parser impure for a case
+</span>285 <span style=''>     * rarely seen in the wild anymore.  We're going to observe it
+</span>286 <span style=''>     * from 2020 and hope our descendants are smarter than us.
+</span>287 <span style=''>     */
+</span>288 <span style=''>    val rfc850Date =
+</span>289 <span style=''>      </span><span style='background: #AEF1AE'>((dayNameL &lt;* string(&quot;, &quot;)) ~ (date2 &lt;* sp) ~ (timeOfDay &lt;* string(&quot; GMT&quot;))).mapFilter {
+</span>290 <span style=''></span><span style='background: #AEF1AE'>        case ((_, ((day, month), year)), ((hour, min), sec)) =&gt;
+</span>291 <span style=''></span><span style='background: #AEF1AE'>          val wrapYear = if (year &lt; 70) </span><span style='background: #F0ADAD'>year + 2000</span><span style='background: #AEF1AE'> else year + 1900
+</span>292 <span style=''></span><span style='background: #AEF1AE'>          mkHttpDate(wrapYear, month, day, hour, min, sec)
+</span>293 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>294 <span style=''>
+</span>295 <span style=''>    val oneDigit = </span><span style='background: #AEF1AE'>digit.map(_ - '0')</span><span style=''>
+</span>296 <span style=''>
+</span>297 <span style=''>    /* date3        = month SP ( 2DIGIT / ( SP 1DIGIT )) */
+</span>298 <span style=''>    val date3 = </span><span style='background: #AEF1AE'>(month &lt;* sp) ~ (twoDigit.orElse(sp *&gt; oneDigit))</span><span style=''>
+</span>299 <span style=''>
+</span>300 <span style=''>    /* asctime-date = day-name SP date3 SP time-of-day SP year
+</span>301 <span style=''>     *              ; e.g., Jun  2
+</span>302 <span style=''>     */
+</span>303 <span style=''>    val asctimeDate = </span><span style='background: #AEF1AE'>((dayName &lt;* sp) ~ (date3 &lt;* sp) ~ (timeOfDay &lt;* sp) ~ year).mapFilter {
+</span>304 <span style=''></span><span style='background: #AEF1AE'>      case (((_, (month, day)), ((hour, min), sec)), year) =&gt;
+</span>305 <span style=''></span><span style='background: #AEF1AE'>        mkHttpDate(year, month, day, hour, min, sec)
+</span>306 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>307 <span style=''>
+</span>308 <span style=''>    /* obs-date     = rfc850-date / asctime-date */
+</span>309 <span style=''>    val obsDate = </span><span style='background: #AEF1AE'>rfc850Date.orElse(asctimeDate)</span><span style=''>
+</span>310 <span style=''>
+</span>311 <span style=''>    </span><span style='background: #AEF1AE'>imfFixdate.orElse(obsDate)</span><span style=''>
+</span>312 <span style=''>  }
+</span>313 <span style=''>
+</span>314 <span style=''>  implicit val stdLibOrderingInstance: Ordering[HttpDate] =
+</span>315 <span style=''>    </span><span style='background: #AEF1AE'>catsOrderForHttp4sHttpDate.toOrdering</span><span style=''>
+</span>316 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          21600
+        </td>
+        <td>
+          1484
+          -
+          1526
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.runtime.OrderedProxy.compare
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.longWrapper(this.epochSecond).compare(that.epochSecond)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          15293
+        </td>
+        <td>
+          1509
+          -
+          1525
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.epochSecond
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          that.epochSecond
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          19065
+        </td>
+        <td>
+          1484
+          -
+          1500
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.epochSecond
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          this.epochSecond
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          15873
+        </td>
+        <td>
+          1559
+          -
+          1593
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.Instant.ofEpochSecond
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.Instant.ofEpochSecond(HttpDate.this.epochSecond)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          18035
+        </td>
+        <td>
+          1581
+          -
+          1592
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.epochSecond
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.epochSecond
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          18544
+        </td>
+        <td>
+          1650
+          -
+          1650
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Renderer.RFC7231InstantRenderer
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderer.RFC7231InstantRenderer
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          22377
+        </td>
+        <td>
+          1653
+          -
+          1662
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.toInstant
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.toInstant
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          14540
+        </td>
+        <td>
+          1643
+          -
+          1662
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;[java.time.Instant](HttpDate.this.toInstant)(util.this.Renderer.RFC7231InstantRenderer)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          19079
+        </td>
+        <td>
+          1748
+          -
+          1784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.==
+        </td>
+        <td>
+          munit.funsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.epochSecond.==(that.epochSecond)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          21225
+        </td>
+        <td>
+          1768
+          -
+          1784
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.epochSecond
+        </td>
+        <td>
+          munit.funsuite
+        </td>
+        <td style="background: #AEF1AE">
+          that.epochSecond
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          15309
+        </td>
+        <td>
+          1801
+          -
+          1806
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.expiressuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          21468
+        </td>
+        <td>
+          1851
+          -
+          1865
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Any.##
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpDate.this.epochSecond.##
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          17777
+        </td>
+        <td>
+          1918
+          -
+          1930
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          -2208988800L
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          15768
+        </td>
+        <td>
+          1962
+          -
+          1975
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          253402300799L
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          15174
+        </td>
+        <td>
+          2061
+          -
+          2064
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          18269
+        </td>
+        <td>
+          2195
+          -
+          2208
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.epochSecond
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          y.epochSecond
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          20697
+        </td>
+        <td>
+          2171
+          -
+          2209
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Long.compareTo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.long2Long(x.epochSecond).compareTo(scala.Predef.long2Long(y.epochSecond))
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          14399
+        </td>
+        <td>
+          2195
+          -
+          2208
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          scala.Predef.long2Long
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.long2Long(y.epochSecond)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          22251
+        </td>
+        <td>
+          2171
+          -
+          2184
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.epochSecond
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x.epochSecond
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          19095
+        </td>
+        <td>
+          2263
+          -
+          2273
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.hashCode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x.hashCode()
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          17649
+        </td>
+        <td>
+          2712
+          -
+          2758
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.unsafeFromEpochSecond
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.unsafeFromEpochSecond(HttpDate.this.MinEpochSecond)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          21487
+        </td>
+        <td>
+          2743
+          -
+          2757
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.MinEpochSecond
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.MinEpochSecond
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          13613
+        </td>
+        <td>
+          2902
+          -
+          2916
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.MaxEpochSecond
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.MaxEpochSecond
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          22268
+        </td>
+        <td>
+          2871
+          -
+          2917
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.unsafeFromEpochSecond
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.unsafeFromEpochSecond(HttpDate.this.MaxEpochSecond)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          18166
+        </td>
+        <td>
+          3257
+          -
+          3268
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.Instant.now
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.time.Instant.now()
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          14421
+        </td>
+        <td>
+          3239
+          -
+          3269
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.unsafeFromInstant
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpDate.this.unsafeFromInstant(java.time.Instant.now())
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          21203
+        </td>
+        <td>
+          3527
+          -
+          3544
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.Clock.realTime
+        </td>
+        <td>
+          org.http4s.httpdatesuite,org.http4s.client.middleware.cookiejarsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Clock.apply[F](evidence$2).realTime
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          19318
+        </td>
+        <td>
+          3576
+          -
+          3587
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.toSeconds
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          v.toSeconds
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          21366
+        </td>
+        <td>
+          3527
+          -
+          3589
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.httpdatesuite,org.http4s.client.middleware.cookiejarsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, scala.concurrent.duration.FiniteDuration](cats.effect.`package`.Clock.apply[F](evidence$2).realTime)(evidence$1).map[org.http4s.HttpDate](((v: scala.concurrent.duration.FiniteDuration) =&gt; HttpDate.this.unsafeFromEpochSecond(v.toSeconds)))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          14945
+        </td>
+        <td>
+          3554
+          -
+          3588
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.unsafeFromEpochSecond
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.unsafeFromEpochSecond(v.toSeconds)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          18032
+        </td>
+        <td>
+          3684
+          -
+          3708
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.unsafeFromEpochSecond
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.unsafeFromEpochSecond(0L)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          13632
+        </td>
+        <td>
+          3955
+          -
+          4009
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          org.http4s.httpdatesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.HttpDate](HttpDate.this.parser, &quot;Invalid HTTP date&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          22518
+        </td>
+        <td>
+          4136
+          -
+          4143
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          throw x$1
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          14287
+        </td>
+        <td>
+          4117
+          -
+          4154
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpDate.this.fromString(s).fold[org.http4s.HttpDate](((x$1: org.http4s.ParseFailure) =&gt; throw x$1), ((x: org.http4s.HttpDate) =&gt; scala.Predef.identity[org.http4s.HttpDate](x)))
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          18180
+        </td>
+        <td>
+          4145
+          -
+          4153
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.identity[org.http4s.HttpDate](x)
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          16857
+        </td>
+        <td>
+          4393
+          -
+          4407
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.MaxEpochSecond
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.MaxEpochSecond
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          21223
+        </td>
+        <td>
+          4361
+          -
+          4375
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.MinEpochSecond
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.MinEpochSecond
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          15146
+        </td>
+        <td>
+          4379
+          -
+          4407
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          epochSecond.&gt;(HttpDate.this.MaxEpochSecond)
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          21384
+        </td>
+        <td>
+          4347
+          -
+          4407
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          epochSecond.&lt;(HttpDate.this.MinEpochSecond).||(epochSecond.&gt;(HttpDate.this.MaxEpochSecond))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          14141
+        </td>
+        <td>
+          4415
+          -
+          4591
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseResult.fail(&quot;Invalid HTTP date&quot;, (&quot;&quot;.+(epochSecond).+(&quot; out of range for HTTP date. Must be between &quot;).+(HttpDate.this.MinEpochSecond).+(&quot; and &quot;).+(HttpDate.this.MaxEpochSecond).+(&quot;, inclusive&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          22242
+        </td>
+        <td>
+          4415
+          -
+          4591
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseResult.fail(&quot;Invalid HTTP date&quot;, (&quot;&quot;.+(epochSecond).+(&quot; out of range for HTTP date. Must be between &quot;).+(HttpDate.this.MinEpochSecond).+(&quot; and &quot;).+(HttpDate.this.MaxEpochSecond).+(&quot;, inclusive&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          18051
+        </td>
+        <td>
+          4441
+          -
+          4460
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;Invalid HTTP date&quot;
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          14305
+        </td>
+        <td>
+          4607
+          -
+          4653
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[org.http4s.HttpDate](new HttpDate(epochSecond))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          18396
+        </td>
+        <td>
+          4627
+          -
+          4652
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new HttpDate(epochSecond)
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          21243
+        </td>
+        <td>
+          4607
+          -
+          4653
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[org.http4s.HttpDate](new HttpDate(epochSecond))
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          15165
+        </td>
+        <td>
+          4824
+          -
+          4832
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[org.http4s.HttpDate](x)
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          17375
+        </td>
+        <td>
+          4815
+          -
+          4822
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          throw x$2
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          21628
+        </td>
+        <td>
+          4781
+          -
+          4833
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.fromEpochSecond(epochSecond).fold[org.http4s.HttpDate](((x$2: org.http4s.ParseFailure) =&gt; throw x$2), ((x: org.http4s.HttpDate) =&gt; scala.Predef.identity[org.http4s.HttpDate](x)))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          17937
+        </td>
+        <td>
+          5050
+          -
+          5077
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long./
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          instant.toEpochMilli()./(1000)
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          14165
+        </td>
+        <td>
+          5034
+          -
+          5078
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.fromEpochSecond
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpDate.this.fromEpochSecond(instant.toEpochMilli()./(1000))
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          22139
+        </td>
+        <td>
+          5219
+          -
+          5246
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long./
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          instant.toEpochMilli()./(1000)
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          18419
+        </td>
+        <td>
+          5197
+          -
+          5247
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.unsafeFromEpochSecond
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.unsafeFromEpochSecond(instant.toEpochMilli()./(1000))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          14410
+        </td>
+        <td>
+          5481
+          -
+          5499
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.chrono.ChronoZonedDateTime.toInstant
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          dateTime.toInstant()
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          21118
+        </td>
+        <td>
+          5469
+          -
+          5500
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.fromInstant
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpDate.this.fromInstant(dateTime.toInstant())
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          17105
+        </td>
+        <td>
+          5656
+          -
+          5674
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.chrono.ChronoZonedDateTime.toInstant
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          dateTime.toInstant()
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          15046
+        </td>
+        <td>
+          5638
+          -
+          5675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.unsafeFromInstant
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.unsafeFromInstant(dateTime.toInstant())
+        </td>
+      </tr><tr>
+        <td>
+          164
+        </td>
+        <td>
+          14281
+        </td>
+        <td>
+          6007
+          -
+          6165
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val dt: java.time.ZonedDateTime = java.time.ZonedDateTime.of(year, month, day, hour, min, sec, 0, java.time.ZoneOffset.UTC);
+  scala.Some.apply[org.http4s.HttpDate](org.http4s.HttpDate.unsafeFromZonedDateTime(dt))
+}
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          17656
+        </td>
+        <td>
+          6080
+          -
+          6094
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.time.ZoneOffset.UTC
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.ZoneOffset.UTC
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          14028
+        </td>
+        <td>
+          6026
+          -
+          6095
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.ZonedDateTime.of
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.ZonedDateTime.of(year, month, day, hour, min, sec, 0, java.time.ZoneOffset.UTC)
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          21649
+        </td>
+        <td>
+          6077
+          -
+          6078
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          20328
+        </td>
+        <td>
+          6109
+          -
+          6156
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.unsafeFromZonedDateTime
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.HttpDate.unsafeFromZonedDateTime(dt)
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          18438
+        </td>
+        <td>
+          6104
+          -
+          6157
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.HttpDate](org.http4s.HttpDate.unsafeFromZonedDateTime(dt))
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          20866
+        </td>
+        <td>
+          6221
+          -
+          6225
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          18308
+        </td>
+        <td>
+          6713
+          -
+          6718
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Sun&quot;
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          14138
+        </td>
+        <td>
+          6699
+          -
+          6704
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Fri&quot;
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          17350
+        </td>
+        <td>
+          6671
+          -
+          6676
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Mon&quot;
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          21375
+        </td>
+        <td>
+          6685
+          -
+          6690
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Wed&quot;
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          17529
+        </td>
+        <td>
+          6692
+          -
+          6697
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Thu&quot;
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          20573
+        </td>
+        <td>
+          6706
+          -
+          6711
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Sat&quot;
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          15064
+        </td>
+        <td>
+          6678
+          -
+          6683
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Tue&quot;
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          14299
+        </td>
+        <td>
+          6733
+          -
+          6739
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(str)
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          20744
+        </td>
+        <td>
+          6793
+          -
+          6808
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.as
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(s).as[Int](i)
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          17370
+        </td>
+        <td>
+          6831
+          -
+          6842
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$3.orElse[Int](x$4)
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          15467
+        </td>
+        <td>
+          6666
+          -
+          6857
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.soft
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[String](&quot;Mon&quot;, &quot;Tue&quot;, &quot;Wed&quot;, &quot;Thu&quot;, &quot;Fri&quot;, &quot;Sat&quot;, &quot;Sun&quot;).map[cats.parse.Parser[Unit]](((str: String) =&gt; cats.parse.Parser.string(str))).zipWithIndex.map[cats.parse.Parser[Int]](((x0$1: (cats.parse.Parser[Unit], Int)) =&gt; x0$1 match {
+  case (_1: cats.parse.Parser[Unit], _2: Int): (cats.parse.Parser[Unit], Int)((s @ _), (i @ _)) =&gt; cats.parse.Parser.string(s).as[Int](i)
+})).reduceLeft[cats.parse.Parser[Int]](((x$3: cats.parse.Parser[Int], x$4: cats.parse.Parser[Int]) =&gt; x$3.orElse[Int](x$4))).soft
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          14004
+        </td>
+        <td>
+          6905
+          -
+          6940
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.~[Char](cats.parse.Rfc5234.digit).string.map[Int](((x$5: String) =&gt; scala.Predef.augmentString(x$5).toInt))
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          21911
+        </td>
+        <td>
+          6914
+          -
+          6919
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          17550
+        </td>
+        <td>
+          6932
+          -
+          6939
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toInt
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(x$5).toInt
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          20592
+        </td>
+        <td>
+          7670
+          -
+          7675
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Jan&quot;
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          18408
+        </td>
+        <td>
+          7685
+          -
+          7690
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Feb&quot;
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          14837
+        </td>
+        <td>
+          7700
+          -
+          7705
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Mar&quot;
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          21116
+        </td>
+        <td>
+          7715
+          -
+          7720
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Apr&quot;
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          17233
+        </td>
+        <td>
+          7730
+          -
+          7735
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;May&quot;
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          13512
+        </td>
+        <td>
+          7745
+          -
+          7750
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Jun&quot;
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          21640
+        </td>
+        <td>
+          7760
+          -
+          7765
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Jul&quot;
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          18073
+        </td>
+        <td>
+          7775
+          -
+          7780
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Aug&quot;
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          14023
+        </td>
+        <td>
+          7790
+          -
+          7795
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Sep&quot;
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          20610
+        </td>
+        <td>
+          7805
+          -
+          7810
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Oct&quot;
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          18285
+        </td>
+        <td>
+          7820
+          -
+          7825
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Nov&quot;
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          14578
+        </td>
+        <td>
+          7835
+          -
+          7840
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Dec&quot;
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          17255
+        </td>
+        <td>
+          7893
+          -
+          7912
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.as
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(s).as[Int](i.+(1))
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          21007
+        </td>
+        <td>
+          7906
+          -
+          7911
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          i.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          13241
+        </td>
+        <td>
+          7935
+          -
+          7946
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.orElse[Int](x$7)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          21506
+        </td>
+        <td>
+          7656
+          -
+          7947
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.reduceLeft
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[String](&quot;Jan&quot;, &quot;Feb&quot;, &quot;Mar&quot;, &quot;Apr&quot;, &quot;May&quot;, &quot;Jun&quot;, &quot;Jul&quot;, &quot;Aug&quot;, &quot;Sep&quot;, &quot;Oct&quot;, &quot;Nov&quot;, &quot;Dec&quot;).zipWithIndex.map[cats.parse.Parser[Int]](((x0$2: (String, Int)) =&gt; x0$2 match {
+  case (_1: String, _2: Int): (String, Int)((s @ _), (i @ _)) =&gt; cats.parse.Parser.string(s).as[Int](i.+(1))
+})).reduceLeft[cats.parse.Parser[Int]](((x$6: cats.parse.Parser[Int], x$7: cats.parse.Parser[Int]) =&gt; x$6.orElse[Int](x$7)))
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          20484
+        </td>
+        <td>
+          8021
+          -
+          8026
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          17520
+        </td>
+        <td>
+          8005
+          -
+          8010
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          16512
+        </td>
+        <td>
+          8039
+          -
+          8046
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toInt
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(x$8).toInt
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          14439
+        </td>
+        <td>
+          7996
+          -
+          8047
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.~[Char](cats.parse.Rfc5234.digit).~[Char](cats.parse.Rfc5234.digit).~[Char](cats.parse.Rfc5234.digit).string.map[Int](((x$8: String) =&gt; scala.Predef.augmentString(x$8).toInt))
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          14044
+        </td>
+        <td>
+          8013
+          -
+          8018
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          20738
+        </td>
+        <td>
+          8156
+          -
+          8190
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          day.&lt;*[Unit](cats.parse.Rfc5234.sp).~[Int](month.&lt;*[Unit](cats.parse.Rfc5234.sp)).~[Int](year)
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          17276
+        </td>
+        <td>
+          8248
+          -
+          8253
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          13107
+        </td>
+        <td>
+          8266
+          -
+          8273
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toInt
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(x$9).toInt
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          21524
+        </td>
+        <td>
+          8239
+          -
+          8274
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.~[Char](cats.parse.Rfc5234.digit).string.map[Int](((x$9: String) =&gt; scala.Predef.augmentString(x$9).toInt))
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          20219
+        </td>
+        <td>
+          8325
+          -
+          8360
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.~[Char](cats.parse.Rfc5234.digit).string.map[Int](((x$10: String) =&gt; scala.Predef.augmentString(x$10).toInt))
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          18052
+        </td>
+        <td>
+          8334
+          -
+          8339
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          13649
+        </td>
+        <td>
+          8352
+          -
+          8359
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toInt
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(x$10).toInt
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          14462
+        </td>
+        <td>
+          8438
+          -
+          8445
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toInt
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(x$11).toInt
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          20751
+        </td>
+        <td>
+          8411
+          -
+          8446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.~[Char](cats.parse.Rfc5234.digit).string.map[Int](((x$11: String) =&gt; scala.Predef.augmentString(x$11).toInt))
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          16368
+        </td>
+        <td>
+          8420
+          -
+          8425
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          16872
+        </td>
+        <td>
+          8464
+          -
+          8473
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(':')
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          13127
+        </td>
+        <td>
+          8607
+          -
+          8651
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          hour.&lt;*[Unit](colon).~[Int](minute.&lt;*[Unit](colon)).~[Int](second)
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          18065
+        </td>
+        <td>
+          8958
+          -
+          8960
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.sp
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          20460
+        </td>
+        <td>
+          8978
+          -
+          8992
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot; GMT&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          13662
+        </td>
+        <td>
+          8949
+          -
+          8960
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          date1.&lt;*[Unit](cats.parse.Rfc5234.sp)
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          21398
+        </td>
+        <td>
+          8932
+          -
+          8944
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;, &quot;)
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          16392
+        </td>
+        <td>
+          8965
+          -
+          8992
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          timeOfDay.&lt;*[Unit](cats.parse.Parser.string(&quot; GMT&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          252
+        </td>
+        <td>
+          21263
+        </td>
+        <td>
+          8919
+          -
+          9133
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          dayName.&lt;*[Unit](cats.parse.Parser.string(&quot;, &quot;)).~[((Int, Int), Int)](date1.&lt;*[Unit](cats.parse.Rfc5234.sp)).~[((Int, Int), Int)](timeOfDay.&lt;*[Unit](cats.parse.Parser.string(&quot; GMT&quot;))).mapFilter[org.http4s.HttpDate](((x0$3: ((Int, ((Int, Int), Int)), ((Int, Int), Int))) =&gt; x0$3 match {
+  case (_1: (Int, ((Int, Int), Int)), _2: ((Int, Int), Int)): ((Int, ((Int, Int), Int)), ((Int, Int), Int))((_1: Int, _2: ((Int, Int), Int)): (Int, ((Int, Int), Int))(_, (_1: (Int, Int), _2: Int): ((Int, Int), Int)((_1: Int, _2: Int): (Int, Int)((day @ _), (month @ _)), (year @ _))), (_1: (Int, Int), _2: Int): ((Int, Int), Int)((_1: Int, _2: Int): (Int, Int)((hour @ _), (min @ _)), (sec @ _))) =&gt; mkHttpDate(year, month, day, hour, min, sec)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          14193
+        </td>
+        <td>
+          9081
+          -
+          9125
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.mkHttpDate
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          mkHttpDate(year, month, day, hour, min, sec)
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          17249
+        </td>
+        <td>
+          9163
+          -
+          9168
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          13386
+        </td>
+        <td>
+          9181
+          -
+          9188
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toInt
+        </td>
+        <td>
+          org.http4s.httpdatesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(x$12).toInt
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          19648
+        </td>
+        <td>
+          9154
+          -
+          9189
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.~[Char](cats.parse.Rfc5234.digit).string.map[Int](((x$12: String) =&gt; scala.Predef.augmentString(x$12).toInt))
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          17429
+        </td>
+        <td>
+          9300
+          -
+          9352
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          day.&lt;*[Unit](cats.parse.Parser.char('-')).~[Int](month.&lt;*[Unit](cats.parse.Parser.char('-'))).~[Int](twoDigit)
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          20640
+        </td>
+        <td>
+          9986
+          -
+          9994
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Friday&quot;
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          14186
+        </td>
+        <td>
+          9940
+          -
+          9948
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Monday&quot;
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          16638
+        </td>
+        <td>
+          9961
+          -
+          9972
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Wednesday&quot;
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          14745
+        </td>
+        <td>
+          9974
+          -
+          9984
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Thursday&quot;
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          20478
+        </td>
+        <td>
+          9950
+          -
+          9959
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Tuesday&quot;
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          13405
+        </td>
+        <td>
+          10008
+          -
+          10016
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Sunday&quot;
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          17122
+        </td>
+        <td>
+          9996
+          -
+          10006
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Saturday&quot;
+        </td>
+      </tr><tr>
+        <td>
+          274
+        </td>
+        <td>
+          19752
+        </td>
+        <td>
+          10031
+          -
+          10037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(str)
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          13918
+        </td>
+        <td>
+          9935
+          -
+          10071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.reduceLeft
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[String](&quot;Monday&quot;, &quot;Tuesday&quot;, &quot;Wednesday&quot;, &quot;Thursday&quot;, &quot;Friday&quot;, &quot;Saturday&quot;, &quot;Sunday&quot;).map[cats.parse.Parser[Unit]](((str: String) =&gt; cats.parse.Parser.string(str))).reduceLeft[cats.parse.Parser[Unit]](((x$13: cats.parse.Parser[Unit], x$14: cats.parse.Parser[Unit]) =&gt; x$13.orElse[Unit](x$14)))
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          17971
+        </td>
+        <td>
+          10059
+          -
+          10070
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$13.orElse[Unit](x$14)
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          20344
+        </td>
+        <td>
+          10678
+          -
+          10690
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;, &quot;)
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          22834
+        </td>
+        <td>
+          10664
+          -
+          10952
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          dayNameL.&lt;*[Unit](cats.parse.Parser.string(&quot;, &quot;)).~[((Int, Int), Int)](date2.&lt;*[Unit](cats.parse.Rfc5234.sp)).~[((Int, Int), Int)](timeOfDay.&lt;*[Unit](cats.parse.Parser.string(&quot; GMT&quot;))).mapFilter[org.http4s.HttpDate](((x0$4: ((Unit, ((Int, Int), Int)), ((Int, Int), Int))) =&gt; x0$4 match {
+  case (_1: (Unit, ((Int, Int), Int)), _2: ((Int, Int), Int)): ((Unit, ((Int, Int), Int)), ((Int, Int), Int))((_1: Unit, _2: ((Int, Int), Int)): (Unit, ((Int, Int), Int))(_, (_1: (Int, Int), _2: Int): ((Int, Int), Int)((_1: Int, _2: Int): (Int, Int)((day @ _), (month @ _)), (year @ _))), (_1: (Int, Int), _2: Int): ((Int, Int), Int)((_1: Int, _2: Int): (Int, Int)((hour @ _), (min @ _)), (sec @ _))) =&gt; {
+    val wrapYear: Int = if (year.&lt;(70))
+      year.+(2000)
+    else
+      year.+(1900);
+    mkHttpDate(wrapYear, month, day, hour, min, sec)
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          17140
+        </td>
+        <td>
+          10711
+          -
+          10738
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          timeOfDay.&lt;*[Unit](cats.parse.Parser.string(&quot; GMT&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          14451
+        </td>
+        <td>
+          10695
+          -
+          10706
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          date2.&lt;*[Unit](cats.parse.Rfc5234.sp)
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          21153
+        </td>
+        <td>
+          10724
+          -
+          10738
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot; GMT&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          16655
+        </td>
+        <td>
+          10704
+          -
+          10706
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.sp
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          13816
+        </td>
+        <td>
+          10874
+          -
+          10885
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.httpdatesuite
+        </td>
+        <td style="background: #AEF1AE">
+          year.+(1900)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          19622
+        </td>
+        <td>
+          10857
+          -
+          10868
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          year.+(2000)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          17699
+        </td>
+        <td>
+          10857
+          -
+          10868
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          year.+(2000)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          13269
+        </td>
+        <td>
+          10846
+          -
+          10855
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          org.http4s.httpdatesuite
+        </td>
+        <td style="background: #AEF1AE">
+          year.&lt;(70)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          20366
+        </td>
+        <td>
+          10874
+          -
+          10885
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.httpdatesuite
+        </td>
+        <td style="background: #AEF1AE">
+          year.+(1900)
+        </td>
+      </tr><tr>
+        <td>
+          292
+        </td>
+        <td>
+          16383
+        </td>
+        <td>
+          10896
+          -
+          10944
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.mkHttpDate
+        </td>
+        <td>
+          org.http4s.httpdatesuite
+        </td>
+        <td style="background: #AEF1AE">
+          mkHttpDate(wrapYear, month, day, hour, min, sec)
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          17027
+        </td>
+        <td>
+          10973
+          -
+          10991
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.map[Int](((x$15: Char) =&gt; x$15.-('0')))
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          21253
+        </td>
+        <td>
+          10983
+          -
+          10990
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.-
+        </td>
+        <td>
+          org.http4s.httpdatesuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$15.-('0')
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          19642
+        </td>
+        <td>
+          11102
+          -
+          11116
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp.*&gt;[Int](oneDigit)
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          13289
+        </td>
+        <td>
+          11079
+          -
+          11081
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.sp
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          17568
+        </td>
+        <td>
+          11086
+          -
+          11117
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          twoDigit.orElse[Int](cats.parse.Rfc5234.sp.*&gt;[Int](oneDigit))
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          14177
+        </td>
+        <td>
+          11069
+          -
+          11118
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          month.&lt;*[Unit](cats.parse.Rfc5234.sp).~[Int](twoDigit.orElse[Int](cats.parse.Rfc5234.sp.*&gt;[Int](oneDigit)))
+        </td>
+      </tr><tr>
+        <td>
+          303
+        </td>
+        <td>
+          21131
+        </td>
+        <td>
+          11297
+          -
+          11299
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.sp
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp
+        </td>
+      </tr><tr>
+        <td>
+          303
+        </td>
+        <td>
+          20385
+        </td>
+        <td>
+          11261
+          -
+          11263
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.sp
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp
+        </td>
+      </tr><tr>
+        <td>
+          303
+        </td>
+        <td>
+          22855
+        </td>
+        <td>
+          11268
+          -
+          11279
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          date3.&lt;*[Unit](cats.parse.Rfc5234.sp)
+        </td>
+      </tr><tr>
+        <td>
+          303
+        </td>
+        <td>
+          16257
+        </td>
+        <td>
+          11277
+          -
+          11279
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.sp
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp
+        </td>
+      </tr><tr>
+        <td>
+          303
+        </td>
+        <td>
+          19505
+        </td>
+        <td>
+          11248
+          -
+          11441
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          dayName.&lt;*[Unit](cats.parse.Rfc5234.sp).~[(Int, Int)](date3.&lt;*[Unit](cats.parse.Rfc5234.sp)).~[((Int, Int), Int)](timeOfDay.&lt;*[Unit](cats.parse.Rfc5234.sp)).~[Int](year).mapFilter[org.http4s.HttpDate](((x0$5: (((Int, (Int, Int)), ((Int, Int), Int)), Int)) =&gt; x0$5 match {
+  case (_1: ((Int, (Int, Int)), ((Int, Int), Int)), _2: Int): (((Int, (Int, Int)), ((Int, Int), Int)), Int)((_1: (Int, (Int, Int)), _2: ((Int, Int), Int)): ((Int, (Int, Int)), ((Int, Int), Int))((_1: Int, _2: (Int, Int)): (Int, (Int, Int))(_, (_1: Int, _2: Int): (Int, Int)((month @ _), (day @ _))), (_1: (Int, Int), _2: Int): ((Int, Int), Int)((_1: Int, _2: Int): (Int, Int)((hour @ _), (min @ _)), (sec @ _))), (year @ _)) =&gt; mkHttpDate(year, month, day, hour, min, sec)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          303
+        </td>
+        <td>
+          17411
+        </td>
+        <td>
+          11284
+          -
+          11299
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          timeOfDay.&lt;*[Unit](cats.parse.Rfc5234.sp)
+        </td>
+      </tr><tr>
+        <td>
+          305
+        </td>
+        <td>
+          13020
+        </td>
+        <td>
+          11391
+          -
+          11435
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.HttpDate.mkHttpDate
+        </td>
+        <td>
+          org.http4s.httpdatesuite
+        </td>
+        <td style="background: #AEF1AE">
+          mkHttpDate(year, month, day, hour, min, sec)
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          15788
+        </td>
+        <td>
+          11513
+          -
+          11543
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          rfc850Date.orElse[org.http4s.HttpDate](asctimeDate)
+        </td>
+      </tr><tr>
+        <td>
+          311
+        </td>
+        <td>
+          14045
+        </td>
+        <td>
+          11549
+          -
+          11575
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          imfFixdate.orElse[org.http4s.HttpDate](obsDate)
+        </td>
+      </tr><tr>
+        <td>
+          315
+        </td>
+        <td>
+          20625
+        </td>
+        <td>
+          11645
+          -
+          11682
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Order.toOrdering
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.ember.core.parsingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.this.catsOrderForHttp4sHttpDate.toOrdering
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

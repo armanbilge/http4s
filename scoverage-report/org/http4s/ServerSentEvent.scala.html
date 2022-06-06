@@ -1,0 +1,1879 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ServerSentEvent.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data.Chain
+</span>20 <span style=''>import fs2._
+</span>21 <span style=''>import fs2.text.utf8
+</span>22 <span style=''>import org.http4s.ServerSentEvent._
+</span>23 <span style=''>import org.http4s.util.Renderable
+</span>24 <span style=''>import org.http4s.util.Writer
+</span>25 <span style=''>
+</span>26 <span style=''>import java.util.concurrent.TimeUnit
+</span>27 <span style=''>import java.util.regex.Pattern
+</span>28 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>29 <span style=''>import scala.util.Try
+</span>30 <span style=''>
+</span>31 <span style=''>final case class ServerSentEvent(
+</span>32 <span style=''>    data: Option[String] = None,
+</span>33 <span style=''>    eventType: Option[String] = None,
+</span>34 <span style=''>    id: Option[EventId] = None,
+</span>35 <span style=''>    retry: Option[FiniteDuration] = None,
+</span>36 <span style=''>    comment: Option[String] = None,
+</span>37 <span style=''>) extends Renderable {
+</span>38 <span style=''>  def render(writer: Writer): writer.type = {
+</span>39 <span style=''>    </span><span style='background: #AEF1AE'>data.foreach(writer &lt;&lt; &quot;data: &quot; &lt;&lt; _ &lt;&lt; &quot;\n&quot;)</span><span style=''>
+</span>40 <span style=''>    </span><span style='background: #AEF1AE'>comment.foreach(writer &lt;&lt; &quot;: &quot; &lt;&lt; _ &lt;&lt; &quot;\n&quot;)</span><span style=''>
+</span>41 <span style=''>    </span><span style='background: #AEF1AE'>eventType.foreach(writer &lt;&lt; &quot;event: &quot; &lt;&lt; _ &lt;&lt; &quot;\n&quot;)</span><span style=''>
+</span>42 <span style=''>    </span><span style='background: #AEF1AE'>id</span><span style=''> match {
+</span>43 <span style=''>      case None </span><span style='background: #AEF1AE'>=&gt;</span><span style=''>
+</span>44 <span style=''>      case Some(EventId.reset) =&gt; </span><span style='background: #AEF1AE'>writer &lt;&lt; &quot;id\n&quot;</span><span style=''>
+</span>45 <span style=''>      case Some(EventId(id)) =&gt; </span><span style='background: #AEF1AE'>writer &lt;&lt; &quot;id: &quot; &lt;&lt; id &lt;&lt; &quot;\n&quot;</span><span style=''>
+</span>46 <span style=''>    }
+</span>47 <span style=''>    </span><span style='background: #AEF1AE'>retry.foreach(writer &lt;&lt; &quot;retry: &quot; &lt;&lt; _.toMillis &lt;&lt; &quot;\n&quot;)</span><span style=''>
+</span>48 <span style=''>    </span><span style='background: #AEF1AE'>writer &lt;&lt; &quot;\n&quot;</span><span style=''>
+</span>49 <span style=''>  }
+</span>50 <span style=''>
+</span>51 <span style=''>  override def toString: String =
+</span>52 <span style=''>    s&quot;ServerSentEvent($data,$eventType,$id,$retry)&quot;
+</span>53 <span style=''>}
+</span>54 <span style=''>
+</span>55 <span style=''>object ServerSentEvent {
+</span>56 <span style=''>  val empty: ServerSentEvent = </span><span style='background: #AEF1AE'>ServerSentEvent()</span><span style=''>
+</span>57 <span style=''>
+</span>58 <span style=''>  final case class EventId(value: String)
+</span>59 <span style=''>
+</span>60 <span style=''>  object EventId {
+</span>61 <span style=''>    val reset: EventId = </span><span style='background: #AEF1AE'>EventId(&quot;&quot;)</span><span style=''>
+</span>62 <span style=''>  }
+</span>63 <span style=''>
+</span>64 <span style=''>  // Pattern instead of Regex, because Regex doesn't have split with limit. :(
+</span>65 <span style=''>  private val FieldSeparator =
+</span>66 <span style=''>    </span><span style='background: #AEF1AE'>Pattern.compile(&quot;&quot;&quot;: ?&quot;&quot;&quot;)</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>  def decoder[F[_]]: Pipe[F, Byte, ServerSentEvent] = {
+</span>69 <span style=''>    case class LineBuffer(lines: Chain[String] = Chain.empty) {
+</span>70 <span style=''>      def append(line: String): LineBuffer =
+</span>71 <span style=''>        // val scrubbed = if (line.endsWith(&quot;\n&quot;)) line.dropRight(1) else line
+</span>72 <span style=''>        </span><span style='background: #AEF1AE'>copy(lines = lines :+ line)</span><span style=''>
+</span>73 <span style=''>      def reify: Option[String] =
+</span>74 <span style=''>        if (</span><span style='background: #AEF1AE'>lines.nonEmpty</span><span style=''>) {
+</span>75 <span style=''>          </span><span style='background: #AEF1AE'>Some(lines.iterator.mkString(&quot;\n&quot;))</span><span style=''>
+</span>76 <span style=''>        } else
+</span>77 <span style=''>          </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>78 <span style=''>    }
+</span>79 <span style=''>    val emptyBuffer = </span><span style='background: #AEF1AE'>LineBuffer()</span><span style=''>
+</span>80 <span style=''>    def go(
+</span>81 <span style=''>        dataBuffer: LineBuffer,
+</span>82 <span style=''>        eventType: Option[String],
+</span>83 <span style=''>        id: Option[EventId],
+</span>84 <span style=''>        retry: Option[Long],
+</span>85 <span style=''>        commentBuffer: LineBuffer,
+</span>86 <span style=''>        stream: Stream[F, String],
+</span>87 <span style=''>    ): Pull[F, ServerSentEvent, Unit] = {
+</span>88 <span style=''>      //      def dispatch(h: Handle[F, String]): Pull[F, ServerSentEvent, Nothing] =
+</span>89 <span style=''>      def dispatch(stream: Stream[F, String]): Pull[F, ServerSentEvent, Unit] = {
+</span>90 <span style=''>        val sse = </span><span style='background: #AEF1AE'>ServerSentEvent(
+</span>91 <span style=''></span><span style='background: #AEF1AE'>          dataBuffer.reify,
+</span>92 <span style=''></span><span style='background: #AEF1AE'>          eventType,
+</span>93 <span style=''></span><span style='background: #AEF1AE'>          id,
+</span>94 <span style=''></span><span style='background: #AEF1AE'>          retry.map(FiniteDuration(_, TimeUnit.MILLISECONDS)),
+</span>95 <span style=''></span><span style='background: #AEF1AE'>          commentBuffer.reify,
+</span>96 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''>
+</span>97 <span style=''>        </span><span style='background: #AEF1AE'>Pull.output1(sse) &gt;&gt; go(emptyBuffer, None, None, None, emptyBuffer, stream)</span><span style=''>
+</span>98 <span style=''>      }
+</span>99 <span style=''>
+</span>100 <span style=''>      def handleLine(
+</span>101 <span style=''>          field: String,
+</span>102 <span style=''>          value: String,
+</span>103 <span style=''>          stream: Stream[F, String],
+</span>104 <span style=''>      ): Pull[F, ServerSentEvent, Unit] =
+</span>105 <span style=''>        field match {
+</span>106 <span style=''>          case &quot;&quot; =&gt;
+</span>107 <span style=''>            </span><span style='background: #AEF1AE'>go(dataBuffer, eventType, id, retry, commentBuffer.append(value), stream)</span><span style=''>
+</span>108 <span style=''>          case &quot;event&quot; =&gt;
+</span>109 <span style=''>            </span><span style='background: #AEF1AE'>go(dataBuffer, Some(value), id, retry, commentBuffer, stream)</span><span style=''>
+</span>110 <span style=''>          case &quot;data&quot; =&gt;
+</span>111 <span style=''>            </span><span style='background: #AEF1AE'>go(dataBuffer.append(value), eventType, id, retry, commentBuffer, stream)</span><span style=''>
+</span>112 <span style=''>          case &quot;id&quot; =&gt;
+</span>113 <span style=''>            val newId = </span><span style='background: #AEF1AE'>EventId(value)</span><span style=''>
+</span>114 <span style=''>            </span><span style='background: #AEF1AE'>go(dataBuffer, eventType, Some(newId), retry, commentBuffer, stream)</span><span style=''>
+</span>115 <span style=''>          case &quot;retry&quot; =&gt;
+</span>116 <span style=''>            val newRetry = </span><span style='background: #AEF1AE'>Try(value.toLong).toOption.orElse(retry)</span><span style=''>
+</span>117 <span style=''>            </span><span style='background: #AEF1AE'>go(dataBuffer, eventType, id, newRetry, commentBuffer, stream)</span><span style=''>
+</span>118 <span style=''>          case _ =&gt;
+</span>119 <span style=''>            </span><span style='background: #F0ADAD'>go(dataBuffer, eventType, id, retry, commentBuffer, stream)</span><span style=''>
+</span>120 <span style=''>        }
+</span>121 <span style=''>
+</span>122 <span style=''>      </span><span style='background: #AEF1AE'>stream.pull.uncons1.flatMap {
+</span>123 <span style=''></span><span style='background: #AEF1AE'>        case None =&gt;
+</span>124 <span style=''></span><span style='background: #AEF1AE'>          Pull.done
+</span>125 <span style=''></span><span style='background: #AEF1AE'>        case Some((&quot;&quot;, stream)) =&gt;
+</span>126 <span style=''></span><span style='background: #AEF1AE'>          dispatch(stream)
+</span>127 <span style=''></span><span style='background: #AEF1AE'>        case Some((s, stream)) =&gt;
+</span>128 <span style=''></span><span style='background: #AEF1AE'>          FieldSeparator.split(s, 2) match {
+</span>129 <span style=''></span><span style='background: #AEF1AE'>            case Array(field, value) =&gt;
+</span>130 <span style=''></span><span style='background: #AEF1AE'>              handleLine(field, value, stream)
+</span>131 <span style=''></span><span style='background: #AEF1AE'>            case Array(line) =&gt;
+</span>132 <span style=''></span><span style='background: #AEF1AE'>              handleLine(line, &quot;&quot;, stream)
+</span>133 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>134 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>135 <span style=''>    }
+</span>136 <span style=''>
+</span>137 <span style=''>    stream =&gt;
+</span>138 <span style=''>      </span><span style='background: #AEF1AE'>go(
+</span>139 <span style=''></span><span style='background: #AEF1AE'>        emptyBuffer,
+</span>140 <span style=''></span><span style='background: #AEF1AE'>        None,
+</span>141 <span style=''></span><span style='background: #AEF1AE'>        None,
+</span>142 <span style=''></span><span style='background: #AEF1AE'>        None,
+</span>143 <span style=''></span><span style='background: #AEF1AE'>        emptyBuffer,
+</span>144 <span style=''></span><span style='background: #AEF1AE'>        stream.through(utf8.decode.andThen(text.lines)),
+</span>145 <span style=''></span><span style='background: #AEF1AE'>      ).stream</span><span style=''>
+</span>146 <span style=''>  }
+</span>147 <span style=''>
+</span>148 <span style=''>  def encoder[F[_]]: Pipe[F, ServerSentEvent, Byte] =
+</span>149 <span style=''>    </span><span style='background: #AEF1AE'>_.map(_.renderString).through(utf8.encode)</span><span style=''>
+</span>150 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          15478
+        </td>
+        <td>
+          1213
+          -
+          1244
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;data: &quot;).&lt;&lt;(x$1).&lt;&lt;(&quot;\n&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          21634
+        </td>
+        <td>
+          1200
+          -
+          1245
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.this.data.foreach[org.http4s.util.Writer](((x$1: String) =&gt; writer.&lt;&lt;(&quot;data: &quot;).&lt;&lt;(x$1).&lt;&lt;(&quot;\n&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          13867
+        </td>
+        <td>
+          1250
+          -
+          1294
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.this.comment.foreach[org.http4s.util.Writer](((x$2: String) =&gt; writer.&lt;&lt;(&quot;: &quot;).&lt;&lt;(x$2).&lt;&lt;(&quot;\n&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          17911
+        </td>
+        <td>
+          1266
+          -
+          1293
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;: &quot;).&lt;&lt;(x$2).&lt;&lt;(&quot;\n&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          22408
+        </td>
+        <td>
+          1317
+          -
+          1349
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;event: &quot;).&lt;&lt;(x$3).&lt;&lt;(&quot;\n&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          18424
+        </td>
+        <td>
+          1299
+          -
+          1350
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.this.eventType.foreach[org.http4s.util.Writer](((x$3: String) =&gt; writer.&lt;&lt;(&quot;event: &quot;).&lt;&lt;(x$3).&lt;&lt;(&quot;\n&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          14706
+        </td>
+        <td>
+          1355
+          -
+          1357
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.id
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.this.id
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          20853
+        </td>
+        <td>
+          1382
+          -
+          1384
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          18956
+        </td>
+        <td>
+          1419
+          -
+          1435
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;id\n&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          15050
+        </td>
+        <td>
+          1468
+          -
+          1498
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;id: &quot;).&lt;&lt;(id).&lt;&lt;(&quot;\n&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          17662
+        </td>
+        <td>
+          1509
+          -
+          1565
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.this.retry.foreach[org.http4s.util.Writer](((x$4: scala.concurrent.duration.FiniteDuration) =&gt; writer.&lt;&lt;(&quot;retry: &quot;).&lt;&lt;(x$4.toMillis).&lt;&lt;(&quot;\n&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          21654
+        </td>
+        <td>
+          1523
+          -
+          1564
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;retry: &quot;).&lt;&lt;(x$4.toMillis).&lt;&lt;(&quot;\n&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          13759
+        </td>
+        <td>
+          1570
+          -
+          1584
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;\n&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          14591
+        </td>
+        <td>
+          1735
+          -
+          1735
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.apply$default$3
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.apply$default$3
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          20873
+        </td>
+        <td>
+          1735
+          -
+          1735
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.apply$default$4
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.apply$default$4
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          15448
+        </td>
+        <td>
+          1735
+          -
+          1752
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.apply
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.apply(ServerSentEvent.apply$default$1, ServerSentEvent.apply$default$2, ServerSentEvent.apply$default$3, ServerSentEvent.apply$default$4, ServerSentEvent.apply$default$5)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          22126
+        </td>
+        <td>
+          1735
+          -
+          1735
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.apply$default$1
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.apply$default$1
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          18444
+        </td>
+        <td>
+          1735
+          -
+          1735
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.apply$default$2
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.apply$default$2
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          16975
+        </td>
+        <td>
+          1735
+          -
+          1735
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.apply$default$5
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.apply$default$5
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          21673
+        </td>
+        <td>
+          1841
+          -
+          1852
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.EventId.apply
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.this.EventId.apply(&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          17533
+        </td>
+        <td>
+          1972
+          -
+          1998
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.regex.Pattern.compile
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.util.regex.Pattern.compile(&quot;: ?&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          13779
+        </td>
+        <td>
+          2265
+          -
+          2278
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          LineBuffer.this.lines.:+[String](line)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          22385
+        </td>
+        <td>
+          2252
+          -
+          2279
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.LineBuffer.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          LineBuffer.this.copy(LineBuffer.this.lines.:+[String](line))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          18688
+        </td>
+        <td>
+          2326
+          -
+          2340
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          LineBuffer.this.lines.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          16992
+        </td>
+        <td>
+          2354
+          -
+          2389
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[String](LineBuffer.this.lines.iterator.mkString(&quot;\n&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          14609
+        </td>
+        <td>
+          2359
+          -
+          2388
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          LineBuffer.this.lines.iterator.mkString(&quot;\n&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          20746
+        </td>
+        <td>
+          2354
+          -
+          2389
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[String](LineBuffer.this.lines.iterator.mkString(&quot;\n&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          15470
+        </td>
+        <td>
+          2415
+          -
+          2419
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          21884
+        </td>
+        <td>
+          2415
+          -
+          2419
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          13657
+        </td>
+        <td>
+          2448
+          -
+          2460
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.LineBuffer.apply
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          LineBuffer.apply(LineBuffer.apply$default$1)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          17555
+        </td>
+        <td>
+          2448
+          -
+          2448
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.LineBuffer.apply$default$1
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          LineBuffer.apply$default$1
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          17234
+        </td>
+        <td>
+          2896
+          -
+          3079
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.apply(dataBuffer.reify, eventType, id, retry.map[scala.concurrent.duration.FiniteDuration](((x$5: Long) =&gt; scala.concurrent.duration.FiniteDuration.apply(x$5, MILLISECONDS))), commentBuffer.reify)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          22400
+        </td>
+        <td>
+          2923
+          -
+          2939
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.LineBuffer.reify
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          dataBuffer.reify
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          14566
+        </td>
+        <td>
+          2986
+          -
+          3037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          retry.map[scala.concurrent.duration.FiniteDuration](((x$5: Long) =&gt; scala.concurrent.duration.FiniteDuration.apply(x$5, MILLISECONDS)))
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          18706
+        </td>
+        <td>
+          2996
+          -
+          3036
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.apply
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.concurrent.duration.FiniteDuration.apply(x$5, MILLISECONDS)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          20767
+        </td>
+        <td>
+          3049
+          -
+          3068
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.LineBuffer.reify
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          commentBuffer.reify
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          17802
+        </td>
+        <td>
+          3137
+          -
+          3141
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          13677
+        </td>
+        <td>
+          3109
+          -
+          3163
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(emptyBuffer, scala.None, scala.None, scala.None, emptyBuffer, stream)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          20615
+        </td>
+        <td>
+          3088
+          -
+          3163
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output1[[x]fs2.Pure[x], org.http4s.ServerSentEvent](sse).&gt;&gt;[[_]F[_], org.http4s.ServerSentEvent, Unit](go(emptyBuffer, scala.None, scala.None, scala.None, emptyBuffer, stream))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          21898
+        </td>
+        <td>
+          3131
+          -
+          3135
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          15333
+        </td>
+        <td>
+          3125
+          -
+          3129
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          18584
+        </td>
+        <td>
+          3416
+          -
+          3443
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.LineBuffer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          commentBuffer.append(value)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          14585
+        </td>
+        <td>
+          3379
+          -
+          3452
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(dataBuffer, eventType, id, retry, commentBuffer.append(value), stream)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          17257
+        </td>
+        <td>
+          3491
+          -
+          3552
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.go
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          go(dataBuffer, scala.Some.apply[String](value), id, retry, commentBuffer, stream)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          20985
+        </td>
+        <td>
+          3506
+          -
+          3517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[String](value)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          21512
+        </td>
+        <td>
+          3590
+          -
+          3663
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(dataBuffer.append(value), eventType, id, retry, commentBuffer, stream)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          15354
+        </td>
+        <td>
+          3593
+          -
+          3617
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.LineBuffer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          dataBuffer.append(value)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          17818
+        </td>
+        <td>
+          3711
+          -
+          3725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.EventId.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.this.EventId.apply(value)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          13768
+        </td>
+        <td>
+          3764
+          -
+          3775
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.ServerSentEvent.EventId](newId)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          20486
+        </td>
+        <td>
+          3738
+          -
+          3806
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(dataBuffer, eventType, scala.Some.apply[org.http4s.ServerSentEvent.EventId](newId), retry, commentBuffer, stream)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          18605
+        </td>
+        <td>
+          3860
+          -
+          3900
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.util.Try.apply[Long](scala.Predef.augmentString(value).toLong).toOption.orElse[Long](retry)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          14444
+        </td>
+        <td>
+          3913
+          -
+          3975
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.go
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          go(dataBuffer, eventType, id, newRetry, commentBuffer, stream)
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          20997
+        </td>
+        <td>
+          4008
+          -
+          4067
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          go(dataBuffer, eventType, id, retry, commentBuffer, stream)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          20194
+        </td>
+        <td>
+          4085
+          -
+          4478
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.InvariantOps[[_]F[_], String](stream).pull.uncons1.flatMap[[x]F[x], org.http4s.ServerSentEvent, Unit](((x0$1: Option[(String, fs2.Stream[[_]F[_],String])]) =&gt; x0$1 match {
+  case scala.None =&gt; fs2.Pull.done
+  case (value: (String, fs2.Stream[[_]F[_],String])): Some[(String, fs2.Stream[[_]F[_],String])]((_1: String, _2: fs2.Stream[[_]F[_],String]): (String, fs2.Stream[[_]F[_],String])(&quot;&quot;, (stream @ _))) =&gt; dispatch(stream)
+  case (value: (String, fs2.Stream[[_]F[_],String])): Some[(String, fs2.Stream[[_]F[_],String])]((_1: String, _2: fs2.Stream[[_]F[_],String]): (String, fs2.Stream[[_]F[_],String])((s @ _), (stream @ _))) =&gt; ServerSentEvent.this.FieldSeparator.split(s, 2) match {
+    case scala.Array.unapplySeq[String](&lt;unapply-selector&gt;) &lt;unapply&gt; ((field @ _), (value @ _)) =&gt; handleLine(field, value, stream)
+    case scala.Array.unapplySeq[String](&lt;unapply-selector&gt;) &lt;unapply&gt; ((line @ _)) =&gt; handleLine(line, &quot;&quot;, stream)
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          16984
+        </td>
+        <td>
+          4146
+          -
+          4155
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.done
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.done
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          13414
+        </td>
+        <td>
+          4201
+          -
+          4217
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.dispatch
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          dispatch(stream)
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          21530
+        </td>
+        <td>
+          4262
+          -
+          4288
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.regex.Pattern.split
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.this.FieldSeparator.split(s, 2)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          17693
+        </td>
+        <td>
+          4351
+          -
+          4383
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.handleLine
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          handleLine(field, value, stream)
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          13653
+        </td>
+        <td>
+          4430
+          -
+          4458
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.handleLine
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          handleLine(line, &quot;&quot;, stream)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          17714
+        </td>
+        <td>
+          4506
+          -
+          4658
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.go
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          go(emptyBuffer, scala.None, scala.None, scala.None, emptyBuffer, stream.through[[x]F[x], String](fs2.text.utf8.decode[[_]F[_]].andThen[fs2.Stream[[_]F[_],String]](fs2.text.lines[[_]F[_]])))
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          18198
+        </td>
+        <td>
+          4539
+          -
+          4543
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          14468
+        </td>
+        <td>
+          4553
+          -
+          4557
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          142
+        </td>
+        <td>
+          20758
+        </td>
+        <td>
+          4567
+          -
+          4571
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          13094
+        </td>
+        <td>
+          4617
+          -
+          4648
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.andThen
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.text.utf8.decode[[_]F[_]].andThen[fs2.Stream[[_]F[_],String]](fs2.text.lines[[_]F[_]])
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          16877
+        </td>
+        <td>
+          4637
+          -
+          4647
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.text.lines
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.text.lines[[_]F[_]]
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          21401
+        </td>
+        <td>
+          4602
+          -
+          4649
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.through
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          stream.through[[x]F[x], String](fs2.text.utf8.decode[[_]F[_]].andThen[fs2.Stream[[_]F[_],String]](fs2.text.lines[[_]F[_]]))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          13671
+        </td>
+        <td>
+          4506
+          -
+          4665
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.StreamPullOps.stream
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Pull.StreamPullOps[[_]F[_], org.http4s.ServerSentEvent](go(emptyBuffer, scala.None, scala.None, scala.None, emptyBuffer, stream.through[[x]F[x], String](fs2.text.utf8.decode[[_]F[_]].andThen[fs2.Stream[[_]F[_],String]](fs2.text.lines[[_]F[_]])))).stream
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          20089
+        </td>
+        <td>
+          4735
+          -
+          4749
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderString
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$7.renderString
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          18575
+        </td>
+        <td>
+          4759
+          -
+          4770
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.text.utf8.encode
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.text.utf8.encode[[_]F[_]]
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          14489
+        </td>
+        <td>
+          4729
+          -
+          4771
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.through
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.map[String](((x$7: org.http4s.ServerSentEvent) =&gt; x$7.renderString)).through[[x]F[x], Byte](fs2.text.utf8.encode[[_]F[_]])
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

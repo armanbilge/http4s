@@ -1,0 +1,2864 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/Header.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Foldable
+</span>20 <span style=''>import cats.Hash
+</span>21 <span style=''>import cats.Order
+</span>22 <span style=''>import cats.Semigroup
+</span>23 <span style=''>import cats.Show
+</span>24 <span style=''>import cats.data.Ior
+</span>25 <span style=''>import cats.data.NonEmptyList
+</span>26 <span style=''>import cats.syntax.all._
+</span>27 <span style=''>import org.http4s.internal.CharPredicate
+</span>28 <span style=''>import org.http4s.util.Renderer
+</span>29 <span style=''>import org.http4s.util.StringWriter
+</span>30 <span style=''>import org.http4s.util.Writer
+</span>31 <span style=''>import org.typelevel.ci.CIString
+</span>32 <span style=''>
+</span>33 <span style=''>/** Typeclass representing an HTTP header, which all the http4s
+</span>34 <span style=''>  * default headers satisfy.
+</span>35 <span style=''>  * You can add modelled headers by providing an implicit instance of
+</span>36 <span style=''>  * `Header[YourModelledHeader]`
+</span>37 <span style=''>  */
+</span>38 <span style=''>trait Header[A, T &lt;: Header.Type] {
+</span>39 <span style=''>
+</span>40 <span style=''>  /** Name of the header. Not case sensitive.
+</span>41 <span style=''>    */
+</span>42 <span style=''>  def name: CIString
+</span>43 <span style=''>
+</span>44 <span style=''>  /** Value of the header, which is represented as a String.
+</span>45 <span style=''>    * Will be a comma separated String for headers with multiple values.
+</span>46 <span style=''>    */
+</span>47 <span style=''>  def value(a: A): String
+</span>48 <span style=''>
+</span>49 <span style=''>  /** Parses the header from its String representation.
+</span>50 <span style=''>    * Could be a comma separated String in case of a Header with
+</span>51 <span style=''>    * multiple values.
+</span>52 <span style=''>    */
+</span>53 <span style=''>  def parse(headerValue: String): Either[ParseFailure, A]
+</span>54 <span style=''>}
+</span>55 <span style=''>
+</span>56 <span style=''>object Header {
+</span>57 <span style=''>  final case class Raw(name: CIString, value: String) {
+</span>58 <span style=''>    override def toString: String = s&quot;${name}: ${value}&quot;
+</span>59 <span style=''>
+</span>60 <span style=''>    /** True if [[name]] is a valid field-name per RFC7230.  Where it
+</span>61 <span style=''>      * is not, the header may be dropped by the backend.
+</span>62 <span style=''>      */
+</span>63 <span style=''>    def isNameValid: Boolean =
+</span>64 <span style=''>      </span><span style='background: #AEF1AE'>name.toString.nonEmpty &amp;&amp; name.toString.forall(FieldNamePredicate)</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>    def sanitizedValue: String = {
+</span>67 <span style=''>      val w = </span><span style='background: #AEF1AE'>new StringWriter</span><span style=''>
+</span>68 <span style=''>      </span><span style='background: #AEF1AE'>w.sanitize(_ &lt;&lt; value).result</span><span style=''>
+</span>69 <span style=''>    }
+</span>70 <span style=''>  }
+</span>71 <span style=''>
+</span>72 <span style=''>  object Raw {
+</span>73 <span style=''>    implicit lazy val catsInstancesForHttp4sHeaderRaw
+</span>74 <span style=''>        : Order[Raw] with Hash[Raw] with Show[Raw] with Renderer[Raw] = new Order[Raw]
+</span>75 <span style=''>      with Hash[Raw]
+</span>76 <span style=''>      with Show[Raw]
+</span>77 <span style=''>      with Renderer[Raw] {
+</span>78 <span style=''>      def show(h: Raw): String = s&quot;${h.name.show}: ${h.value}&quot;
+</span>79 <span style=''>      def hash(h: Raw): Int = h.hashCode
+</span>80 <span style=''>
+</span>81 <span style=''>      def compare(x: Raw, y: Raw): Int =
+</span>82 <span style=''>        x.name.compare(y.name) match {
+</span>83 <span style=''>          case 0 =&gt; x.value.compare(y.value)
+</span>84 <span style=''>          case c =&gt; c
+</span>85 <span style=''>        }
+</span>86 <span style=''>
+</span>87 <span style=''>      def render(writer: Writer, h: Raw): writer.type = {
+</span>88 <span style=''>        writer &lt;&lt; h.name &lt;&lt; ':' &lt;&lt; ' '
+</span>89 <span style=''>        writer.sanitize(_ &lt;&lt; h.value)
+</span>90 <span style=''>      }
+</span>91 <span style=''>    }
+</span>92 <span style=''>  }
+</span>93 <span style=''>
+</span>94 <span style=''>  /** Classifies modelled headers into `Single` headers, which can only
+</span>95 <span style=''>    * appear once, and `Recurring` headers, which can appear multiple
+</span>96 <span style=''>    * times.
+</span>97 <span style=''>    */
+</span>98 <span style=''>  sealed trait Type
+</span>99 <span style=''>  case class Single() extends Type // scalafix:ok Http4sGeneralLinters; bincompat until 1.0
+</span>100 <span style=''>  case class Recurring() extends Type // scalafix:ok Http4sGeneralLinters; bincompat until 1.0
+</span>101 <span style=''>
+</span>102 <span style=''>  def apply[A](implicit ev: Header[A, _]): ev.type = ev
+</span>103 <span style=''>
+</span>104 <span style=''>  @deprecated(&quot;use Header.Raw.apply&quot;, &quot;0.22.0&quot;)
+</span>105 <span style=''>  def apply(name: String, value: String): Header.Raw = </span><span style='background: #F0ADAD'>Raw(CIString(name), value)</span><span style=''>
+</span>106 <span style=''>
+</span>107 <span style=''>  def create[A, T &lt;: Header.Type](
+</span>108 <span style=''>      name_ : CIString,
+</span>109 <span style=''>      value_ : A =&gt; String,
+</span>110 <span style=''>      parse_ : String =&gt; Either[ParseFailure, A],
+</span>111 <span style=''>  ): Header[A, T] = </span><span style='background: #AEF1AE'>new</span><span style=''> Header[A, T] {
+</span>112 <span style=''>    def name: CIString = name_
+</span>113 <span style=''>    def value(a: A): String = </span><span style='background: #AEF1AE'>value_(a)</span><span style=''>
+</span>114 <span style=''>    def parse(s: String): Either[ParseFailure, A] = </span><span style='background: #AEF1AE'>parse_(s)</span><span style=''>
+</span>115 <span style=''>  }
+</span>116 <span style=''>
+</span>117 <span style=''>  def createRendered[A, T &lt;: Header.Type, B: Renderer](
+</span>118 <span style=''>      name_ : CIString,
+</span>119 <span style=''>      value_ : A =&gt; B,
+</span>120 <span style=''>      parse_ : String =&gt; Either[ParseFailure, A],
+</span>121 <span style=''>  ): Header[A, T] = </span><span style='background: #AEF1AE'>new</span><span style=''> Header[A, T] {
+</span>122 <span style=''>    def name: CIString = name_
+</span>123 <span style=''>    def value(a: A): String = </span><span style='background: #AEF1AE'>Renderer.renderString(value_(a))</span><span style=''>
+</span>124 <span style=''>    def parse(s: String): Either[ParseFailure, A] = </span><span style='background: #AEF1AE'>parse_(s)</span><span style=''>
+</span>125 <span style=''>  }
+</span>126 <span style=''>
+</span>127 <span style=''>  /** Target for implicit conversions to Header.Raw from modelled
+</span>128 <span style=''>    * headers and key-value pairs.
+</span>129 <span style=''>    *
+</span>130 <span style=''>    * A method taking variadic `ToRaw` arguments will allow taking
+</span>131 <span style=''>    * heteregenous arguments, provided they are either:
+</span>132 <span style=''>    *
+</span>133 <span style=''>    * - A value of type `A`  which has a `Header[A]` in scope
+</span>134 <span style=''>    * - A (name, value) pair of `String`, which is treated as a `Recurring` header
+</span>135 <span style=''>    * - A `Header.Raw`
+</span>136 <span style=''>    * - A `Foldable` (`List`, `Option`, etc) of the above.
+</span>137 <span style=''>    *
+</span>138 <span style=''>    * @see [[org.http4s.Headers.apply]]
+</span>139 <span style=''>    */
+</span>140 <span style=''>  sealed trait ToRaw {
+</span>141 <span style=''>    def values: List[Header.Raw]
+</span>142 <span style=''>  }
+</span>143 <span style=''>  object ToRaw {
+</span>144 <span style=''>    trait Primitive
+</span>145 <span style=''>
+</span>146 <span style=''>    implicit def identityToRaw(h: Header.ToRaw): Header.ToRaw with Primitive = </span><span style='background: #AEF1AE'>new</span><span style=''> Header.ToRaw
+</span>147 <span style=''>    with Primitive {
+</span>148 <span style=''>      val values: List[Raw] = </span><span style='background: #AEF1AE'>h.values</span><span style=''>
+</span>149 <span style=''>    }
+</span>150 <span style=''>
+</span>151 <span style=''>    implicit def rawToRaw(h: Header.Raw): Header.ToRaw with Primitive =
+</span>152 <span style=''>      </span><span style='background: #AEF1AE'>new</span><span style=''> Header.ToRaw with Primitive {
+</span>153 <span style=''>        val values = </span><span style='background: #AEF1AE'>List(h)</span><span style=''>
+</span>154 <span style=''>      }
+</span>155 <span style=''>
+</span>156 <span style=''>    implicit def keyValuesToRaw(kv: (String, String)): Header.ToRaw with Primitive =
+</span>157 <span style=''>      </span><span style='background: #AEF1AE'>new</span><span style=''> Header.ToRaw with Primitive {
+</span>158 <span style=''>        val values = </span><span style='background: #AEF1AE'>List(Header.Raw(CIString(kv._1), kv._2))</span><span style=''>
+</span>159 <span style=''>      }
+</span>160 <span style=''>
+</span>161 <span style=''>    implicit def headersToRaw(h: Headers): Header.ToRaw =
+</span>162 <span style=''>      </span><span style='background: #AEF1AE'>new</span><span style=''> Header.ToRaw {
+</span>163 <span style=''>        val values: List[Raw] = </span><span style='background: #AEF1AE'>h.headers</span><span style=''>
+</span>164 <span style=''>      }
+</span>165 <span style=''>
+</span>166 <span style=''>    implicit def modelledHeadersToRaw[H](
+</span>167 <span style=''>        h: H
+</span>168 <span style=''>    )(implicit H: Header[H, _]): Header.ToRaw with Primitive =
+</span>169 <span style=''>      </span><span style='background: #AEF1AE'>new</span><span style=''> Header.ToRaw with Primitive {
+</span>170 <span style=''>        val values = </span><span style='background: #AEF1AE'>List(Header.Raw(H.name, H.value(h)))</span><span style=''>
+</span>171 <span style=''>      }
+</span>172 <span style=''>
+</span>173 <span style=''>    implicit def foldablesToRaw[F[_]: Foldable, H](
+</span>174 <span style=''>        h: F[H]
+</span>175 <span style=''>    )(implicit convert: H =&gt; ToRaw with Primitive): Header.ToRaw = </span><span style='background: #AEF1AE'>new</span><span style=''> Header.ToRaw {
+</span>176 <span style=''>      val values: List[Raw] = </span><span style='background: #AEF1AE'>h.toList.foldMap(v =&gt; convert(v).values)</span><span style=''>
+</span>177 <span style=''>    }
+</span>178 <span style=''>
+</span>179 <span style=''>    // Required for 2.12 to convert variadic args.
+</span>180 <span style=''>    implicit def scalaCollectionSeqToRaw[H](
+</span>181 <span style=''>        h: collection.Seq[H]
+</span>182 <span style=''>    )(implicit convert: H =&gt; ToRaw with Primitive): Header.ToRaw = </span><span style='background: #AEF1AE'>new</span><span style=''> Header.ToRaw {
+</span>183 <span style=''>      val values: List[Raw] = </span><span style='background: #AEF1AE'>h.toList.foldMap(v =&gt; convert(v).values)</span><span style=''>
+</span>184 <span style=''>    }
+</span>185 <span style=''>  }
+</span>186 <span style=''>
+</span>187 <span style=''>  /** Abstracts over Single and Recurring Headers
+</span>188 <span style=''>    */
+</span>189 <span style=''>  sealed trait Select[A] {
+</span>190 <span style=''>    type F[_]
+</span>191 <span style=''>
+</span>192 <span style=''>    /** Transform this header into a [[Header.Raw]]
+</span>193 <span style=''>      */
+</span>194 <span style=''>    def toRaw1(a: A): Header.Raw
+</span>195 <span style=''>
+</span>196 <span style=''>    /** Transform this (potentially repeating) header into a [[Header.Raw]] */
+</span>197 <span style=''>    def toRaw(a: F[A]): NonEmptyList[Header.Raw]
+</span>198 <span style=''>
+</span>199 <span style=''>    /** Selects this header from a list of [[Header.Raw]]
+</span>200 <span style=''>      */
+</span>201 <span style=''>    def from(headers: List[Header.Raw]): Option[Ior[NonEmptyList[ParseFailure], F[A]]]
+</span>202 <span style=''>  }
+</span>203 <span style=''>  trait LowPrio {
+</span>204 <span style=''>    implicit def recurringHeadersNoMerge[A](implicit
+</span>205 <span style=''>        h: Header[A, Header.Recurring]
+</span>206 <span style=''>    ): Select[A] { type F[B] = NonEmptyList[B] } =
+</span>207 <span style=''>      </span><span style='background: #AEF1AE'>new</span><span style=''> Select[A] {
+</span>208 <span style=''>        type F[B] = NonEmptyList[B]
+</span>209 <span style=''>
+</span>210 <span style=''>        def toRaw1(a: A): Header.Raw =
+</span>211 <span style=''>          </span><span style='background: #F0ADAD'>Header.Raw(h.name, h.value(a))</span><span style=''>
+</span>212 <span style=''>
+</span>213 <span style=''>        def toRaw(as: F[A]): NonEmptyList[Header.Raw] =
+</span>214 <span style=''>          </span><span style='background: #F0ADAD'>as.map(a =&gt; Header.Raw(h.name, h.value(a)))</span><span style=''>
+</span>215 <span style=''>
+</span>216 <span style=''>        def from(headers: List[Raw]): Option[Ior[NonEmptyList[ParseFailure], NonEmptyList[A]]] =
+</span>217 <span style=''>          </span><span style='background: #AEF1AE'>headers.foldLeft(Option.empty[Ior[NonEmptyList[ParseFailure], NonEmptyList[A]]]) {
+</span>218 <span style=''></span><span style='background: #AEF1AE'>            (a, raw) =&gt;
+</span>219 <span style=''></span><span style='background: #AEF1AE'>              Select.fromRaw(raw) match {
+</span>220 <span style=''></span><span style='background: #AEF1AE'>                case Some(aa) =&gt; a |+| aa.bimap(</span><span style='background: #F0ADAD'>NonEmptyList.one</span><span style='background: #AEF1AE'>, NonEmptyList.one).some
+</span>221 <span style=''></span><span style='background: #AEF1AE'>                case None =&gt; a
+</span>222 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>223 <span style=''></span><span style='background: #AEF1AE'>          }</span><span style=''>
+</span>224 <span style=''>      }
+</span>225 <span style=''>  }
+</span>226 <span style=''>  object Select extends LowPrio {
+</span>227 <span style=''>    type Aux[A, G[_]] = Select[A] { type F[B] = G[B] }
+</span>228 <span style=''>
+</span>229 <span style=''>    def fromRaw[A](h: Header.Raw)(implicit ev: Header[A, _]): Option[Ior[ParseFailure, A]] =
+</span>230 <span style=''>      if (</span><span style='background: #AEF1AE'>h.name == Header[A].name</span><span style=''>) </span><span style='background: #AEF1AE'>Some(Header[A].parse(h.value).toIor)</span><span style=''> else </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>231 <span style=''>
+</span>232 <span style=''>    implicit def singleHeaders[A](implicit
+</span>233 <span style=''>        h: Header[A, Header.Single]
+</span>234 <span style=''>    ): Select[A] { type F[B] = B } =
+</span>235 <span style=''>      </span><span style='background: #AEF1AE'>new</span><span style=''> Select[A] {
+</span>236 <span style=''>        type F[B] = B
+</span>237 <span style=''>
+</span>238 <span style=''>        def toRaw1(a: A): Header.Raw =
+</span>239 <span style=''>          </span><span style='background: #AEF1AE'>Header.Raw(h.name, h.value(a))</span><span style=''>
+</span>240 <span style=''>
+</span>241 <span style=''>        def toRaw(a: A): NonEmptyList[Header.Raw] =
+</span>242 <span style=''>          </span><span style='background: #F0ADAD'>NonEmptyList.one(toRaw1(a))</span><span style=''>
+</span>243 <span style=''>
+</span>244 <span style=''>        def from(headers: List[Raw]): Option[Ior[NonEmptyList[ParseFailure], F[A]]] =
+</span>245 <span style=''>          </span><span style='background: #AEF1AE'>headers.collectFirst(Function.unlift(fromRaw(_).map(_.leftMap(NonEmptyList.one))))</span><span style=''>
+</span>246 <span style=''>      }
+</span>247 <span style=''>
+</span>248 <span style=''>    implicit def recurringHeadersWithMerge[A: Semigroup](implicit
+</span>249 <span style=''>        h: Header[A, Header.Recurring]
+</span>250 <span style=''>    ): Select[A] { type F[B] = B } =
+</span>251 <span style=''>      </span><span style='background: #AEF1AE'>new</span><span style=''> Select[A] {
+</span>252 <span style=''>        type F[B] = B
+</span>253 <span style=''>
+</span>254 <span style=''>        def toRaw1(a: A): Header.Raw =
+</span>255 <span style=''>          </span><span style='background: #AEF1AE'>Header.Raw(h.name, h.value(a))</span><span style=''>
+</span>256 <span style=''>
+</span>257 <span style=''>        def toRaw(a: A): NonEmptyList[Header.Raw] =
+</span>258 <span style=''>          </span><span style='background: #F0ADAD'>NonEmptyList.one(toRaw1(a))</span><span style=''>
+</span>259 <span style=''>
+</span>260 <span style=''>        def from(headers: List[Raw]): Option[Ior[NonEmptyList[ParseFailure], F[A]]] =
+</span>261 <span style=''>          </span><span style='background: #AEF1AE'>headers.foldLeft(Option.empty[Ior[NonEmptyList[ParseFailure], F[A]]]) { (a, raw) =&gt;
+</span>262 <span style=''></span><span style='background: #AEF1AE'>            fromRaw(raw) match {
+</span>263 <span style=''></span><span style='background: #AEF1AE'>              case Some(aa) =&gt; a |+| aa.leftMap(</span><span style='background: #F0ADAD'>NonEmptyList.one</span><span style='background: #AEF1AE'>).some
+</span>264 <span style=''></span><span style='background: #AEF1AE'>              case None =&gt; a
+</span>265 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>266 <span style=''></span><span style='background: #AEF1AE'>          }</span><span style=''>
+</span>267 <span style=''>      }
+</span>268 <span style=''>  }
+</span>269 <span style=''>
+</span>270 <span style=''>  private val FieldNamePredicate =
+</span>271 <span style=''>    </span><span style='background: #AEF1AE'>CharPredicate(&quot;!#$%&amp;'*+-.^_`|~`&quot;) ++ CharPredicate.AlphaNum</span><span style=''>
+</span>272 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          13149
+        </td>
+        <td>
+          1982
+          -
+          1995
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          org.http4s.headersuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Raw.this.name.toString
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          17434
+        </td>
+        <td>
+          1982
+          -
+          2022
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StringOps.forall
+        </td>
+        <td>
+          org.http4s.headersuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(Raw.this.name.toString).forall(Header.this.FieldNamePredicate)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          21824
+        </td>
+        <td>
+          2003
+          -
+          2021
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.FieldNamePredicate
+        </td>
+        <td>
+          org.http4s.headersuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.FieldNamePredicate
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          17251
+        </td>
+        <td>
+          1956
+          -
+          1969
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          org.http4s.headersuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Raw.this.name.toString
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          13538
+        </td>
+        <td>
+          1956
+          -
+          2022
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.headersuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(Raw.this.name.toString).nonEmpty.&amp;&amp;(scala.Predef.augmentString(Raw.this.name.toString).forall(Header.this.FieldNamePredicate))
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          20482
+        </td>
+        <td>
+          2073
+          -
+          2073
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.StringWriter.&lt;init&gt;$default$1
+        </td>
+        <td>
+          org.http4s.headersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.StringWriter.&lt;init&gt;$default$1
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          16414
+        </td>
+        <td>
+          2073
+          -
+          2089
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.StringWriter.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.util.StringWriter(util.this.StringWriter.&lt;init&gt;$default$1)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          14748
+        </td>
+        <td>
+          2112
+          -
+          2117
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          org.http4s.headersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Raw.this.value
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          17271
+        </td>
+        <td>
+          2096
+          -
+          2125
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.StringWriter.result
+        </td>
+        <td>
+          org.http4s.headersuite
+        </td>
+        <td style="background: #AEF1AE">
+          w.sanitize(((x$1: org.http4s.util.Writer) =&gt; x$1.&lt;&lt;(Raw.this.value))).result
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          20644
+        </td>
+        <td>
+          2107
+          -
+          2117
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.&lt;&lt;(Raw.this.value)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          21839
+        </td>
+        <td>
+          3309
+          -
+          3335
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.Raw.apply(org.typelevel.ci.CIString.apply(name), value)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          13410
+        </td>
+        <td>
+          3313
+          -
+          3327
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIString.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.typelevel.ci.CIString.apply(name)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          20497
+        </td>
+        <td>
+          3494
+          -
+          3497
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          17974
+        </td>
+        <td>
+          3574
+          -
+          3583
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          value_.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          13922
+        </td>
+        <td>
+          3636
+          -
+          3645
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.parser.contentlocationheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          parse_.apply(s)
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          21156
+        </td>
+        <td>
+          3824
+          -
+          3827
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          16367
+        </td>
+        <td>
+          3904
+          -
+          3936
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Renderer.renderString
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.util.Renderer.renderString[B](value_.apply(a))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          14761
+        </td>
+        <td>
+          3989
+          -
+          3998
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.parser.rangeparsersuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          parse_.apply(s)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          13429
+        </td>
+        <td>
+          4697
+          -
+          4700
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          17141
+        </td>
+        <td>
+          4765
+          -
+          4773
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.values
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.values
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          17989
+        </td>
+        <td>
+          4859
+          -
+          4862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,munit.scalachecksuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          19623
+        </td>
+        <td>
+          4914
+          -
+          4921
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,munit.scalachecksuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[org.http4s.Header.Raw](h)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          17159
+        </td>
+        <td>
+          5022
+          -
+          5025
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.$anon.&lt;init&gt;
+        </td>
+        <td>
+          munit.funsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          20368
+        </td>
+        <td>
+          5093
+          -
+          5108
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIString.apply
+        </td>
+        <td>
+          munit.funsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.CIString.apply(kv._1)
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          20936
+        </td>
+        <td>
+          5077
+          -
+          5117
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          munit.funsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[org.http4s.Header.Raw](Header.Raw.apply(org.typelevel.ci.CIString.apply(kv._1), kv._2))
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          14324
+        </td>
+        <td>
+          5082
+          -
+          5116
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          munit.funsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(org.typelevel.ci.CIString.apply(kv._1), kv._2)
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          16387
+        </td>
+        <td>
+          5110
+          -
+          5115
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          munit.funsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          kv._2
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          13939
+        </td>
+        <td>
+          5102
+          -
+          5107
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          munit.funsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          kv._1
+        </td>
+      </tr><tr>
+        <td>
+          162
+        </td>
+        <td>
+          19645
+        </td>
+        <td>
+          5191
+          -
+          5194
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          13005
+        </td>
+        <td>
+          5242
+          -
+          5251
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headers
+        </td>
+        <td>
+          org.http4s.headersspec
+        </td>
+        <td style="background: #AEF1AE">
+          h.headers
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          14340
+        </td>
+        <td>
+          5385
+          -
+          5388
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          14180
+        </td>
+        <td>
+          5464
+          -
+          5474
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.value
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          H.value(h)
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          20389
+        </td>
+        <td>
+          5445
+          -
+          5475
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.server.middleware.staticheaderssuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(H.name, H.value(h))
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          16258
+        </td>
+        <td>
+          5440
+          -
+          5476
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.server.middleware.staticheaderssuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[org.http4s.Header.Raw](Header.Raw.apply(H.name, H.value(h)))
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          17723
+        </td>
+        <td>
+          5456
+          -
+          5462
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.server.middleware.staticheaderssuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          H.name
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          13549
+        </td>
+        <td>
+          5621
+          -
+          5624
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          17417
+        </td>
+        <td>
+          5672
+          -
+          5672
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForList
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForList
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          19506
+        </td>
+        <td>
+          5686
+          -
+          5686
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.kernel.Semigroup.catsKernelMonoidForList
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Semigroup.catsKernelMonoidForList[org.http4s.Header.Raw]
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          17965
+        </td>
+        <td>
+          5670
+          -
+          5710
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.Foldable.Ops.foldMap
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFoldableOps[List, H](cats.syntax.`package`.all.toFoldableOps[F, H](h)(evidence$2).toList)(cats.this.UnorderedFoldable.catsTraverseForList).foldMap[List[org.http4s.Header.Raw]](((v: H) =&gt; convert.apply(v).values))(kernel.this.Semigroup.catsKernelMonoidForList[org.http4s.Header.Raw])
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          13022
+        </td>
+        <td>
+          5692
+          -
+          5709
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.values
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          convert.apply(v).values
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          20635
+        </td>
+        <td>
+          5670
+          -
+          5678
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Foldable.Ops.toList
+        </td>
+        <td>
+          org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFoldableOps[F, H](h)(evidence$2).toList
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          13267
+        </td>
+        <td>
+          5910
+          -
+          5913
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          22874
+        </td>
+        <td>
+          5981
+          -
+          5998
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.values
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          convert.apply(v).values
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          21148
+        </td>
+        <td>
+          5975
+          -
+          5975
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.kernel.Semigroup.catsKernelMonoidForList
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Semigroup.catsKernelMonoidForList[org.http4s.Header.Raw]
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          20342
+        </td>
+        <td>
+          5959
+          -
+          5967
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.toList
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          16278
+        </td>
+        <td>
+          5961
+          -
+          5961
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForList
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForList
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          16783
+        </td>
+        <td>
+          5959
+          -
+          5999
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.Foldable.Ops.foldMap
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,munit.funsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFoldableOps[List, H](h.toList)(cats.this.UnorderedFoldable.catsTraverseForList).foldMap[List[org.http4s.Header.Raw]](((v: H) =&gt; convert.apply(v).values))(kernel.this.Semigroup.catsKernelMonoidForList[org.http4s.Header.Raw])
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          15786
+        </td>
+        <td>
+          6659
+          -
+          6662
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.LowPrio.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite,org.http4s.responderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          14070
+        </td>
+        <td>
+          6761
+          -
+          6791
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.Raw.apply(h.name, h.value(a))
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          17981
+        </td>
+        <td>
+          6780
+          -
+          6790
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          h.value(a)
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          19530
+        </td>
+        <td>
+          6772
+          -
+          6778
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          21170
+        </td>
+        <td>
+          6859
+          -
+          6902
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          as.map[org.http4s.Header.Raw](((a: A) =&gt; Header.Raw.apply(h.name, h.value(a))))
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          16669
+        </td>
+        <td>
+          6890
+          -
+          6900
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          h.value(a)
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          20362
+        </td>
+        <td>
+          6882
+          -
+          6888
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          23093
+        </td>
+        <td>
+          6871
+          -
+          6901
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.Raw.apply(h.name, h.value(a))
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          17300
+        </td>
+        <td>
+          7028
+          -
+          7090
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Option.empty
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite,org.http4s.responderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.empty[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]]
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          19502
+        </td>
+        <td>
+          7011
+          -
+          7307
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite,org.http4s.responderspec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.foldLeft[Option[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]]](scala.Option.empty[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]])(((a: Option[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]], raw: org.http4s.Header.Raw) =&gt; Header.this.Select.fromRaw[A](raw)(h) match {
+  case (value: cats.data.Ior[org.http4s.ParseFailure,A]): Some[cats.data.Ior[org.http4s.ParseFailure,A]]((aa @ _)) =&gt; cats.syntax.`package`.all.catsSyntaxSemigroup[Option[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]]](a)(kernel.this.Semigroup.catsKernelMonoidForOption[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]](data.this.Ior.catsDataSemigroupForIor[cats.data.NonEmptyList[org.http4s.ParseFailure], cats.data.NonEmptyList[A]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure], data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[A]))).|+|(cats.syntax.`package`.all.catsSyntaxOptionId[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]](aa.bimap[cats.data.NonEmptyList[org.http4s.ParseFailure], cats.data.NonEmptyList[A]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)), ((head: A) =&gt; cats.data.NonEmptyList.one[A](head)))).some)
+  case scala.None =&gt; a
+}))
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          13286
+        </td>
+        <td>
+          7132
+          -
+          7151
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.fromRaw
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite,org.http4s.responderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.fromRaw[A](raw)(h)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          19893
+        </td>
+        <td>
+          7193
+          -
+          7193
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataSemigroupForNonEmptyList
+        </td>
+        <td>
+          org.http4s.responderspec,org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          14088
+        </td>
+        <td>
+          7193
+          -
+          7193
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.IorInstances.catsDataSemigroupForIor
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite,org.http4s.responderspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Ior.catsDataSemigroupForIor[cats.data.NonEmptyList[org.http4s.ParseFailure], cats.data.NonEmptyList[A]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure], data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[A])
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          13304
+        </td>
+        <td>
+          7193
+          -
+          7248
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite,org.http4s.responderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[Option[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]]](a)(kernel.this.Semigroup.catsKernelMonoidForOption[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]](data.this.Ior.catsDataSemigroupForIor[cats.data.NonEmptyList[org.http4s.ParseFailure], cats.data.NonEmptyList[A]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure], data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[A]))).|+|(cats.syntax.`package`.all.catsSyntaxOptionId[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]](aa.bimap[cats.data.NonEmptyList[org.http4s.ParseFailure], cats.data.NonEmptyList[A]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)), ((head: A) =&gt; cats.data.NonEmptyList.one[A](head)))).some)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          17882
+        </td>
+        <td>
+          7193
+          -
+          7193
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataSemigroupForNonEmptyList
+        </td>
+        <td>
+          org.http4s.responderspec,org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[A]
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          21061
+        </td>
+        <td>
+          7199
+          -
+          7243
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Ior.bimap
+        </td>
+        <td>
+          org.http4s.responderspec,org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          aa.bimap[cats.data.NonEmptyList[org.http4s.ParseFailure], cats.data.NonEmptyList[A]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)), ((head: A) =&gt; cats.data.NonEmptyList.one[A](head)))
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          17044
+        </td>
+        <td>
+          7199
+          -
+          7248
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.OptionIdOps.some
+        </td>
+        <td>
+          org.http4s.responderspec,org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOptionId[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]](aa.bimap[cats.data.NonEmptyList[org.http4s.ParseFailure], cats.data.NonEmptyList[A]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)), ((head: A) =&gt; cats.data.NonEmptyList.one[A](head)))).some
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          16547
+        </td>
+        <td>
+          7208
+          -
+          7224
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.one
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          20240
+        </td>
+        <td>
+          7193
+          -
+          7193
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.MonoidInstances.catsKernelMonoidForOption
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite,org.http4s.responderspec
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Semigroup.catsKernelMonoidForOption[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],cats.data.NonEmptyList[A]]](data.this.Ior.catsDataSemigroupForIor[cats.data.NonEmptyList[org.http4s.ParseFailure], cats.data.NonEmptyList[A]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure], data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[A]))
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          22851
+        </td>
+        <td>
+          7226
+          -
+          7242
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.one
+        </td>
+        <td>
+          org.http4s.responderspec,org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.one[A](head)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          13173
+        </td>
+        <td>
+          7539
+          -
+          7575
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[cats.data.Ior[org.http4s.ParseFailure,A]](cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, A](Header.apply[A](ev).parse(h.value)).toIor)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          15655
+        </td>
+        <td>
+          7581
+          -
+          7585
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,munit.funsuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          16564
+        </td>
+        <td>
+          7560
+          -
+          7567
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.value
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          16940
+        </td>
+        <td>
+          7539
+          -
+          7575
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[cats.data.Ior[org.http4s.ParseFailure,A]](cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, A](Header.apply[A](ev).parse(h.value)).toIor)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          20259
+        </td>
+        <td>
+          7513
+          -
+          7537
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,munit.funsuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.name.==(Header.apply[A](ev).name)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          22714
+        </td>
+        <td>
+          7544
+          -
+          7568
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.parse
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.apply[A](ev).parse(h.value)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          19523
+        </td>
+        <td>
+          7581
+          -
+          7585
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,munit.funsuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          20797
+        </td>
+        <td>
+          7544
+          -
+          7574
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.EitherOps.toIor
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, A](Header.apply[A](ev).parse(h.value)).toIor
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          13957
+        </td>
+        <td>
+          7523
+          -
+          7537
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.name
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,munit.funsuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.apply[A](ev).name
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          20519
+        </td>
+        <td>
+          7709
+          -
+          7712
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Select.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.parser.contentdispositionheadersuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          20279
+        </td>
+        <td>
+          7816
+          -
+          7826
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.value
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.parser.contentdispositionheadersuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.value(a)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          16161
+        </td>
+        <td>
+          7797
+          -
+          7827
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.parser.contentdispositionheadersuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(h.name, h.value(a))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          14060
+        </td>
+        <td>
+          7808
+          -
+          7814
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.parser.contentdispositionheadersuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.server.middleware.timeoutsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          18875
+        </td>
+        <td>
+          7891
+          -
+          7918
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.one
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.NonEmptyList.one[org.http4s.Header.Raw]($anon.this.toRaw1(a))
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          22732
+        </td>
+        <td>
+          7908
+          -
+          7917
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Select.$anon.toRaw1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          $anon.this.toRaw1(a)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          19396
+        </td>
+        <td>
+          8053
+          -
+          8096
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.parser.originheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Select.this.fromRaw[A](x$3)(h).map[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](((x$4: cats.data.Ior[org.http4s.ParseFailure,A]) =&gt; x$4.leftMap[cats.data.NonEmptyList[org.http4s.ParseFailure]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)))))
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          14079
+        </td>
+        <td>
+          8016
+          -
+          8098
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.collectFirst
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.parser.originheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.collectFirst[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](scala.Function.unlift[org.http4s.Header.Raw, cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](((x$3: org.http4s.Header.Raw) =&gt; Select.this.fromRaw[A](x$3)(h).map[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](((x$4: cats.data.Ior[org.http4s.ParseFailure,A]) =&gt; x$4.leftMap[cats.data.NonEmptyList[org.http4s.ParseFailure]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head))))))))
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          15678
+        </td>
+        <td>
+          8037
+          -
+          8097
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function.unlift
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.parser.originheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Function.unlift[org.http4s.Header.Raw, cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](((x$3: org.http4s.Header.Raw) =&gt; Select.this.fromRaw[A](x$3)(h).map[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](((x$4: cats.data.Ior[org.http4s.ParseFailure,A]) =&gt; x$4.leftMap[cats.data.NonEmptyList[org.http4s.ParseFailure]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)))))))
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          13192
+        </td>
+        <td>
+          8068
+          -
+          8095
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Ior.leftMap
+        </td>
+        <td>
+          org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.server.middleware.datesuite,org.http4s.parser.originheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.leftMap[cats.data.NonEmptyList[org.http4s.ParseFailure]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)))
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          17289
+        </td>
+        <td>
+          8078
+          -
+          8094
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.one
+        </td>
+        <td>
+          org.http4s.parser.originheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)
+        </td>
+      </tr><tr>
+        <td>
+          251
+        </td>
+        <td>
+          15930
+        </td>
+        <td>
+          8256
+          -
+          8259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Select.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.headers.transferencodingsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          19241
+        </td>
+        <td>
+          8344
+          -
+          8374
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(h.name, h.value(a))
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          22599
+        </td>
+        <td>
+          8363
+          -
+          8373
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.value
+        </td>
+        <td>
+          org.http4s.headersdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.value(a)
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          16183
+        </td>
+        <td>
+          8355
+          -
+          8361
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          258
+        </td>
+        <td>
+          17309
+        </td>
+        <td>
+          8455
+          -
+          8464
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Select.$anon.toRaw1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          $anon.this.toRaw1(a)
+        </td>
+      </tr><tr>
+        <td>
+          258
+        </td>
+        <td>
+          13140
+        </td>
+        <td>
+          8438
+          -
+          8465
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.one
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.NonEmptyList.one[org.http4s.Header.Raw]($anon.this.toRaw1(a))
+        </td>
+      </tr><tr>
+        <td>
+          261
+        </td>
+        <td>
+          19413
+        </td>
+        <td>
+          8580
+          -
+          8631
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Option.empty
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.empty[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]]
+        </td>
+      </tr><tr>
+        <td>
+          261
+        </td>
+        <td>
+          19664
+        </td>
+        <td>
+          8563
+          -
+          8805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,munit.funsuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.foldLeft[Option[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]]](scala.Option.empty[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]])(((a: Option[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]], raw: org.http4s.Header.Raw) =&gt; Select.this.fromRaw[A](raw)(h) match {
+  case (value: cats.data.Ior[org.http4s.ParseFailure,A]): Some[cats.data.Ior[org.http4s.ParseFailure,A]]((aa @ _)) =&gt; cats.syntax.`package`.all.catsSyntaxSemigroup[Option[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]]](a)(kernel.this.Semigroup.catsKernelMonoidForOption[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]](data.this.Ior.catsDataSemigroupForIor[cats.data.NonEmptyList[org.http4s.ParseFailure], this.F[A]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure], evidence$3))).|+|(cats.syntax.`package`.all.catsSyntaxOptionId[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](aa.leftMap[cats.data.NonEmptyList[org.http4s.ParseFailure]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)))).some)
+  case scala.None =&gt; a
+}))
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          15533
+        </td>
+        <td>
+          8659
+          -
+          8671
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.fromRaw
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,munit.funsuite,org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.circe.test.circesuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Select.this.fromRaw[A](raw)(h)
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          19265
+        </td>
+        <td>
+          8717
+          -
+          8745
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Ior.leftMap
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          aa.leftMap[cats.data.NonEmptyList[org.http4s.ParseFailure]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)))
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          22620
+        </td>
+        <td>
+          8728
+          -
+          8744
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.one
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          17177
+        </td>
+        <td>
+          8717
+          -
+          8750
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.OptionIdOps.some
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOptionId[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](aa.leftMap[cats.data.NonEmptyList[org.http4s.ParseFailure]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)))).some
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          20535
+        </td>
+        <td>
+          8711
+          -
+          8711
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.IorInstances.catsDataSemigroupForIor
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Ior.catsDataSemigroupForIor[cats.data.NonEmptyList[org.http4s.ParseFailure], this.F[A]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure], evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          13950
+        </td>
+        <td>
+          8711
+          -
+          8711
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataSemigroupForNonEmptyList
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          13163
+        </td>
+        <td>
+          8711
+          -
+          8750
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[Option[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]]](a)(kernel.this.Semigroup.catsKernelMonoidForOption[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]](data.this.Ior.catsDataSemigroupForIor[cats.data.NonEmptyList[org.http4s.ParseFailure], this.F[A]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure], evidence$3))).|+|(cats.syntax.`package`.all.catsSyntaxOptionId[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],A]](aa.leftMap[cats.data.NonEmptyList[org.http4s.ParseFailure]](((head: org.http4s.ParseFailure) =&gt; cats.data.NonEmptyList.one[org.http4s.ParseFailure](head)))).some)
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          16407
+        </td>
+        <td>
+          8711
+          -
+          8711
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.MonoidInstances.catsKernelMonoidForOption
+        </td>
+        <td>
+          org.http4s.messagedoctest,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Semigroup.catsKernelMonoidForOption[cats.data.Ior[cats.data.NonEmptyList[org.http4s.ParseFailure],this.F[A]]](data.this.Ior.catsDataSemigroupForIor[cats.data.NonEmptyList[org.http4s.ParseFailure], this.F[A]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure], evidence$3))
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          20410
+        </td>
+        <td>
+          8895
+          -
+          8917
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.CharPredicate.AlphaNum
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.CharPredicate.AlphaNum
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          22461
+        </td>
+        <td>
+          8872
+          -
+          8890
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.internal.CharPredicate.ApplyMagnet.fromString
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          CharPredicate.this.ApplyMagnet.fromString(&quot;!#$%&amp;\'*+-.^_`|~`&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          16427
+        </td>
+        <td>
+          8858
+          -
+          8917
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.CharPredicate.++
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.CharPredicate.apply(CharPredicate.this.ApplyMagnet.fromString(&quot;!#$%&amp;\'*+-.^_`|~`&quot;)).++(org.http4s.internal.CharPredicate.AlphaNum)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

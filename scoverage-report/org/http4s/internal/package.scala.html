@@ -1,0 +1,5036 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/internal/package.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats._
+</span>20 <span style=''>import cats.data._
+</span>21 <span style=''>import cats.effect.Async
+</span>22 <span style=''>import cats.effect.Sync
+</span>23 <span style=''>import cats.effect.std.Dispatcher
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>import fs2.Chunk
+</span>26 <span style=''>import fs2.Pipe
+</span>27 <span style=''>import fs2.Pull
+</span>28 <span style=''>import fs2.RaiseThrowable
+</span>29 <span style=''>import fs2.Stream
+</span>30 <span style=''>import org.log4s.Logger
+</span>31 <span style=''>
+</span>32 <span style=''>import java.nio.ByteBuffer
+</span>33 <span style=''>import java.nio.CharBuffer
+</span>34 <span style=''>import java.nio.charset.MalformedInputException
+</span>35 <span style=''>import java.nio.charset.UnmappableCharacterException
+</span>36 <span style=''>import java.util.concurrent.CancellationException
+</span>37 <span style=''>import java.util.concurrent.CompletableFuture
+</span>38 <span style=''>import java.util.concurrent.CompletionException
+</span>39 <span style=''>import java.util.concurrent.CompletionStage
+</span>40 <span style=''>import scala.util.control.NoStackTrace
+</span>41 <span style=''>
+</span>42 <span style=''>package object internal {
+</span>43 <span style=''>
+</span>44 <span style=''>  private[http4s] def loggingAsyncCallback[F[_], A](
+</span>45 <span style=''>      logger: Logger
+</span>46 <span style=''>  )(attempt: Either[Throwable, A])(implicit F: Sync[F]): F[Unit] =
+</span>47 <span style=''>    attempt match {
+</span>48 <span style=''>      case Left(e) =&gt; </span><span style='background: #F0ADAD'>F.delay(logger.error(e)(&quot;Error in asynchronous callback&quot;))</span><span style=''>
+</span>49 <span style=''>      case Right(_) =&gt; </span><span style='background: #F0ADAD'>F.unit</span><span style=''>
+</span>50 <span style=''>    }
+</span>51 <span style=''>
+</span>52 <span style=''>  /** Hex encoding digits. Adapted from apache commons Hex.encodeHex */
+</span>53 <span style=''>  private val Digits: Array[Char] =
+</span>54 <span style=''>    </span><span style='background: #AEF1AE'>Array('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F')</span><span style=''>
+</span>55 <span style=''>
+</span>56 <span style=''>  /** Encode a byte Array into a hexadecimal string
+</span>57 <span style=''>    *
+</span>58 <span style=''>    * @param data the array
+</span>59 <span style=''>    * @return a hexadecimal encoded string
+</span>60 <span style=''>    */
+</span>61 <span style=''>  private[http4s] final def encodeHexString(data: Array[Byte]): String =
+</span>62 <span style=''>    </span><span style='background: #AEF1AE'>new String(encodeHex(data))</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>  /** Encode a string to a Hexadecimal string representation
+</span>65 <span style=''>    * Adapted from apache commons Hex.encodeHex
+</span>66 <span style=''>    */
+</span>67 <span style=''>  private[http4s] final def encodeHex(data: Array[Byte]): Array[Char] = {
+</span>68 <span style=''>    val l = </span><span style='background: #AEF1AE'>data.length</span><span style=''>
+</span>69 <span style=''>    val out = </span><span style='background: #AEF1AE'>new Array[Char](l &lt;&lt; 1)</span><span style=''>
+</span>70 <span style=''>    // two characters form the hex value.
+</span>71 <span style=''>    def iterateData(out: Array[Char], l: Int): Array[Char] = {
+</span>72 <span style=''>      def innerEncode(l: Int, i: Int, j: Int): Array[Char] =
+</span>73 <span style=''>        i match {
+</span>74 <span style=''>          case k if </span><span style='background: #AEF1AE'>k &lt; l</span><span style=''> =&gt;
+</span>75 <span style=''>            </span><span style='background: #AEF1AE'>out(j) = Digits((0xf0 &amp; data(k)) &gt;&gt;&gt; 4)</span><span style=''>
+</span>76 <span style=''>            </span><span style='background: #AEF1AE'>out(j + 1) = Digits(0x0f &amp; data(k))</span><span style=''>
+</span>77 <span style=''>            </span><span style='background: #AEF1AE'>innerEncode(l, k + 1, j + 2)</span><span style=''>
+</span>78 <span style=''>          case _ =&gt; out
+</span>79 <span style=''>        }
+</span>80 <span style=''>      </span><span style='background: #AEF1AE'>innerEncode(l, 0, 0)</span><span style=''>
+</span>81 <span style=''>    }
+</span>82 <span style=''>    </span><span style='background: #AEF1AE'>iterateData(out, l)</span><span style=''>
+</span>83 <span style=''>  }
+</span>84 <span style=''>
+</span>85 <span style=''>  private[http4s] final def decodeHexString(data: String): Option[Array[Byte]] =
+</span>86 <span style=''>    </span><span style='background: #AEF1AE'>decodeHex(data.toCharArray)</span><span style=''>
+</span>87 <span style=''>
+</span>88 <span style=''>  private object HexDecodeException extends Exception with NoStackTrace
+</span>89 <span style=''>
+</span>90 <span style=''>  /** Dirty, optimized hex decoding based off of apache
+</span>91 <span style=''>    * common hex decoding, ported over to scala
+</span>92 <span style=''>    *
+</span>93 <span style=''>    * @param data
+</span>94 <span style=''>    * @return
+</span>95 <span style=''>    */
+</span>96 <span style=''>  private[http4s] final def decodeHex(data: Array[Char]): Option[Array[Byte]] = {
+</span>97 <span style=''>    def toDigit(ch: Char): Int = {
+</span>98 <span style=''>      val digit = </span><span style='background: #AEF1AE'>Character.digit(ch, 16)</span><span style=''>
+</span>99 <span style=''>      if (</span><span style='background: #AEF1AE'>digit == -1</span><span style=''>)
+</span>100 <span style=''>        </span><span style='background: #F0ADAD'>throw HexDecodeException</span><span style=''>
+</span>101 <span style=''>      else
+</span>102 <span style=''>        </span><span style='background: #AEF1AE'>digit</span><span style=''>
+</span>103 <span style=''>    }
+</span>104 <span style=''>
+</span>105 <span style=''>    val len = </span><span style='background: #AEF1AE'>data.length</span><span style=''>
+</span>106 <span style=''>    if (</span><span style='background: #AEF1AE'>(len &amp; 0x01) != 0</span><span style=''>) </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>107 <span style=''>    val out = </span><span style='background: #AEF1AE'>new Array[Byte](len &gt;&gt; 1)</span><span style=''>
+</span>108 <span style=''>    var f: Int = </span><span style='background: #AEF1AE'>-1</span><span style=''>
+</span>109 <span style=''>    // two characters form the hex value.
+</span>110 <span style=''>    try </span><span style='background: #AEF1AE'>{
+</span>111 <span style=''></span><span style='background: #AEF1AE'>      var i = 0
+</span>112 <span style=''></span><span style='background: #AEF1AE'>      var j = 0
+</span>113 <span style=''></span><span style='background: #AEF1AE'>      while (j &lt; len) {
+</span>114 <span style=''></span><span style='background: #AEF1AE'>        f = toDigit(data(j)) &lt;&lt; 4
+</span>115 <span style=''></span><span style='background: #AEF1AE'>        j += 1
+</span>116 <span style=''></span><span style='background: #AEF1AE'>        f = f | toDigit(data(j))
+</span>117 <span style=''></span><span style='background: #AEF1AE'>        j += 1
+</span>118 <span style=''></span><span style='background: #AEF1AE'>        out(i) = (f &amp; 0xff).toByte
+</span>119 <span style=''></span><span style='background: #AEF1AE'>
+</span>120 <span style=''></span><span style='background: #AEF1AE'>        i += 1
+</span>121 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>122 <span style=''></span><span style='background: #AEF1AE'>      Some(out)
+</span>123 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''> catch {
+</span>124 <span style=''>      case HexDecodeException =&gt; </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>125 <span style=''>    }
+</span>126 <span style=''>  }
+</span>127 <span style=''>
+</span>128 <span style=''>  private[http4s] def fromCompletionStage[F[_], CF[x] &lt;: CompletionStage[x], A](fcs: F[CF[A]])(
+</span>129 <span style=''>      implicit
+</span>130 <span style=''>      // Concurrent is intentional, see https://github.com/http4s/http4s/pull/3255#discussion_r395719880
+</span>131 <span style=''>      F: Async[F]
+</span>132 <span style=''>  ): F[A] =
+</span>133 <span style=''>    </span><span style='background: #F0ADAD'>fcs.flatMap { cs =&gt;
+</span>134 <span style=''></span><span style='background: #F0ADAD'>      F.async_ { cb =&gt;
+</span>135 <span style=''></span><span style='background: #F0ADAD'>        cs.handle[Unit] {
+</span>136 <span style=''></span><span style='background: #F0ADAD'>          { (result: A, err: Throwable) =&gt;
+</span>137 <span style=''></span><span style='background: #F0ADAD'>            err match {
+</span>138 <span style=''></span><span style='background: #F0ADAD'>              case null =&gt; cb(Right(result))
+</span>139 <span style=''></span><span style='background: #F0ADAD'>              case _: CancellationException =&gt; ()
+</span>140 <span style=''></span><span style='background: #F0ADAD'>              case ex: CompletionException if ex.getCause ne null =&gt; cb(Left(ex.getCause))
+</span>141 <span style=''></span><span style='background: #F0ADAD'>              case ex =&gt; cb(Left(ex))
+</span>142 <span style=''></span><span style='background: #F0ADAD'>            }
+</span>143 <span style=''></span><span style='background: #F0ADAD'>          }: java.util.function.BiFunction[A, Throwable, Unit]
+</span>144 <span style=''></span><span style='background: #F0ADAD'>        }
+</span>145 <span style=''></span><span style='background: #F0ADAD'>        ()
+</span>146 <span style=''></span><span style='background: #F0ADAD'>      }
+</span>147 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>148 <span style=''>
+</span>149 <span style=''>  private[http4s] def unsafeToCompletionStage[F[_], A](
+</span>150 <span style=''>      fa: F[A],
+</span>151 <span style=''>      dispatcher: Dispatcher[F],
+</span>152 <span style=''>  )(implicit F: Sync[F]): CompletionStage[A] = {
+</span>153 <span style=''>    val cf = </span><span style='background: #F0ADAD'>new CompletableFuture[A]()</span><span style=''>
+</span>154 <span style=''>    </span><span style='background: #F0ADAD'>dispatcher.unsafeToFuture(fa.attemptTap {
+</span>155 <span style=''></span><span style='background: #F0ADAD'>      case Right(a) =&gt; F.delay { cf.complete(a); () }
+</span>156 <span style=''></span><span style='background: #F0ADAD'>      case Left(e) =&gt; F.delay { cf.completeExceptionally(e); () }
+</span>157 <span style=''></span><span style='background: #F0ADAD'>    })</span><span style=''>
+</span>158 <span style=''>    cf
+</span>159 <span style=''>  }
+</span>160 <span style=''>
+</span>161 <span style=''>  private[http4s] def bug(message: String): AssertionError =
+</span>162 <span style=''>    </span><span style='background: #F0ADAD'>new AssertionError(
+</span>163 <span style=''></span><span style='background: #F0ADAD'>      s&quot;This is a bug. Please report to https://github.com/http4s/http4s/issues: ${message}&quot;
+</span>164 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>165 <span style=''>
+</span>166 <span style=''>  // TODO Remove in 1.0. We can do better with MurmurHash3.
+</span>167 <span style=''>  private[http4s] def hashLower(s: String): Int = {
+</span>168 <span style=''>    var h = </span><span style='background: #AEF1AE'>0</span><span style=''>
+</span>169 <span style=''>    var i = </span><span style='background: #AEF1AE'>0</span><span style=''>
+</span>170 <span style=''>    val len = </span><span style='background: #AEF1AE'>s.length</span><span style=''>
+</span>171 <span style=''>    while (</span><span style='background: #AEF1AE'>i &lt; len</span><span style=''>) </span><span style='background: #AEF1AE'>{
+</span>172 <span style=''></span><span style='background: #AEF1AE'>      // Strings are equal igoring case if either their uppercase or lowercase
+</span>173 <span style=''></span><span style='background: #AEF1AE'>      // forms are equal. Equality of one does not imply the other, so we need
+</span>174 <span style=''></span><span style='background: #AEF1AE'>      // to go in both directions. A character is not guaranteed to make this
+</span>175 <span style=''></span><span style='background: #AEF1AE'>      // round trip, but it doesn't matter as long as all equal characters
+</span>176 <span style=''></span><span style='background: #AEF1AE'>      // hash the same.
+</span>177 <span style=''></span><span style='background: #AEF1AE'>      h = h * 31 + Character.toLowerCase(Character.toUpperCase(s.charAt(i)))
+</span>178 <span style=''></span><span style='background: #AEF1AE'>      i += 1
+</span>179 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>180 <span style=''>    h
+</span>181 <span style=''>  }
+</span>182 <span style=''>
+</span>183 <span style=''>  @deprecated(&quot;Use fs2.text.decodeWithCharset&quot;, &quot;0.23.5&quot;)
+</span>184 <span style=''>  def decode[F[_]: RaiseThrowable](charset: Charset): Pipe[F, Byte, String] = { in =&gt;
+</span>185 <span style=''>    val decoder = </span><span style='background: #F0ADAD'>charset.nioCharset.newDecoder</span><span style=''>
+</span>186 <span style=''>    val byteBufferSize = </span><span style='background: #F0ADAD'>16</span><span style=''>
+</span>187 <span style=''>    val byteBuffer = </span><span style='background: #F0ADAD'>ByteBuffer.allocate(byteBufferSize)</span><span style=''>
+</span>188 <span style=''>    val charBuffer =
+</span>189 <span style=''>      </span><span style='background: #F0ADAD'>CharBuffer.allocate(math.ceil(byteBufferSize.toDouble * decoder.averageCharsPerByte).toInt)</span><span style=''>
+</span>190 <span style=''>
+</span>191 <span style=''>    def skipByteOrderMark(chunk: Chunk[Byte]): Chunk[Byte] =
+</span>192 <span style=''>      if (</span><span style='background: #F0ADAD'>chunk.size &gt;= 3 &amp;&amp; chunk.take(3) == utf8Bom</span><span style=''>)
+</span>193 <span style=''>        </span><span style='background: #F0ADAD'>chunk.drop(3)</span><span style=''>
+</span>194 <span style=''>      else </span><span style='background: #F0ADAD'>chunk</span><span style=''>
+</span>195 <span style=''>
+</span>196 <span style=''>    def out = {
+</span>197 <span style=''>      val s = </span><span style='background: #F0ADAD'>charBuffer.flip().toString()</span><span style=''>
+</span>198 <span style=''>      </span><span style='background: #F0ADAD'>charBuffer.clear()</span><span style=''>
+</span>199 <span style=''>      if (</span><span style='background: #F0ADAD'>s.isEmpty</span><span style=''>) </span><span style='background: #F0ADAD'>Pull.done</span><span style=''> else </span><span style='background: #F0ADAD'>Pull.output1(s)</span><span style=''>
+</span>200 <span style=''>    }
+</span>201 <span style=''>
+</span>202 <span style=''>    </span><span style='background: #F0ADAD'>Pull
+</span>203 <span style=''></span><span style='background: #F0ADAD'>      .loop[F, String, Stream[F, Byte]] { stream =&gt;
+</span>204 <span style=''></span><span style='background: #F0ADAD'>        stream.pull.unconsN(byteBuffer.remaining(), allowFewer = true).flatMap {
+</span>205 <span style=''></span><span style='background: #F0ADAD'>          case None =&gt;
+</span>206 <span style=''></span><span style='background: #F0ADAD'>            byteBuffer.flip()
+</span>207 <span style=''></span><span style='background: #F0ADAD'>            val result = decoder.decode(byteBuffer, charBuffer, true)
+</span>208 <span style=''></span><span style='background: #F0ADAD'>            byteBuffer.compact()
+</span>209 <span style=''></span><span style='background: #F0ADAD'>            result match {
+</span>210 <span style=''></span><span style='background: #F0ADAD'>              case _ if result.isUnderflow =&gt;
+</span>211 <span style=''></span><span style='background: #F0ADAD'>                def flushLoop: Pull[F, String, Unit] =
+</span>212 <span style=''></span><span style='background: #F0ADAD'>                  decoder.flush(charBuffer) match {
+</span>213 <span style=''></span><span style='background: #F0ADAD'>                    case result if result.isUnderflow =&gt;
+</span>214 <span style=''></span><span style='background: #F0ADAD'>                      out
+</span>215 <span style=''></span><span style='background: #F0ADAD'>                    case result if result.isOverflow =&gt;
+</span>216 <span style=''></span><span style='background: #F0ADAD'>                      out &gt;&gt; flushLoop
+</span>217 <span style=''></span><span style='background: #F0ADAD'>                  }
+</span>218 <span style=''></span><span style='background: #F0ADAD'>                flushLoop.as(None)
+</span>219 <span style=''></span><span style='background: #F0ADAD'>              case _ if result.isOverflow =&gt;
+</span>220 <span style=''></span><span style='background: #F0ADAD'>                out.as(Some(Stream.empty))
+</span>221 <span style=''></span><span style='background: #F0ADAD'>              case _ if result.isMalformed =&gt;
+</span>222 <span style=''></span><span style='background: #F0ADAD'>                Pull.raiseError(new MalformedInputException(result.length()))
+</span>223 <span style=''></span><span style='background: #F0ADAD'>              case _ if result.isUnmappable =&gt;
+</span>224 <span style=''></span><span style='background: #F0ADAD'>                Pull.raiseError(new UnmappableCharacterException(result.length()))
+</span>225 <span style=''></span><span style='background: #F0ADAD'>            }
+</span>226 <span style=''></span><span style='background: #F0ADAD'>          case Some((chunk, stream)) =&gt;
+</span>227 <span style=''></span><span style='background: #F0ADAD'>            val chunkWithoutBom = skipByteOrderMark(chunk)
+</span>228 <span style=''></span><span style='background: #F0ADAD'>            byteBuffer.put(chunkWithoutBom.toArray)
+</span>229 <span style=''></span><span style='background: #F0ADAD'>            byteBuffer.flip()
+</span>230 <span style=''></span><span style='background: #F0ADAD'>            val result = decoder.decode(byteBuffer, charBuffer, false)
+</span>231 <span style=''></span><span style='background: #F0ADAD'>            byteBuffer.compact()
+</span>232 <span style=''></span><span style='background: #F0ADAD'>            result match {
+</span>233 <span style=''></span><span style='background: #F0ADAD'>              case _ if result.isUnderflow || result.isOverflow =&gt;
+</span>234 <span style=''></span><span style='background: #F0ADAD'>                out.as(Some(stream))
+</span>235 <span style=''></span><span style='background: #F0ADAD'>              case _ if result.isMalformed =&gt;
+</span>236 <span style=''></span><span style='background: #F0ADAD'>                Pull.raiseError(new MalformedInputException(result.length()))
+</span>237 <span style=''></span><span style='background: #F0ADAD'>              case _ if result.isUnmappable =&gt;
+</span>238 <span style=''></span><span style='background: #F0ADAD'>                Pull.raiseError(new UnmappableCharacterException(result.length()))
+</span>239 <span style=''></span><span style='background: #F0ADAD'>            }
+</span>240 <span style=''></span><span style='background: #F0ADAD'>        }
+</span>241 <span style=''></span><span style='background: #F0ADAD'>      }(in)
+</span>242 <span style=''></span><span style='background: #F0ADAD'>      .void
+</span>243 <span style=''></span><span style='background: #F0ADAD'>      .stream</span><span style=''>
+</span>244 <span style=''>  }
+</span>245 <span style=''>
+</span>246 <span style=''>  private val utf8Bom: Chunk[Byte] = </span><span style='background: #AEF1AE'>Chunk(0xef.toByte, 0xbb.toByte, 0xbf.toByte)</span><span style=''>
+</span>247 <span style=''>
+</span>248 <span style=''>  private[http4s] def skipUtf8ByteOrderMark(chunk: Chunk[Byte]): Chunk[Byte] =
+</span>249 <span style=''>    if (</span><span style='background: #F0ADAD'>chunk.size &gt;= 3 &amp;&amp; chunk.take(3) == utf8Bom</span><span style=''>)
+</span>250 <span style=''>      </span><span style='background: #F0ADAD'>chunk.drop(3)</span><span style=''>
+</span>251 <span style=''>    else </span><span style='background: #F0ADAD'>chunk</span><span style=''>
+</span>252 <span style=''>
+</span>253 <span style=''>  // Helper functions for writing Order instances //
+</span>254 <span style=''>
+</span>255 <span style=''>  /** This is the same as `Order.by(f).compare(a, b)`, but with the parameters
+</span>256 <span style=''>    * re-arraigned to make it easier to partially apply the function to two
+</span>257 <span style=''>    * instances of a type before supplying the `A =&gt; B`.
+</span>258 <span style=''>    *
+</span>259 <span style=''>    * The intended use case is that `f: A =&gt; B` will extract out a single
+</span>260 <span style=''>    * field from two instances of some Product type and then compare the value
+</span>261 <span style=''>    * of the field. This can then be done in turn for each field of a Product,
+</span>262 <span style=''>    * significantly reducing the amount of code needed to write an `Order`
+</span>263 <span style=''>    * instance for a Product with many fields.
+</span>264 <span style=''>    *
+</span>265 <span style=''>    * See the `Order` instance for `Uri` for an example of this usage.
+</span>266 <span style=''>    */
+</span>267 <span style=''>  private[http4s] def compareField[A, B: Order](
+</span>268 <span style=''>      a: A,
+</span>269 <span style=''>      b: A,
+</span>270 <span style=''>      f: A =&gt; B,
+</span>271 <span style=''>  ): Int =
+</span>272 <span style=''>    </span><span style='background: #AEF1AE'>Order.by[A, B](f).compare(a, b)</span><span style=''>
+</span>273 <span style=''>
+</span>274 <span style=''>  /** Given at least one `Int` intended to represent the result of a comparison
+</span>275 <span style=''>    * of two fields of some Product type, reduce the result to the first
+</span>276 <span style=''>    * non-zero value, or return 0 if all comparisons are 0.
+</span>277 <span style=''>    *
+</span>278 <span style=''>    * The intended use case for this function is to reduce the amount of code
+</span>279 <span style=''>    * needed to write an `Order` instance for Product types. One can use
+</span>280 <span style=''>    * [[compareField]] to generate a comparison for each field in a product
+</span>281 <span style=''>    * type, then apply this function to get a ordering for the entire Product
+</span>282 <span style=''>    * type.
+</span>283 <span style=''>    *
+</span>284 <span style=''>    * See the `Order` instance for `Uri` for an example of this usage.
+</span>285 <span style=''>    *
+</span>286 <span style=''>    * @note The values of the `NonEmptyChain` are encoded `F[Int]`, where `F`
+</span>287 <span style=''>    *       is some `Comonad`. The primary Comonads with which we are
+</span>288 <span style=''>    *       concerned are `Eval` and `Id`. `Eval` will give lazy evaluation of
+</span>289 <span style=''>    *       the Ordering, stopping as soon as the result is known, and `Id`
+</span>290 <span style=''>    *       will give strict evaluation, in the case where the caller has good
+</span>291 <span style=''>    *       reason to believe that evaluating the thunks will be slower than
+</span>292 <span style=''>    *       strictly evaluating the result over all fields.
+</span>293 <span style=''>    */
+</span>294 <span style=''>  private[http4s] def reduceComparisons_[F[_]: Comonad](
+</span>295 <span style=''>      comparisons: NonEmptyChain[F[Int]]
+</span>296 <span style=''>  ): Int = {
+</span>297 <span style=''>    val extractComparison: F[Int] =&gt; Option[Int] =
+</span>298 <span style=''>      </span><span style='background: #AEF1AE'>_.extract</span><span style=''> match {
+</span>299 <span style=''>        case 0 =&gt; </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>300 <span style=''>        case otherwise =&gt; </span><span style='background: #AEF1AE'>Some(otherwise)</span><span style=''>
+</span>301 <span style=''>      }
+</span>302 <span style=''>
+</span>303 <span style=''>    </span><span style='background: #AEF1AE'>comparisons
+</span>304 <span style=''></span><span style='background: #AEF1AE'>      .reduceLeftTo(extractComparison) {
+</span>305 <span style=''></span><span style='background: #AEF1AE'>        case (None, next) =&gt; extractComparison(next)
+</span>306 <span style=''></span><span style='background: #AEF1AE'>        case (otherwise, _) =&gt; otherwise
+</span>307 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>308 <span style=''></span><span style='background: #AEF1AE'>      .getOrElse(0)</span><span style=''>
+</span>309 <span style=''>  }
+</span>310 <span style=''>
+</span>311 <span style=''>  /** Similar to [[reduceComparisons_]] but with the `F` type forced to `Eval`
+</span>312 <span style=''>    * for every comparison other than the first one. This encodes the commonly
+</span>313 <span style=''>    * desired use case of only evaluating the minimum number of comparisons
+</span>314 <span style=''>    * required to determine the ordering.
+</span>315 <span style=''>    */
+</span>316 <span style=''>  private[http4s] def reduceComparisons(
+</span>317 <span style=''>      head: Int,
+</span>318 <span style=''>      tail: Eval[Int]*
+</span>319 <span style=''>  ): Int =
+</span>320 <span style=''>    </span><span style='background: #AEF1AE'>reduceComparisons_(NonEmptyChain(Eval.now(head), tail: _*))</span><span style=''>
+</span>321 <span style=''>
+</span>322 <span style=''>  private[http4s] def appendSanitized(sb: StringBuilder, s: String): Unit = {
+</span>323 <span style=''>    val start = </span><span style='background: #AEF1AE'>sb.length</span><span style=''>
+</span>324 <span style=''>    </span><span style='background: #AEF1AE'>sb.append(s)</span><span style=''>
+</span>325 <span style=''>    </span><span style='background: #AEF1AE'>for (i &lt;- start until sb.length) {
+</span>326 <span style=''></span><span style='background: #AEF1AE'>      val c = sb.charAt(i)
+</span>327 <span style=''></span><span style='background: #AEF1AE'>      if (c == 0x0.toChar || c == '\r' || c == '\n') {
+</span>328 <span style=''></span><span style='background: #AEF1AE'>        sb.setCharAt(i, ' ')
+</span>329 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>330 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>331 <span style=''>  }
+</span>332 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          18278
+        </td>
+        <td>
+          1467
+          -
+          1525
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.delay[Unit](logger.logger.error(&quot;Error in asynchronous callback&quot;, e))
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          14408
+        </td>
+        <td>
+          1549
+          -
+          1555
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          20975
+        </td>
+        <td>
+          1675
+          -
+          1760
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Array.apply('0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F')
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          15182
+        </td>
+        <td>
+          1975
+          -
+          2002
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new scala.Predef.String(`package`.this.encodeHex(data))
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          17104
+        </td>
+        <td>
+          1986
+          -
+          2001
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.encodeHex
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.encodeHex(data)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          21498
+        </td>
+        <td>
+          2206
+          -
+          2217
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Array.length
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          data.length
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          13623
+        </td>
+        <td>
+          2232
+          -
+          2255
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new Array[Char](l.&lt;&lt;(1))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          17654
+        </td>
+        <td>
+          2248
+          -
+          2254
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;&lt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          l.&lt;&lt;(1)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          20327
+        </td>
+        <td>
+          2460
+          -
+          2465
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          k.&lt;(l)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          14431
+        </td>
+        <td>
+          2490
+          -
+          2520
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.Digits.apply(240.&amp;(data.apply(k)).&gt;&gt;&gt;(4))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          18172
+        </td>
+        <td>
+          2497
+          -
+          2519
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          240.&amp;(data.apply(k)).&gt;&gt;&gt;(4)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          21216
+        </td>
+        <td>
+          2481
+          -
+          2520
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          out.update(j, `package`.this.Digits.apply(240.&amp;(data.apply(k)).&gt;&gt;&gt;(4)))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          16850
+        </td>
+        <td>
+          2537
+          -
+          2542
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          j.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          21372
+        </td>
+        <td>
+          2560
+          -
+          2567
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          data.apply(k)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          15205
+        </td>
+        <td>
+          2553
+          -
+          2557
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          15
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          17675
+        </td>
+        <td>
+          2553
+          -
+          2567
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          15.&amp;(data.apply(k))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          14134
+        </td>
+        <td>
+          2546
+          -
+          2568
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.Digits.apply(15.&amp;(data.apply(k)))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          20061
+        </td>
+        <td>
+          2533
+          -
+          2568
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          out.update(j.+(1), `package`.this.Digits.apply(15.&amp;(data.apply(k))))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          18187
+        </td>
+        <td>
+          2596
+          -
+          2601
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          k.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          21231
+        </td>
+        <td>
+          2581
+          -
+          2609
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.package.innerEncode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          innerEncode(l, k.+(1), j.+(2))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          14295
+        </td>
+        <td>
+          2603
+          -
+          2608
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          j.+(2)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          17368
+        </td>
+        <td>
+          2650
+          -
+          2670
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.package.innerEncode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          innerEncode(l, 0, 0)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          15156
+        </td>
+        <td>
+          2681
+          -
+          2700
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.package.iterateData
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          iterateData(out, l)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          21391
+        </td>
+        <td>
+          2801
+          -
+          2817
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.toCharArray
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.toCharArray()
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          17932
+        </td>
+        <td>
+          2791
+          -
+          2818
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.decodeHex
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.decodeHex(data.toCharArray())
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          14154
+        </td>
+        <td>
+          3177
+          -
+          3200
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Character.digit
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.Character.digit(ch, 16)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          20076
+        </td>
+        <td>
+          3211
+          -
+          3222
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          digit.==(-1)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          18406
+        </td>
+        <td>
+          3232
+          -
+          3256
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          throw `package`.this.HexDecodeException
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          14316
+        </td>
+        <td>
+          3232
+          -
+          3256
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          throw `package`.this.HexDecodeException
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          21113
+        </td>
+        <td>
+          3276
+          -
+          3281
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.internal.package.digit
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          digit
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          17387
+        </td>
+        <td>
+          3303
+          -
+          3314
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Array.length
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.length
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          17946
+        </td>
+        <td>
+          3342
+          -
+          3346
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          14174
+        </td>
+        <td>
+          3319
+          -
+          3319
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          20320
+        </td>
+        <td>
+          3319
+          -
+          3319
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          21637
+        </td>
+        <td>
+          3342
+          -
+          3346
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          13377
+        </td>
+        <td>
+          3323
+          -
+          3340
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.!=
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          len.&amp;(1).!=(0)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          18431
+        </td>
+        <td>
+          3377
+          -
+          3385
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          len.&gt;&gt;(1)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          14271
+        </td>
+        <td>
+          3361
+          -
+          3386
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Array[Byte](len.&gt;&gt;(1))
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          21128
+        </td>
+        <td>
+          3404
+          -
+          3406
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          -1
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          17381
+        </td>
+        <td>
+          3457
+          -
+          3692
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  var i: Int = 0;
+  var j: Int = 0;
+  while$1(){
+    if (j.&lt;(len))
+      {
+        {
+          f = toDigit(data.apply(j)).&lt;&lt;(4);
+          j = j.+(1);
+          f = f.|(toDigit(data.apply(j)));
+          j = j.+(1);
+          out.update(i, f.&amp;(255).toByte);
+          i = i.+(1)
+        };
+        while$1()
+      }
+    else
+      ()
+  };
+  scala.Some.apply[Array[Byte]](out)
+}
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          17407
+        </td>
+        <td>
+          3473
+          -
+          3474
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          13237
+        </td>
+        <td>
+          3489
+          -
+          3490
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          20216
+        </td>
+        <td>
+          3513
+          -
+          3670
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  {
+    f = toDigit(data.apply(j)).&lt;&lt;(4);
+    j = j.+(1);
+    f = f.|(toDigit(data.apply(j)));
+    j = j.+(1);
+    out.update(i, f.&amp;(255).toByte);
+    i = i.+(1)
+  };
+  while$1()
+}
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          13783
+        </td>
+        <td>
+          3513
+          -
+          3513
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.package.while$1
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          while$1()
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          14311
+        </td>
+        <td>
+          3497
+          -
+          3497
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          21659
+        </td>
+        <td>
+          3504
+          -
+          3511
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          j.&lt;(len)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          16526
+        </td>
+        <td>
+          3497
+          -
+          3497
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          17517
+        </td>
+        <td>
+          3527
+          -
+          3548
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          toDigit(data.apply(j)).&lt;&lt;(4)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          14040
+        </td>
+        <td>
+          3557
+          -
+          3563
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          j.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          16510
+        </td>
+        <td>
+          3580
+          -
+          3596
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.package.toDigit
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          toDigit(data.apply(j))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          20337
+        </td>
+        <td>
+          3588
+          -
+          3595
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.apply(j)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          14290
+        </td>
+        <td>
+          3576
+          -
+          3596
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.|
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.|(toDigit(data.apply(j)))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          20880
+        </td>
+        <td>
+          3605
+          -
+          3611
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          j.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          17009
+        </td>
+        <td>
+          3634
+          -
+          3638
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          255
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          21901
+        </td>
+        <td>
+          3620
+          -
+          3646
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.update
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          out.update(i, f.&amp;(255).toByte)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          13260
+        </td>
+        <td>
+          3629
+          -
+          3646
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toByte
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.&amp;(255).toByte
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          17540
+        </td>
+        <td>
+          3656
+          -
+          3662
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          i.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          20750
+        </td>
+        <td>
+          3677
+          -
+          3686
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.csrfsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Array[Byte]](out)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          13126
+        </td>
+        <td>
+          3734
+          -
+          3738
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          20476
+        </td>
+        <td>
+          4000
+          -
+          4471
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, CF[A]](fcs)(F).flatMap[A](((cs: CF[A]) =&gt; F.async_[A](((cb: Either[Throwable,A] =&gt; Unit) =&gt; {
+  cs.handle[Unit]((((result: A, err: Throwable) =&gt; err match {
+    case null =&gt; cb.apply(scala.`package`.Right.apply[Nothing, A](result))
+    case (_: java.util.concurrent.CancellationException) =&gt; ()
+    case (ex @ (_: java.util.concurrent.CompletionException)) if ex.getCause().ne(null) =&gt; cb.apply(scala.`package`.Left.apply[Throwable, Nothing](ex.getCause()))
+    case (ex @ _) =&gt; cb.apply(scala.`package`.Left.apply[Throwable, Nothing](ex))
+  }): java.util.function.BiFunction[A,Throwable,Unit]));
+  ()
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          14034
+        </td>
+        <td>
+          4026
+          -
+          4465
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Async.async_
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.async_[A](((cb: Either[Throwable,A] =&gt; Unit) =&gt; {
+  cs.handle[Unit]((((result: A, err: Throwable) =&gt; err match {
+    case null =&gt; cb.apply(scala.`package`.Right.apply[Nothing, A](result))
+    case (_: java.util.concurrent.CancellationException) =&gt; ()
+    case (ex @ (_: java.util.concurrent.CompletionException)) if ex.getCause().ne(null) =&gt; cb.apply(scala.`package`.Left.apply[Throwable, Nothing](ex.getCause()))
+    case (ex @ _) =&gt; cb.apply(scala.`package`.Left.apply[Throwable, Nothing](ex))
+  }): java.util.function.BiFunction[A,Throwable,Unit]));
+  ()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          19499
+        </td>
+        <td>
+          4051
+          -
+          4446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.CompletionStage.handle
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cs.handle[Unit]((((result: A, err: Throwable) =&gt; err match {
+  case null =&gt; cb.apply(scala.`package`.Right.apply[Nothing, A](result))
+  case (_: java.util.concurrent.CancellationException) =&gt; ()
+  case (ex @ (_: java.util.concurrent.CompletionException)) if ex.getCause().ne(null) =&gt; cb.apply(scala.`package`.Left.apply[Throwable, Nothing](ex.getCause()))
+  case (ex @ _) =&gt; cb.apply(scala.`package`.Left.apply[Throwable, Nothing](ex))
+}): java.util.function.BiFunction[A,Throwable,Unit]))
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          21273
+        </td>
+        <td>
+          4166
+          -
+          4179
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Right.apply[Nothing, A](result)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          17561
+        </td>
+        <td>
+          4163
+          -
+          4180
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cb.apply(scala.`package`.Right.apply[Nothing, A](result))
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          14014
+        </td>
+        <td>
+          4228
+          -
+          4230
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          20772
+        </td>
+        <td>
+          4300
+          -
+          4321
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cb.apply(scala.`package`.Left.apply[Throwable, Nothing](ex.getCause()))
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          14189
+        </td>
+        <td>
+          4303
+          -
+          4320
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[Throwable, Nothing](ex.getCause())
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          16767
+        </td>
+        <td>
+          4308
+          -
+          4319
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getCause
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ex.getCause()
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          20601
+        </td>
+        <td>
+          4277
+          -
+          4296
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.ne
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ex.getCause().ne(null)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          17246
+        </td>
+        <td>
+          4350
+          -
+          4358
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[Throwable, Nothing](ex)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          13518
+        </td>
+        <td>
+          4347
+          -
+          4359
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cb.apply(scala.`package`.Left.apply[Throwable, Nothing](ex))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          17425
+        </td>
+        <td>
+          4455
+          -
+          4457
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          16501
+        </td>
+        <td>
+          4640
+          -
+          4666
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.CompletableFuture.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.util.concurrent.CompletableFuture[A]()
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          21019
+        </td>
+        <td>
+          4671
+          -
+          4839
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.Dispatcher.unsafeToFuture
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          dispatcher.unsafeToFuture[A](cats.syntax.`package`.all.catsSyntaxMonadError[F, Throwable, A](fa)(F).attemptTap[Unit](((x0$1: Either[Throwable,A]) =&gt; x0$1 match {
+  case (value: A): scala.util.Right[Throwable,A]((a @ _)) =&gt; F.delay[Unit]({
+    cf.complete(a);
+    ()
+  })
+  case (value: Throwable): scala.util.Left[Throwable,A]((e @ _)) =&gt; F.delay[Unit]({
+    cf.completeExceptionally(e);
+    ()
+  })
+}))(F))
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          14209
+        </td>
+        <td>
+          4697
+          -
+          4838
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.MonadErrorOps.attemptTap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxMonadError[F, Throwable, A](fa)(F).attemptTap[Unit](((x0$1: Either[Throwable,A]) =&gt; x0$1 match {
+  case (value: A): scala.util.Right[Throwable,A]((a @ _)) =&gt; F.delay[Unit]({
+    cf.complete(a);
+    ()
+  })
+  case (value: Throwable): scala.util.Left[Throwable,A]((e @ _)) =&gt; F.delay[Unit]({
+    cf.completeExceptionally(e);
+    ()
+  })
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          162
+        </td>
+        <td>
+          17264
+        </td>
+        <td>
+          4917
+          -
+          5035
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.AssertionError.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.lang.AssertionError((&quot;This is a bug. Please report to https://github.com/http4s/http4s/issues: &quot;.+(message): String))
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          13401
+        </td>
+        <td>
+          5161
+          -
+          5162
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          19749
+        </td>
+        <td>
+          5175
+          -
+          5176
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          17447
+        </td>
+        <td>
+          5191
+          -
+          5199
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.length
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.length()
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          20512
+        </td>
+        <td>
+          5204
+          -
+          5204
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          18056
+        </td>
+        <td>
+          5220
+          -
+          5652
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  {
+    h = h.*(31).+(java.lang.Character.toLowerCase(java.lang.Character.toUpperCase(s.charAt(i))));
+    i = i.+(1)
+  };
+  while$2()
+}
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          19766
+        </td>
+        <td>
+          5220
+          -
+          5220
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.package.while$2
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          while$2()
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          13916
+        </td>
+        <td>
+          5211
+          -
+          5218
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          i.&lt;(len)
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          13931
+        </td>
+        <td>
+          5204
+          -
+          5204
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          14450
+        </td>
+        <td>
+          5598
+          -
+          5632
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Character.toUpperCase
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.Character.toUpperCase(s.charAt(i))
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          16519
+        </td>
+        <td>
+          5620
+          -
+          5631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.charAt
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.charAt(i)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          20490
+        </td>
+        <td>
+          5571
+          -
+          5573
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          31
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          21034
+        </td>
+        <td>
+          5576
+          -
+          5633
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Character.toLowerCase
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.Character.toLowerCase(java.lang.Character.toUpperCase(s.charAt(i)))
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          17137
+        </td>
+        <td>
+          5567
+          -
+          5633
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.*(31).+(java.lang.Character.toLowerCase(java.lang.Character.toUpperCase(s.charAt(i))))
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          13117
+        </td>
+        <td>
+          5640
+          -
+          5646
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.schemesuite
+        </td>
+        <td style="background: #AEF1AE">
+          i.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          16378
+        </td>
+        <td>
+          5826
+          -
+          5855
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.Charset.newDecoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          charset.nioCharset.newDecoder()
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          22960
+        </td>
+        <td>
+          5881
+          -
+          5883
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          16
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          21250
+        </td>
+        <td>
+          5905
+          -
+          5940
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.allocate
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.nio.ByteBuffer.allocate(byteBufferSize)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          17422
+        </td>
+        <td>
+          5968
+          -
+          6059
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.CharBuffer.allocate
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.nio.CharBuffer.allocate(scala.math.`package`.ceil(byteBufferSize.toDouble.*(decoder.averageCharsPerByte())).toInt)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          13135
+        </td>
+        <td>
+          5998
+          -
+          6051
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Double.*
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          byteBufferSize.toDouble.*(decoder.averageCharsPerByte())
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          17151
+        </td>
+        <td>
+          6024
+          -
+          6051
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CharsetDecoder.averageCharsPerByte
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          decoder.averageCharsPerByte()
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          19639
+        </td>
+        <td>
+          5988
+          -
+          6058
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Double.toInt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.math.`package`.ceil(byteBufferSize.toDouble.*(decoder.averageCharsPerByte())).toInt
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          14173
+        </td>
+        <td>
+          6146
+          -
+          6147
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          3
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          16401
+        </td>
+        <td>
+          6168
+          -
+          6175
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.utf8Bom
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.utf8Bom
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          20632
+        </td>
+        <td>
+          6132
+          -
+          6175
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk.size.&gt;=(3).&amp;&amp;(chunk.take(3).==(`package`.this.utf8Bom))
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          20121
+        </td>
+        <td>
+          6162
+          -
+          6163
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          3
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          23192
+        </td>
+        <td>
+          6151
+          -
+          6175
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk.take(3).==(`package`.this.utf8Bom)
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          16902
+        </td>
+        <td>
+          6185
+          -
+          6198
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.drop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk.drop(3)
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          13017
+        </td>
+        <td>
+          6185
+          -
+          6198
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Chunk.drop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk.drop(3)
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          19656
+        </td>
+        <td>
+          6210
+          -
+          6215
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.internal.package.chunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          16127
+        </td>
+        <td>
+          6247
+          -
+          6275
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.CharBuffer.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          charBuffer.flip().toString()
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          13545
+        </td>
+        <td>
+          6282
+          -
+          6300
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.CharBuffer.clear
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          charBuffer.clear()
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          17132
+        </td>
+        <td>
+          6337
+          -
+          6352
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Pull.output1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.output1[[x]fs2.Pure[x], String](s)
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          20487
+        </td>
+        <td>
+          6311
+          -
+          6320
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          s.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          16273
+        </td>
+        <td>
+          6322
+          -
+          6331
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.done
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.done
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          21141
+        </td>
+        <td>
+          6337
+          -
+          6352
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.output1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.output1[[x]fs2.Pure[x], String](s)
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          22573
+        </td>
+        <td>
+          6322
+          -
+          6331
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Pull.done
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.done
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          19902
+        </td>
+        <td>
+          6486
+          -
+          6490
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          13417
+        </td>
+        <td>
+          6449
+          -
+          6471
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.Buffer.remaining
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          byteBuffer.remaining()
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          18734
+        </td>
+        <td>
+          6429
+          -
+          8120
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.this.Stream.InvariantOps[[_]F[_], Byte](stream).pull.unconsN(byteBuffer.remaining(), true).flatMap[[x]F[x], String, Option[fs2.Stream[F,Byte]]](((x0$1: Option[(fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])]) =&gt; x0$1 match {
+  case scala.None =&gt; {
+    byteBuffer.flip();
+    val result: java.nio.charset.CoderResult = decoder.decode(byteBuffer, charBuffer, true);
+    byteBuffer.compact();
+    result match {
+      case _ if result.isUnderflow() =&gt; {
+        def flushLoop: fs2.Pull[F,String,Unit] = decoder.flush(charBuffer) match {
+          case (result @ _) if result.isUnderflow() =&gt; out
+          case (result @ _) if result.isOverflow() =&gt; out.&gt;&gt;[[_]F[_], String, Unit](flushLoop)
+        };
+        flushLoop.as[None.type](scala.None)
+      }
+      case _ if result.isOverflow() =&gt; out.as[Some[fs2.Stream[fs2.Pure,fs2.INothing]]](scala.Some.apply[fs2.Stream[fs2.Pure,fs2.INothing]](fs2.Stream.empty))
+      case _ if result.isMalformed() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.MalformedInputException(result.length()))(evidence$1)
+      case _ if result.isUnmappable() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.UnmappableCharacterException(result.length()))(evidence$1)
+    }
+  }
+  case (value: (fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])): Some[(fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])]((_1: fs2.Chunk[Byte], _2: fs2.Stream[[_]F[_],Byte]): (fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])((chunk @ _), (stream @ _))) =&gt; {
+    val chunkWithoutBom: fs2.Chunk[Byte] = skipByteOrderMark(chunk);
+    byteBuffer.put(chunkWithoutBom.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])));
+    byteBuffer.flip();
+    val result: java.nio.charset.CoderResult = decoder.decode(byteBuffer, charBuffer, false);
+    byteBuffer.compact();
+    result match {
+      case _ if result.isUnderflow().||(result.isOverflow()) =&gt; out.as[Some[fs2.Stream[[_]F[_],Byte]]](scala.Some.apply[fs2.Stream[[_]F[_],Byte]](stream))
+      case _ if result.isMalformed() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.MalformedInputException(result.length()))(evidence$1)
+      case _ if result.isUnmappable() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.UnmappableCharacterException(result.length()))(evidence$1)
+    }
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          15505
+        </td>
+        <td>
+          6537
+          -
+          6554
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.flip
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          byteBuffer.flip()
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          13567
+        </td>
+        <td>
+          6580
+          -
+          6624
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CharsetDecoder.decode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          decoder.decode(byteBuffer, charBuffer, true)
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          20353
+        </td>
+        <td>
+          6637
+          -
+          6657
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.compact
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          byteBuffer.compact()
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          16664
+        </td>
+        <td>
+          6709
+          -
+          6727
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isUnderflow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isUnderflow()
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          23092
+        </td>
+        <td>
+          6804
+          -
+          6829
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CharsetDecoder.flush
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          decoder.flush(charBuffer)
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          21160
+        </td>
+        <td>
+          6873
+          -
+          6891
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isUnderflow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isUnderflow()
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          17147
+        </td>
+        <td>
+          6956
+          -
+          6973
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isOverflow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isOverflow()
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          13278
+        </td>
+        <td>
+          6999
+          -
+          7015
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          out.&gt;&gt;[[_]F[_], String, Unit](flushLoop)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          15523
+        </td>
+        <td>
+          7052
+          -
+          7070
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          flushLoop.as[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          19631
+        </td>
+        <td>
+          7065
+          -
+          7069
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          13822
+        </td>
+        <td>
+          7095
+          -
+          7112
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isOverflow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isOverflow()
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          22844
+        </td>
+        <td>
+          7132
+          -
+          7158
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          out.as[Some[fs2.Stream[fs2.Pure,fs2.INothing]]](scala.Some.apply[fs2.Stream[fs2.Pure,fs2.INothing]](fs2.Stream.empty))
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          20378
+        </td>
+        <td>
+          7144
+          -
+          7156
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.empty
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          16541
+        </td>
+        <td>
+          7139
+          -
+          7157
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[fs2.Stream[fs2.Pure,fs2.INothing]](fs2.Stream.empty)
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          18760
+        </td>
+        <td>
+          7183
+          -
+          7201
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isMalformed
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isMalformed()
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          17035
+        </td>
+        <td>
+          7221
+          -
+          7282
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.MalformedInputException(result.length()))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          13300
+        </td>
+        <td>
+          7307
+          -
+          7326
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isUnmappable
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isUnmappable()
+        </td>
+      </tr><tr>
+        <td>
+          224
+        </td>
+        <td>
+          19498
+        </td>
+        <td>
+          7346
+          -
+          7412
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.UnmappableCharacterException(result.length()))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          15778
+        </td>
+        <td>
+          7501
+          -
+          7525
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.package.skipByteOrderMark
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          skipByteOrderMark(chunk)
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          13837
+        </td>
+        <td>
+          7553
+          -
+          7576
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.toArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunkWithoutBom.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          20253
+        </td>
+        <td>
+          7538
+          -
+          7577
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.put
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          byteBuffer.put(chunkWithoutBom.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+        </td>
+      </tr><tr>
+        <td>
+          229
+        </td>
+        <td>
+          16266
+        </td>
+        <td>
+          7590
+          -
+          7607
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.flip
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          byteBuffer.flip()
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          22863
+        </td>
+        <td>
+          7633
+          -
+          7678
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CharsetDecoder.decode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          decoder.decode(byteBuffer, charBuffer, false)
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          19349
+        </td>
+        <td>
+          7691
+          -
+          7711
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.compact
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          byteBuffer.compact()
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          13166
+        </td>
+        <td>
+          7763
+          -
+          7802
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isUnderflow().||(result.isOverflow())
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          17053
+        </td>
+        <td>
+          7785
+          -
+          7802
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isOverflow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isOverflow()
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          15793
+        </td>
+        <td>
+          7822
+          -
+          7842
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          out.as[Some[fs2.Stream[[_]F[_],Byte]]](scala.Some.apply[fs2.Stream[[_]F[_],Byte]](stream))
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          19514
+        </td>
+        <td>
+          7829
+          -
+          7841
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[fs2.Stream[[_]F[_],Byte]](stream)
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          14053
+        </td>
+        <td>
+          7867
+          -
+          7885
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isMalformed
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isMalformed()
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          20269
+        </td>
+        <td>
+          7905
+          -
+          7966
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.MalformedInputException(result.length()))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          16282
+        </td>
+        <td>
+          7991
+          -
+          8010
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.CoderResult.isUnmappable
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          result.isUnmappable()
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          22726
+        </td>
+        <td>
+          8030
+          -
+          8096
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.UnmappableCharacterException(result.length()))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          17283
+        </td>
+        <td>
+          6364
+          -
+          8144
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.void
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.loop[F, String, fs2.Stream[F,Byte]](((stream: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](stream).pull.unconsN(byteBuffer.remaining(), true).flatMap[[x]F[x], String, Option[fs2.Stream[F,Byte]]](((x0$1: Option[(fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])]) =&gt; x0$1 match {
+  case scala.None =&gt; {
+    byteBuffer.flip();
+    val result: java.nio.charset.CoderResult = decoder.decode(byteBuffer, charBuffer, true);
+    byteBuffer.compact();
+    result match {
+      case _ if result.isUnderflow() =&gt; {
+        def flushLoop: fs2.Pull[F,String,Unit] = decoder.flush(charBuffer) match {
+          case (result @ _) if result.isUnderflow() =&gt; out
+          case (result @ _) if result.isOverflow() =&gt; out.&gt;&gt;[[_]F[_], String, Unit](flushLoop)
+        };
+        flushLoop.as[None.type](scala.None)
+      }
+      case _ if result.isOverflow() =&gt; out.as[Some[fs2.Stream[fs2.Pure,fs2.INothing]]](scala.Some.apply[fs2.Stream[fs2.Pure,fs2.INothing]](fs2.Stream.empty))
+      case _ if result.isMalformed() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.MalformedInputException(result.length()))(evidence$1)
+      case _ if result.isUnmappable() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.UnmappableCharacterException(result.length()))(evidence$1)
+    }
+  }
+  case (value: (fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])): Some[(fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])]((_1: fs2.Chunk[Byte], _2: fs2.Stream[[_]F[_],Byte]): (fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])((chunk @ _), (stream @ _))) =&gt; {
+    val chunkWithoutBom: fs2.Chunk[Byte] = skipByteOrderMark(chunk);
+    byteBuffer.put(chunkWithoutBom.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])));
+    byteBuffer.flip();
+    val result: java.nio.charset.CoderResult = decoder.decode(byteBuffer, charBuffer, false);
+    byteBuffer.compact();
+    result match {
+      case _ if result.isUnderflow().||(result.isOverflow()) =&gt; out.as[Some[fs2.Stream[[_]F[_],Byte]]](scala.Some.apply[fs2.Stream[[_]F[_],Byte]](stream))
+      case _ if result.isMalformed() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.MalformedInputException(result.length()))(evidence$1)
+      case _ if result.isUnmappable() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.UnmappableCharacterException(result.length()))(evidence$1)
+    }
+  }
+})))).apply(in).void
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          12924
+        </td>
+        <td>
+          6364
+          -
+          8158
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.StreamPullOps.stream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.this.Pull.StreamPullOps[[_]F[_], String](fs2.Pull.loop[F, String, fs2.Stream[F,Byte]](((stream: fs2.Stream[F,Byte]) =&gt; fs2.this.Stream.InvariantOps[[_]F[_], Byte](stream).pull.unconsN(byteBuffer.remaining(), true).flatMap[[x]F[x], String, Option[fs2.Stream[F,Byte]]](((x0$1: Option[(fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])]) =&gt; x0$1 match {
+  case scala.None =&gt; {
+    byteBuffer.flip();
+    val result: java.nio.charset.CoderResult = decoder.decode(byteBuffer, charBuffer, true);
+    byteBuffer.compact();
+    result match {
+      case _ if result.isUnderflow() =&gt; {
+        def flushLoop: fs2.Pull[F,String,Unit] = decoder.flush(charBuffer) match {
+          case (result @ _) if result.isUnderflow() =&gt; out
+          case (result @ _) if result.isOverflow() =&gt; out.&gt;&gt;[[_]F[_], String, Unit](flushLoop)
+        };
+        flushLoop.as[None.type](scala.None)
+      }
+      case _ if result.isOverflow() =&gt; out.as[Some[fs2.Stream[fs2.Pure,fs2.INothing]]](scala.Some.apply[fs2.Stream[fs2.Pure,fs2.INothing]](fs2.Stream.empty))
+      case _ if result.isMalformed() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.MalformedInputException(result.length()))(evidence$1)
+      case _ if result.isUnmappable() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.UnmappableCharacterException(result.length()))(evidence$1)
+    }
+  }
+  case (value: (fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])): Some[(fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])]((_1: fs2.Chunk[Byte], _2: fs2.Stream[[_]F[_],Byte]): (fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])((chunk @ _), (stream @ _))) =&gt; {
+    val chunkWithoutBom: fs2.Chunk[Byte] = skipByteOrderMark(chunk);
+    byteBuffer.put(chunkWithoutBom.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])));
+    byteBuffer.flip();
+    val result: java.nio.charset.CoderResult = decoder.decode(byteBuffer, charBuffer, false);
+    byteBuffer.compact();
+    result match {
+      case _ if result.isUnderflow().||(result.isOverflow()) =&gt; out.as[Some[fs2.Stream[[_]F[_],Byte]]](scala.Some.apply[fs2.Stream[[_]F[_],Byte]](stream))
+      case _ if result.isMalformed() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.MalformedInputException(result.length()))(evidence$1)
+      case _ if result.isUnmappable() =&gt; fs2.Pull.raiseError[[_]F[_]](new java.nio.charset.UnmappableCharacterException(result.length()))(evidence$1)
+    }
+  }
+})))).apply(in).void).stream
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          16017
+        </td>
+        <td>
+          8207
+          -
+          8218
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toByte
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          239.toByte
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          22746
+        </td>
+        <td>
+          8233
+          -
+          8244
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toByte
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          191.toByte
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          19537
+        </td>
+        <td>
+          8207
+          -
+          8211
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          239
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          19237
+        </td>
+        <td>
+          8201
+          -
+          8245
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.apply
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.apply[Byte](239.toByte, 187.toByte, 191.toByte)
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          20511
+        </td>
+        <td>
+          8220
+          -
+          8231
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toByte
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          187.toByte
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          21931
+        </td>
+        <td>
+          8220
+          -
+          8224
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          187
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          16173
+        </td>
+        <td>
+          8233
+          -
+          8237
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          191
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          22434
+        </td>
+        <td>
+          8334
+          -
+          8377
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk.size.&gt;=(3).&amp;&amp;(chunk.take(3).==(`package`.this.utf8Bom))
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          19407
+        </td>
+        <td>
+          8370
+          -
+          8377
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.utf8Bom
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.utf8Bom
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          13297
+        </td>
+        <td>
+          8364
+          -
+          8365
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          3
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          17307
+        </td>
+        <td>
+          8348
+          -
+          8349
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          3
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          16036
+        </td>
+        <td>
+          8353
+          -
+          8377
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk.take(3).==(`package`.this.utf8Bom)
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          16555
+        </td>
+        <td>
+          8385
+          -
+          8398
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Chunk.drop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk.drop(3)
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          20247
+        </td>
+        <td>
+          8385
+          -
+          8398
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.drop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk.drop(3)
+        </td>
+      </tr><tr>
+        <td>
+          251
+        </td>
+        <td>
+          23010
+        </td>
+        <td>
+          8408
+          -
+          8413
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.internal.package.chunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          chunk
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          19259
+        </td>
+        <td>
+          9230
+          -
+          9261
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.kernel.Order.compare
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.`package`.Order.by[A, B](f)(evidence$2).compare(a, b)
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          15369
+        </td>
+        <td>
+          10576
+          -
+          10585
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Comonad.Ops.extract
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toComonadOps[F, Int](x$1)(evidence$3).extract
+        </td>
+      </tr><tr>
+        <td>
+          299
+        </td>
+        <td>
+          13157
+        </td>
+        <td>
+          10612
+          -
+          10616
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          300
+        </td>
+        <td>
+          19796
+        </td>
+        <td>
+          10643
+          -
+          10658
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Int](otherwise)
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          15929
+        </td>
+        <td>
+          10672
+          -
+          10846
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toReducibleOps[cats.data.NonEmptyChain, F[Int]](comparisons)(data.this.NonEmptyChainImpl.catsDataInstancesForNonEmptyChain).reduceLeftTo[Option[Int]](extractComparison)(((x0$1: Option[Int], x1$1: F[Int]) =&gt; scala.Tuple2.apply[Option[Int], F[Int]](x0$1, x1$1) match {
+  case (_1: Option[Int], _2: F[Int]): (Option[Int], F[Int])(scala.None, (next @ _)) =&gt; extractComparison.apply(next)
+  case (_1: Option[Int], _2: F[Int]): (Option[Int], F[Int])((otherwise @ _), _) =&gt; otherwise
+})).getOrElse[Int](0)
+        </td>
+      </tr><tr>
+        <td>
+          320
+        </td>
+        <td>
+          22719
+        </td>
+        <td>
+          11231
+          -
+          11290
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.internal.reduceComparisons_
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.reduceComparisons_[cats.Eval](cats.data.`package`.NonEmptyChain.apply[cats.Eval[Int]](cats.Eval.now[Int](head), (tail: _*)))(cats.this.Eval.catsBimonadForEval)
+        </td>
+      </tr><tr>
+        <td>
+          320
+        </td>
+        <td>
+          20266
+        </td>
+        <td>
+          11250
+          -
+          11289
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyChainImpl.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.`package`.NonEmptyChain.apply[cats.Eval[Int]](cats.Eval.now[Int](head), (tail: _*))
+        </td>
+      </tr><tr>
+        <td>
+          320
+        </td>
+        <td>
+          16420
+        </td>
+        <td>
+          11249
+          -
+          11249
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.EvalInstances.catsBimonadForEval
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Eval.catsBimonadForEval
+        </td>
+      </tr><tr>
+        <td>
+          320
+        </td>
+        <td>
+          22454
+        </td>
+        <td>
+          11264
+          -
+          11278
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Eval.now
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Eval.now[Int](head)
+        </td>
+      </tr><tr>
+        <td>
+          323
+        </td>
+        <td>
+          18866
+        </td>
+        <td>
+          11386
+          -
+          11395
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.length
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.length()
+        </td>
+      </tr><tr>
+        <td>
+          324
+        </td>
+        <td>
+          15091
+        </td>
+        <td>
+          11400
+          -
+          11412
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.append(s)
+        </td>
+      </tr><tr>
+        <td>
+          325
+        </td>
+        <td>
+          13179
+        </td>
+        <td>
+          11439
+          -
+          11448
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.length
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.length()
+        </td>
+      </tr><tr>
+        <td>
+          325
+        </td>
+        <td>
+          15522
+        </td>
+        <td>
+          11417
+          -
+          11576
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.Range.foreach
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.intWrapper(start).until(sb.length()).foreach[Any](((i: Int) =&gt; {
+  val c: Char = sb.charAt(i);
+  if (c.==(0.toChar).||(c.==('\r')).||(c.==('\n')))
+    sb.setCharAt(i, ' ')
+  else
+    ()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          326
+        </td>
+        <td>
+          19384
+        </td>
+        <td>
+          11466
+          -
+          11478
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.charAt
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.charAt(i)
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          15661
+        </td>
+        <td>
+          11494
+          -
+          11497
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          13047
+        </td>
+        <td>
+          11485
+          -
+          11485
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          16441
+        </td>
+        <td>
+          11521
+          -
+          11530
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.==
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==('\n')
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          19402
+        </td>
+        <td>
+          11485
+          -
+          11485
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          20149
+        </td>
+        <td>
+          11508
+          -
+          11517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.==
+        </td>
+        <td>
+          org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==('\r')
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          22158
+        </td>
+        <td>
+          11494
+          -
+          11504
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          0.toChar
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          22588
+        </td>
+        <td>
+          11489
+          -
+          11530
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==(0.toChar).||(c.==('\r')).||(c.==('\n'))
+        </td>
+      </tr><tr>
+        <td>
+          328
+        </td>
+        <td>
+          14846
+        </td>
+        <td>
+          11542
+          -
+          11562
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.setCharAt
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.setCharAt(i, ' ')
+        </td>
+      </tr><tr>
+        <td>
+          328
+        </td>
+        <td>
+          18880
+        </td>
+        <td>
+          11542
+          -
+          11562
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.setCharAt
+        </td>
+        <td>
+          org.http4s.ember.core.responsesplittingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          sb.setCharAt(i, ' ')
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

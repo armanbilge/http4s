@@ -1,0 +1,1624 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/RequestId.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>package server
+</span>20 <span style=''>package middleware
+</span>21 <span style=''>
+</span>22 <span style=''>import cats.FlatMap
+</span>23 <span style=''>import cats.arrow.FunctionK
+</span>24 <span style=''>import cats.data.Kleisli
+</span>25 <span style=''>import cats.data.NonEmptyList
+</span>26 <span style=''>import cats.data.OptionT
+</span>27 <span style=''>import cats.effect.Sync
+</span>28 <span style=''>import cats.effect.SyncIO
+</span>29 <span style=''>import cats.effect.std.UUIDGen
+</span>30 <span style=''>import cats.syntax.all._
+</span>31 <span style=''>import cats.~&gt;
+</span>32 <span style=''>import org.typelevel.ci._
+</span>33 <span style=''>import org.typelevel.vault.Key
+</span>34 <span style=''>
+</span>35 <span style=''>import java.util.UUID
+</span>36 <span style=''>
+</span>37 <span style=''>/** Propagate a `X-Request-Id` header to the response, generate a UUID
+</span>38 <span style=''>  * when the `X-Request-Id` header is unset.
+</span>39 <span style=''>  * https://devcenter.heroku.com/articles/http-request-id
+</span>40 <span style=''>  */
+</span>41 <span style=''>object RequestId {
+</span>42 <span style=''>
+</span>43 <span style=''>  private[this] val requestIdHeader = </span><span style='background: #AEF1AE'>ci&quot;X-Request-ID&quot;</span><span style=''>
+</span>44 <span style=''>
+</span>45 <span style=''>  val requestIdAttrKey: Key[String] = </span><span style='background: #AEF1AE'>Key.newKey[SyncIO, String].unsafeRunSync()</span><span style=''>
+</span>46 <span style=''>
+</span>47 <span style=''>  def apply[G[_], F[_]](http: Http[G, F])(implicit G: Sync[G]): Http[G, F] =
+</span>48 <span style=''>    </span><span style='background: #F0ADAD'>apply(requestIdHeader)(http)</span><span style=''>
+</span>49 <span style=''>
+</span>50 <span style=''>  @deprecated(&quot;Preserved for bincompat&quot;, &quot;0.23.12&quot;)
+</span>51 <span style=''>  def apply[G[_], F[_]](headerName: CIString, http: Http[G, F], G: Sync[G]): Http[G, F] =
+</span>52 <span style=''>    </span><span style='background: #F0ADAD'>apply(headerName)(http)(G, UUIDGen.fromSync(G))</span><span style=''>
+</span>53 <span style=''>
+</span>54 <span style=''>  def apply[G[_], F[_]](
+</span>55 <span style=''>      headerName: CIString
+</span>56 <span style=''>  )(http: Http[G, F])(implicit G: Sync[G], gen: UUIDGen[G]): Http[G, F] =
+</span>57 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli[G, Request[F], Response[F]] { req =&gt;
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      for {
+</span>59 <span style=''></span><span style='background: #AEF1AE'>        header &lt;- req.headers.get(headerName).map(_.head) match {
+</span>60 <span style=''></span><span style='background: #AEF1AE'>          case None =&gt; UUIDGen.randomString[G].map(Header.Raw(headerName, _))
+</span>61 <span style=''></span><span style='background: #AEF1AE'>          case Some(header) =&gt; G.pure(header)
+</span>62 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>63 <span style=''></span><span style='background: #AEF1AE'>        reqId = header.value
+</span>64 <span style=''></span><span style='background: #AEF1AE'>        response &lt;- http(req.withAttribute(requestIdAttrKey, reqId).putHeaders(header))
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      } yield response.withAttribute(requestIdAttrKey, reqId).putHeaders(header)
+</span>66 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>  def apply[G[_], F[_]](
+</span>69 <span style=''>      fk: F ~&gt; G,
+</span>70 <span style=''>      headerName: CIString = requestIdHeader,
+</span>71 <span style=''>      genReqId: F[UUID],
+</span>72 <span style=''>  )(http: Http[G, F])(implicit G: FlatMap[G], F: Sync[F]): Http[G, F] =
+</span>73 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli[G, Request[F], Response[F]] { req =&gt;
+</span>74 <span style=''></span><span style='background: #AEF1AE'>      for {
+</span>75 <span style=''></span><span style='background: #AEF1AE'>        header &lt;- fk(req.headers.get(headerName) match {
+</span>76 <span style=''></span><span style='background: #AEF1AE'>          case None =&gt; genReqId.map(reqId =&gt; Header.Raw(headerName, reqId.show))
+</span>77 <span style=''></span><span style='background: #AEF1AE'>          case Some(NonEmptyList(header, _)) =&gt; </span><span style='background: #F0ADAD'>F.pure(header)</span><span style='background: #AEF1AE'>
+</span>78 <span style=''></span><span style='background: #AEF1AE'>        })
+</span>79 <span style=''></span><span style='background: #AEF1AE'>        reqId = header.value
+</span>80 <span style=''></span><span style='background: #AEF1AE'>        response &lt;- http(req.withAttribute(requestIdAttrKey, reqId).putHeaders(header))
+</span>81 <span style=''></span><span style='background: #AEF1AE'>      } yield response.withAttribute(requestIdAttrKey, reqId).putHeaders(header)
+</span>82 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>83 <span style=''>
+</span>84 <span style=''>  object httpApp {
+</span>85 <span style=''>    def apply[F[_]: Sync](httpApp: HttpApp[F]): HttpApp[F] =
+</span>86 <span style=''>      </span><span style='background: #F0ADAD'>RequestId.apply(requestIdHeader)(httpApp)</span><span style=''>
+</span>87 <span style=''>
+</span>88 <span style=''>    def apply[F[_]: Sync](
+</span>89 <span style=''>        headerName: CIString
+</span>90 <span style=''>    )(httpApp: HttpApp[F]): HttpApp[F] =
+</span>91 <span style=''>      </span><span style='background: #F0ADAD'>RequestId.apply(headerName)(httpApp)</span><span style=''>
+</span>92 <span style=''>
+</span>93 <span style=''>    def apply[F[_]: Sync](
+</span>94 <span style=''>        headerName: CIString = requestIdHeader,
+</span>95 <span style=''>        genReqId: F[UUID],
+</span>96 <span style=''>    )(httpApp: HttpApp[F]): HttpApp[F] =
+</span>97 <span style=''>      </span><span style='background: #F0ADAD'>RequestId.apply(FunctionK.id[F], headerName, genReqId)(httpApp)</span><span style=''>
+</span>98 <span style=''>  }
+</span>99 <span style=''>
+</span>100 <span style=''>  object httpRoutes {
+</span>101 <span style=''>    def apply[F[_]: Sync](httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>102 <span style=''>      </span><span style='background: #AEF1AE'>RequestId.apply(requestIdHeader)(httpRoutes)</span><span style=''>
+</span>103 <span style=''>
+</span>104 <span style=''>    def apply[F[_]: Sync](
+</span>105 <span style=''>        headerName: CIString
+</span>106 <span style=''>    )(httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>107 <span style=''>      </span><span style='background: #AEF1AE'>RequestId.apply(headerName)(httpRoutes)</span><span style=''>
+</span>108 <span style=''>
+</span>109 <span style=''>    def apply[F[_]: Sync](
+</span>110 <span style=''>        headerName: CIString = requestIdHeader,
+</span>111 <span style=''>        genReqId: F[UUID],
+</span>112 <span style=''>    )(httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>113 <span style=''>      </span><span style='background: #AEF1AE'>RequestId.apply(OptionT.liftK[F], headerName, genReqId)(httpRoutes)</span><span style=''>
+</span>114 <span style=''>  }
+</span>115 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          9665
+        </td>
+        <td>
+          1217
+          -
+          1233
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;X-Request-ID&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          8493
+        </td>
+        <td>
+          1273
+          -
+          1315
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.vault.Key.newKey[cats.effect.SyncIO, String](effect.this.SyncIO.syncForSyncIO, effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          7436
+        </td>
+        <td>
+          1404
+          -
+          1419
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.requestIdHeader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestId.this.requestIdHeader
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          8219
+        </td>
+        <td>
+          1398
+          -
+          1426
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestId.this.apply[[_]G[_], [_]F[_]](RequestId.this.requestIdHeader)(http)(G, std.this.UUIDGen.fromSync[[_]G[_]](G))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          9238
+        </td>
+        <td>
+          1420
+          -
+          1420
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.UUIDGenCompanionPlatform.fromSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          std.this.UUIDGen.fromSync[[_]G[_]](G)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          7580
+        </td>
+        <td>
+          1601
+          -
+          1620
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.UUIDGenCompanionPlatform.fromSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.std.UUIDGen.fromSync[[_]G[_]](G)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          9411
+        </td>
+        <td>
+          1574
+          -
+          1621
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestId.this.apply[[_]G[_], [_]F[_]](headerName)(http)(G, cats.effect.std.UUIDGen.fromSync[[_]G[_]](G))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          7733
+        </td>
+        <td>
+          1753
+          -
+          2213
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[G, org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Header.Raw](req.headers.get(headerName).map[org.http4s.Header.Raw](((x$1: cats.data.NonEmptyList[org.http4s.Header.Raw]) =&gt; x$1.head)) match {
+  case scala.None =&gt; cats.syntax.`package`.all.toFunctorOps[G, String](cats.effect.std.UUIDGen.randomString[G](gen, G))(G).map[org.http4s.Header.Raw](((x$2: String) =&gt; Header.Raw.apply(headerName, x$2)))
+  case (value: org.http4s.Header.Raw): Some[org.http4s.Header.Raw]((header @ _)) =&gt; G.pure[org.http4s.Header.Raw](header)
+})(G).flatMap[org.http4s.Response[F]](((header: org.http4s.Header.Raw) =&gt; {
+  val reqId: String = header.value;
+  cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](http.apply(req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))(G).map[org.http4s.Response[F]](((response: org.http4s.Response[F]) =&gt; response.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          8439
+        </td>
+        <td>
+          1860
+          -
+          1866
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyList.head
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.head
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          7236
+        </td>
+        <td>
+          1828
+          -
+          1867
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get(headerName).map[org.http4s.Header.Raw](((x$1: cats.data.NonEmptyList[org.http4s.Header.Raw]) =&gt; x$1.head))
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          8278
+        </td>
+        <td>
+          1804
+          -
+          2207
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Header.Raw](req.headers.get(headerName).map[org.http4s.Header.Raw](((x$1: cats.data.NonEmptyList[org.http4s.Header.Raw]) =&gt; x$1.head)) match {
+  case scala.None =&gt; cats.syntax.`package`.all.toFunctorOps[G, String](cats.effect.std.UUIDGen.randomString[G](gen, G))(G).map[org.http4s.Header.Raw](((x$2: String) =&gt; Header.Raw.apply(headerName, x$2)))
+  case (value: org.http4s.Header.Raw): Some[org.http4s.Header.Raw]((header @ _)) =&gt; G.pure[org.http4s.Header.Raw](header)
+})(G).flatMap[org.http4s.Response[F]](((header: org.http4s.Header.Raw) =&gt; {
+  val reqId: String = header.value;
+  cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](http.apply(req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))(G).map[org.http4s.Response[F]](((response: org.http4s.Response[F]) =&gt; response.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          9620
+        </td>
+        <td>
+          1899
+          -
+          1922
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.UUIDGen.randomString
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.std.UUIDGen.randomString[G](gen, G)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          8498
+        </td>
+        <td>
+          1927
+          -
+          1952
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(headerName, x$2)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          7409
+        </td>
+        <td>
+          1899
+          -
+          1953
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[G, String](cats.effect.std.UUIDGen.randomString[G](gen, G))(G).map[org.http4s.Header.Raw](((x$2: String) =&gt; Header.Raw.apply(headerName, x$2)))
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          9359
+        </td>
+        <td>
+          1985
+          -
+          1999
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          G.pure[org.http4s.Header.Raw](header)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          8227
+        </td>
+        <td>
+          2026
+          -
+          2038
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          header.value
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          8394
+        </td>
+        <td>
+          2064
+          -
+          2125
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          7730
+        </td>
+        <td>
+          2082
+          -
+          2098
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.requestIdAttrKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RequestId.this.requestIdAttrKey
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          7365
+        </td>
+        <td>
+          2059
+          -
+          2126
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header)))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          9418
+        </td>
+        <td>
+          2118
+          -
+          2124
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(header)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          9367
+        </td>
+        <td>
+          2047
+          -
+          2207
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](http.apply(req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))(G).map[org.http4s.Response[F]](((response: org.http4s.Response[F]) =&gt; response.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          9048
+        </td>
+        <td>
+          2164
+          -
+          2180
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.requestIdAttrKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RequestId.this.requestIdAttrKey
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          8638
+        </td>
+        <td>
+          2200
+          -
+          2206
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(header)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          7482
+        </td>
+        <td>
+          2141
+          -
+          2207
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          10047
+        </td>
+        <td>
+          2405
+          -
+          2877
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[G, org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Header.Raw](fk.apply[org.http4s.Header.Raw](req.headers.get(headerName) match {
+  case scala.None =&gt; cats.syntax.`package`.all.toFunctorOps[F, java.util.UUID](genReqId)(F).map[org.http4s.Header.Raw](((reqId: java.util.UUID) =&gt; Header.Raw.apply(headerName, cats.syntax.`package`.all.toShow[java.util.UUID](reqId)(cats.this.Show.catsShowForUUID).show)))
+  case (value: cats.data.NonEmptyList[org.http4s.Header.Raw]): Some[cats.data.NonEmptyList[org.http4s.Header.Raw]]((head: org.http4s.Header.Raw, tail: List[org.http4s.Header.Raw]): cats.data.NonEmptyList[org.http4s.Header.Raw]((header @ _), _)) =&gt; F.pure[org.http4s.Header.Raw](header)
+}))(G).flatMap[org.http4s.Response[F]](((header: org.http4s.Header.Raw) =&gt; {
+  val reqId: String = header.value;
+  cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](http.apply(req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))(G).map[org.http4s.Response[F]](((response: org.http4s.Response[F]) =&gt; response.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          8167
+        </td>
+        <td>
+          2456
+          -
+          2871
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Header.Raw](fk.apply[org.http4s.Header.Raw](req.headers.get(headerName) match {
+  case scala.None =&gt; cats.syntax.`package`.all.toFunctorOps[F, java.util.UUID](genReqId)(F).map[org.http4s.Header.Raw](((reqId: java.util.UUID) =&gt; Header.Raw.apply(headerName, cats.syntax.`package`.all.toShow[java.util.UUID](reqId)(cats.this.Show.catsShowForUUID).show)))
+  case (value: cats.data.NonEmptyList[org.http4s.Header.Raw]): Some[cats.data.NonEmptyList[org.http4s.Header.Raw]]((head: org.http4s.Header.Raw, tail: List[org.http4s.Header.Raw]): cats.data.NonEmptyList[org.http4s.Header.Raw]((header @ _), _)) =&gt; F.pure[org.http4s.Header.Raw](header)
+}))(G).flatMap[org.http4s.Response[F]](((header: org.http4s.Header.Raw) =&gt; {
+  val reqId: String = header.value;
+  cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](http.apply(req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))(G).map[org.http4s.Response[F]](((response: org.http4s.Response[F]) =&gt; response.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9327
+        </td>
+        <td>
+          2480
+          -
+          2673
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[org.http4s.Header.Raw](req.headers.get(headerName) match {
+  case scala.None =&gt; cats.syntax.`package`.all.toFunctorOps[F, java.util.UUID](genReqId)(F).map[org.http4s.Header.Raw](((reqId: java.util.UUID) =&gt; Header.Raw.apply(headerName, cats.syntax.`package`.all.toShow[java.util.UUID](reqId)(cats.this.Show.catsShowForUUID).show)))
+  case (value: cats.data.NonEmptyList[org.http4s.Header.Raw]): Some[cats.data.NonEmptyList[org.http4s.Header.Raw]]((head: org.http4s.Header.Raw, tail: List[org.http4s.Header.Raw]): cats.data.NonEmptyList[org.http4s.Header.Raw]((header @ _), _)) =&gt; F.pure[org.http4s.Header.Raw](header)
+})
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9545
+        </td>
+        <td>
+          2483
+          -
+          2510
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get(headerName)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8397
+        </td>
+        <td>
+          2587
+          -
+          2587
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Show.catsShowForUUID
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Show.catsShowForUUID
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7367
+        </td>
+        <td>
+          2587
+          -
+          2597
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Show.Ops.show
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toShow[java.util.UUID](reqId)(cats.this.Show.catsShowForUUID).show
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8644
+        </td>
+        <td>
+          2542
+          -
+          2599
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, java.util.UUID](genReqId)(F).map[org.http4s.Header.Raw](((reqId: java.util.UUID) =&gt; Header.Raw.apply(headerName, cats.syntax.`package`.all.toShow[java.util.UUID](reqId)(cats.this.Show.catsShowForUUID).show)))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          9143
+        </td>
+        <td>
+          2564
+          -
+          2598
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(headerName, cats.syntax.`package`.all.toShow[java.util.UUID](reqId)(cats.this.Show.catsShowForUUID).show)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          7456
+        </td>
+        <td>
+          2648
+          -
+          2662
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Header.Raw](header)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          8217
+        </td>
+        <td>
+          2690
+          -
+          2702
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          header.value
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          8403
+        </td>
+        <td>
+          2728
+          -
+          2789
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          9332
+        </td>
+        <td>
+          2711
+          -
+          2871
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](http.apply(req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))(G).map[org.http4s.Response[F]](((response: org.http4s.Response[F]) =&gt; response.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          9553
+        </td>
+        <td>
+          2782
+          -
+          2788
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(header)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          7340
+        </td>
+        <td>
+          2723
+          -
+          2790
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header)))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          7627
+        </td>
+        <td>
+          2746
+          -
+          2762
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.requestIdAttrKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RequestId.this.requestIdAttrKey
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          7457
+        </td>
+        <td>
+          2805
+          -
+          2871
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.withAttribute[String](RequestId.this.requestIdAttrKey, reqId).putHeaders(Header.this.ToRaw.rawToRaw(header))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          8547
+        </td>
+        <td>
+          2864
+          -
+          2870
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(header)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          9148
+        </td>
+        <td>
+          2828
+          -
+          2844
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.requestIdAttrKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RequestId.this.requestIdAttrKey
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          7242
+        </td>
+        <td>
+          2965
+          -
+          3006
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestId.apply[[_]F[_], [_]F[_]](RequestId.this.requestIdHeader)(httpApp)(evidence$1, std.this.UUIDGen.fromSync[[_]F[_]](evidence$1))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          8360
+        </td>
+        <td>
+          2997
+          -
+          2997
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.UUIDGenCompanionPlatform.fromSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          std.this.UUIDGen.fromSync[[_]F[_]](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          9535
+        </td>
+        <td>
+          2981
+          -
+          2996
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.requestIdHeader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestId.this.requestIdHeader
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          8555
+        </td>
+        <td>
+          3111
+          -
+          3147
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestId.apply[[_]F[_], [_]F[_]](headerName)(httpApp)(evidence$2, std.this.UUIDGen.fromSync[[_]F[_]](evidence$2))
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          9101
+        </td>
+        <td>
+          3138
+          -
+          3138
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.UUIDGenCompanionPlatform.fromSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          std.this.UUIDGen.fromSync[[_]F[_]](evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          7412
+        </td>
+        <td>
+          3298
+          -
+          3361
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          RequestId.apply[[_]F[_], F](cats.arrow.FunctionK.id[F], headerName, genReqId)(httpApp)(evidence$3, evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          9542
+        </td>
+        <td>
+          3497
+          -
+          3497
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.UUIDGenCompanionPlatform.fromSync
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          std.this.UUIDGen.fromSync[[β$0$]cats.data.OptionT[F,β$0$]](kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$4))
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          9284
+        </td>
+        <td>
+          3481
+          -
+          3496
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.requestIdHeader
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          RequestId.this.requestIdHeader
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          10010
+        </td>
+        <td>
+          3497
+          -
+          3497
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Sync.syncForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          8171
+        </td>
+        <td>
+          3497
+          -
+          3497
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Sync.syncForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          8311
+        </td>
+        <td>
+          3465
+          -
+          3509
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          RequestId.apply[[β$0$]cats.data.OptionT[F,β$0$], [_]F[_]](RequestId.this.requestIdHeader)(httpRoutes)(kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$4), std.this.UUIDGen.fromSync[[β$0$]cats.data.OptionT[F,β$0$]](kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$4)))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          9109
+        </td>
+        <td>
+          3650
+          -
+          3650
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Sync.syncForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          7544
+        </td>
+        <td>
+          3623
+          -
+          3662
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          RequestId.apply[[β$0$]cats.data.OptionT[F,β$0$], [_]F[_]](headerName)(httpRoutes)(kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$5), std.this.UUIDGen.fromSync[[β$0$]cats.data.OptionT[F,β$0$]](kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$5)))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          7967
+        </td>
+        <td>
+          3650
+          -
+          3650
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.UUIDGenCompanionPlatform.fromSync
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          std.this.UUIDGen.fromSync[[β$0$]cats.data.OptionT[F,β$0$]](kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$5))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          7210
+        </td>
+        <td>
+          3650
+          -
+          3650
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Sync.syncForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Sync.syncForOptionT[[_]F[_]](evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          8131
+        </td>
+        <td>
+          3877
+          -
+          3877
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          9324
+        </td>
+        <td>
+          3838
+          -
+          3854
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftK
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftK[F](evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          10016
+        </td>
+        <td>
+          3822
+          -
+          3889
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.RequestId.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.requestidsuite
+        </td>
+        <td style="background: #AEF1AE">
+          RequestId.apply[[β$0$]cats.data.OptionT[F,β$0$], F](cats.data.OptionT.liftK[F](evidence$6), headerName, genReqId)(httpRoutes)(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$6), evidence$6)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

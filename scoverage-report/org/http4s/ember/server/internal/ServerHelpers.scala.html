@@ -1,0 +1,4832 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ember/server/internal/ServerHelpers.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2019 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.ember.server.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import cats._
+</span>20 <span style=''>import cats.effect._
+</span>21 <span style=''>import cats.effect.kernel.Resource
+</span>22 <span style=''>import cats.syntax.all._
+</span>23 <span style=''>import com.comcast.ip4s._
+</span>24 <span style=''>import fs2.Stream
+</span>25 <span style=''>import fs2.io.net._
+</span>26 <span style=''>import fs2.io.net.tls._
+</span>27 <span style=''>import fs2.io.net.unixsocket.UnixSocketAddress
+</span>28 <span style=''>import fs2.io.net.unixsocket.UnixSockets
+</span>29 <span style=''>import org.http4s._
+</span>30 <span style=''>import org.http4s.ember.core.Drain
+</span>31 <span style=''>import org.http4s.ember.core.EmberException
+</span>32 <span style=''>import org.http4s.ember.core.Encoder
+</span>33 <span style=''>import org.http4s.ember.core.Parser
+</span>34 <span style=''>import org.http4s.ember.core.Read
+</span>35 <span style=''>import org.http4s.ember.core.Util._
+</span>36 <span style=''>import org.http4s.ember.core.h2.H2Frame
+</span>37 <span style=''>import org.http4s.ember.core.h2.H2Keys
+</span>38 <span style=''>import org.http4s.ember.core.h2.H2Server
+</span>39 <span style=''>import org.http4s.ember.core.h2.H2TLS
+</span>40 <span style=''>import org.http4s.headers.Connection
+</span>41 <span style=''>import org.http4s.headers.Date
+</span>42 <span style=''>import org.http4s.server.ServerRequestKeys
+</span>43 <span style=''>import org.http4s.websocket.WebSocketContext
+</span>44 <span style=''>import org.typelevel.log4cats.Logger
+</span>45 <span style=''>import org.typelevel.vault.Key
+</span>46 <span style=''>import org.typelevel.vault.Vault
+</span>47 <span style=''>import scodec.bits.ByteVector
+</span>48 <span style=''>
+</span>49 <span style=''>import java.util.concurrent.TimeoutException
+</span>50 <span style=''>import scala.concurrent.duration._
+</span>51 <span style=''>
+</span>52 <span style=''>private[server] object ServerHelpers extends ServerHelpersPlatform {
+</span>53 <span style=''>
+</span>54 <span style=''>  private val serverFailure =
+</span>55 <span style=''>    </span><span style='background: #AEF1AE'>Response(Status.InternalServerError).putHeaders(org.http4s.headers.`Content-Length`.zero)</span><span style=''>
+</span>56 <span style=''>
+</span>57 <span style=''>  def server[F[_]](
+</span>58 <span style=''>      host: Option[Host],
+</span>59 <span style=''>      port: Port,
+</span>60 <span style=''>      additionalSocketOptions: List[SocketOption],
+</span>61 <span style=''>      sg: SocketGroup[F],
+</span>62 <span style=''>      httpApp: HttpApp[F],
+</span>63 <span style=''>      tlsInfoOpt: Option[(TLSContext[F], TLSParameters)],
+</span>64 <span style=''>      ready: Deferred[F, Either[Throwable, SocketAddress[IpAddress]]],
+</span>65 <span style=''>      shutdown: Shutdown[F],
+</span>66 <span style=''>      // Defaults
+</span>67 <span style=''>      errorHandler: Throwable =&gt; F[Response[F]],
+</span>68 <span style=''>      onWriteFailure: (Option[Request[F]], Response[F], Throwable) =&gt; F[Unit],
+</span>69 <span style=''>      maxConnections: Int,
+</span>70 <span style=''>      receiveBufferSize: Int,
+</span>71 <span style=''>      maxHeaderSize: Int,
+</span>72 <span style=''>      requestHeaderReceiveTimeout: Duration,
+</span>73 <span style=''>      idleTimeout: Duration,
+</span>74 <span style=''>      logger: Logger[F],
+</span>75 <span style=''>      webSocketKey: Key[WebSocketContext[F]],
+</span>76 <span style=''>      enableHttp2: Boolean,
+</span>77 <span style=''>  )(implicit F: Async[F]): Stream[F, Nothing] = {
+</span>78 <span style=''>    val server: Stream[F, Socket[F]] =
+</span>79 <span style=''>      </span><span style='background: #AEF1AE'>Stream
+</span>80 <span style=''></span><span style='background: #AEF1AE'>        .resource(sg.serverResource(host, Some(port), additionalSocketOptions))
+</span>81 <span style=''></span><span style='background: #AEF1AE'>        .attempt
+</span>82 <span style=''></span><span style='background: #AEF1AE'>        .evalTap(e =&gt; ready.complete(e.map(_._1)))
+</span>83 <span style=''></span><span style='background: #AEF1AE'>        .rethrow
+</span>84 <span style=''></span><span style='background: #AEF1AE'>        .flatMap(_._2)</span><span style=''>
+</span>85 <span style=''>    </span><span style='background: #AEF1AE'>serverInternal(
+</span>86 <span style=''></span><span style='background: #AEF1AE'>      server,
+</span>87 <span style=''></span><span style='background: #AEF1AE'>      httpApp: HttpApp[F],
+</span>88 <span style=''></span><span style='background: #AEF1AE'>      tlsInfoOpt: Option[(TLSContext[F], TLSParameters)],
+</span>89 <span style=''></span><span style='background: #AEF1AE'>      shutdown: Shutdown[F],
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      // Defaults
+</span>91 <span style=''></span><span style='background: #AEF1AE'>      errorHandler: Throwable =&gt; F[Response[F]],
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      onWriteFailure: (Option[Request[F]], Response[F], Throwable) =&gt; F[Unit],
+</span>93 <span style=''></span><span style='background: #AEF1AE'>      maxConnections: Int,
+</span>94 <span style=''></span><span style='background: #AEF1AE'>      receiveBufferSize: Int,
+</span>95 <span style=''></span><span style='background: #AEF1AE'>      maxHeaderSize: Int,
+</span>96 <span style=''></span><span style='background: #AEF1AE'>      requestHeaderReceiveTimeout: Duration,
+</span>97 <span style=''></span><span style='background: #AEF1AE'>      idleTimeout: Duration,
+</span>98 <span style=''></span><span style='background: #AEF1AE'>      logger: Logger[F],
+</span>99 <span style=''></span><span style='background: #AEF1AE'>      true,
+</span>100 <span style=''></span><span style='background: #AEF1AE'>      webSocketKey,
+</span>101 <span style=''></span><span style='background: #AEF1AE'>      enableHttp2,
+</span>102 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>103 <span style=''>  }
+</span>104 <span style=''>
+</span>105 <span style=''>  def unixSocketServer[F[_]: Async](
+</span>106 <span style=''>      unixSockets: UnixSockets[F],
+</span>107 <span style=''>      unixSocketAddress: UnixSocketAddress,
+</span>108 <span style=''>      deleteIfExists: Boolean,
+</span>109 <span style=''>      deleteOnClose: Boolean,
+</span>110 <span style=''>      httpApp: HttpApp[F],
+</span>111 <span style=''>      tlsInfoOpt: Option[(TLSContext[F], TLSParameters)],
+</span>112 <span style=''>      ready: Deferred[F, Either[Throwable, SocketAddress[IpAddress]]],
+</span>113 <span style=''>      shutdown: Shutdown[F],
+</span>114 <span style=''>      // Defaults
+</span>115 <span style=''>      errorHandler: Throwable =&gt; F[Response[F]],
+</span>116 <span style=''>      onWriteFailure: (Option[Request[F]], Response[F], Throwable) =&gt; F[Unit],
+</span>117 <span style=''>      maxConnections: Int,
+</span>118 <span style=''>      receiveBufferSize: Int,
+</span>119 <span style=''>      maxHeaderSize: Int,
+</span>120 <span style=''>      requestHeaderReceiveTimeout: Duration,
+</span>121 <span style=''>      idleTimeout: Duration,
+</span>122 <span style=''>      logger: Logger[F],
+</span>123 <span style=''>      webSocketKey: Key[WebSocketContext[F]],
+</span>124 <span style=''>      enableHttp2: Boolean,
+</span>125 <span style=''>  ): Stream[F, Nothing] = {
+</span>126 <span style=''>    val server =
+</span>127 <span style=''>      // Our interface has an issue
+</span>128 <span style=''>      </span><span style='background: #AEF1AE'>Stream
+</span>129 <span style=''></span><span style='background: #AEF1AE'>        .eval(
+</span>130 <span style=''></span><span style='background: #AEF1AE'>          ready.complete( // This is a lie, there isn't any signal from fs2 when the server is actually ready
+</span>131 <span style=''></span><span style='background: #AEF1AE'>            Either.right(SocketAddress(Ipv4Address.fromBytes(0, 0, 0, 0), port&quot;0&quot;))
+</span>132 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>133 <span style=''></span><span style='background: #AEF1AE'>        ) // Sketchy
+</span>134 <span style=''></span><span style='background: #AEF1AE'>        .drain ++
+</span>135 <span style=''></span><span style='background: #AEF1AE'>        unixSockets
+</span>136 <span style=''></span><span style='background: #AEF1AE'>          .server(unixSocketAddress, deleteIfExists, deleteOnClose)</span><span style=''>
+</span>137 <span style=''>
+</span>138 <span style=''>    </span><span style='background: #AEF1AE'>serverInternal(
+</span>139 <span style=''></span><span style='background: #AEF1AE'>      server,
+</span>140 <span style=''></span><span style='background: #AEF1AE'>      httpApp: HttpApp[F],
+</span>141 <span style=''></span><span style='background: #AEF1AE'>      tlsInfoOpt: Option[(TLSContext[F], TLSParameters)],
+</span>142 <span style=''></span><span style='background: #AEF1AE'>      shutdown: Shutdown[F],
+</span>143 <span style=''></span><span style='background: #AEF1AE'>      // Defaults
+</span>144 <span style=''></span><span style='background: #AEF1AE'>      errorHandler: Throwable =&gt; F[Response[F]],
+</span>145 <span style=''></span><span style='background: #AEF1AE'>      onWriteFailure: (Option[Request[F]], Response[F], Throwable) =&gt; F[Unit],
+</span>146 <span style=''></span><span style='background: #AEF1AE'>      maxConnections: Int,
+</span>147 <span style=''></span><span style='background: #AEF1AE'>      receiveBufferSize: Int,
+</span>148 <span style=''></span><span style='background: #AEF1AE'>      maxHeaderSize: Int,
+</span>149 <span style=''></span><span style='background: #AEF1AE'>      requestHeaderReceiveTimeout: Duration,
+</span>150 <span style=''></span><span style='background: #AEF1AE'>      idleTimeout: Duration,
+</span>151 <span style=''></span><span style='background: #AEF1AE'>      logger: Logger[F],
+</span>152 <span style=''></span><span style='background: #AEF1AE'>      false,
+</span>153 <span style=''></span><span style='background: #AEF1AE'>      webSocketKey,
+</span>154 <span style=''></span><span style='background: #AEF1AE'>      enableHttp2,
+</span>155 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>156 <span style=''>  }
+</span>157 <span style=''>
+</span>158 <span style=''>  def serverInternal[F[_]: Async](
+</span>159 <span style=''>      server: Stream[F, Socket[F]],
+</span>160 <span style=''>      httpApp: HttpApp[F],
+</span>161 <span style=''>      tlsInfoOpt: Option[(TLSContext[F], TLSParameters)],
+</span>162 <span style=''>      shutdown: Shutdown[F],
+</span>163 <span style=''>      // Defaults
+</span>164 <span style=''>      errorHandler: Throwable =&gt; F[Response[F]],
+</span>165 <span style=''>      onWriteFailure: (Option[Request[F]], Response[F], Throwable) =&gt; F[Unit],
+</span>166 <span style=''>      maxConnections: Int,
+</span>167 <span style=''>      receiveBufferSize: Int,
+</span>168 <span style=''>      maxHeaderSize: Int,
+</span>169 <span style=''>      requestHeaderReceiveTimeout: Duration,
+</span>170 <span style=''>      idleTimeout: Duration,
+</span>171 <span style=''>      logger: Logger[F],
+</span>172 <span style=''>      createRequestVault: Boolean,
+</span>173 <span style=''>      webSocketKey: Key[WebSocketContext[F]],
+</span>174 <span style=''>      enableHttp2: Boolean,
+</span>175 <span style=''>  ): Stream[F, Nothing] = {
+</span>176 <span style=''>    val streams: Stream[F, Stream[F, Nothing]] = </span><span style='background: #AEF1AE'>server
+</span>177 <span style=''></span><span style='background: #AEF1AE'>      .interruptWhen(shutdown.signal.attempt)
+</span>178 <span style=''></span><span style='background: #AEF1AE'>      .map { connect =&gt;
+</span>179 <span style=''></span><span style='background: #AEF1AE'>        val handler: Stream[F, fs2.INothing] = shutdown.trackConnection &gt;&gt;
+</span>180 <span style=''></span><span style='background: #AEF1AE'>          Stream
+</span>181 <span style=''></span><span style='background: #AEF1AE'>            .resource(upgradeSocket(connect, tlsInfoOpt, logger, enableHttp2))
+</span>182 <span style=''></span><span style='background: #AEF1AE'>            .flatMap {
+</span>183 <span style=''></span><span style='background: #AEF1AE'>              case (socket, Some(&quot;h2&quot;)) =&gt;
+</span>184 <span style=''></span><span style='background: #AEF1AE'>                // ALPN H2 Strategy
+</span>185 <span style=''></span><span style='background: #AEF1AE'>                </span><span style='background: #F0ADAD'>Stream.exec(H2Server.requireConnectionPreface(socket)) ++
+</span>186 <span style=''></span><span style='background: #F0ADAD'>                  Stream
+</span>187 <span style=''></span><span style='background: #F0ADAD'>                    .resource(
+</span>188 <span style=''></span><span style='background: #F0ADAD'>                      H2Server
+</span>189 <span style=''></span><span style='background: #F0ADAD'>                        .fromSocket[F](
+</span>190 <span style=''></span><span style='background: #F0ADAD'>                          socket,
+</span>191 <span style=''></span><span style='background: #F0ADAD'>                          httpApp,
+</span>192 <span style=''></span><span style='background: #F0ADAD'>                          H2Frame.Settings.ConnectionSettings.default,
+</span>193 <span style=''></span><span style='background: #F0ADAD'>                          logger,
+</span>194 <span style=''></span><span style='background: #F0ADAD'>                        )
+</span>195 <span style=''></span><span style='background: #F0ADAD'>                    )
+</span>196 <span style=''></span><span style='background: #F0ADAD'>                    .drain</span><span style='background: #AEF1AE'>
+</span>197 <span style=''></span><span style='background: #AEF1AE'>              case (socket, Some(_)) =&gt;
+</span>198 <span style=''></span><span style='background: #AEF1AE'>                // SSL Connection, not h2, will be http/1.1 but thats not how types align
+</span>199 <span style=''></span><span style='background: #AEF1AE'>                // Prior Knowledge is only allowed over clear where application
+</span>200 <span style=''></span><span style='background: #AEF1AE'>                // protocol has not been agreed via handshake
+</span>201 <span style=''></span><span style='background: #AEF1AE'>                runConnection(
+</span>202 <span style=''></span><span style='background: #AEF1AE'>                  socket,
+</span>203 <span style=''></span><span style='background: #AEF1AE'>                  logger,
+</span>204 <span style=''></span><span style='background: #AEF1AE'>                  idleTimeout,
+</span>205 <span style=''></span><span style='background: #AEF1AE'>                  receiveBufferSize,
+</span>206 <span style=''></span><span style='background: #AEF1AE'>                  maxHeaderSize,
+</span>207 <span style=''></span><span style='background: #AEF1AE'>                  requestHeaderReceiveTimeout,
+</span>208 <span style=''></span><span style='background: #AEF1AE'>                  httpApp,
+</span>209 <span style=''></span><span style='background: #AEF1AE'>                  errorHandler,
+</span>210 <span style=''></span><span style='background: #AEF1AE'>                  onWriteFailure,
+</span>211 <span style=''></span><span style='background: #AEF1AE'>                  createRequestVault,
+</span>212 <span style=''></span><span style='background: #AEF1AE'>                  webSocketKey,
+</span>213 <span style=''></span><span style='background: #AEF1AE'>                  ByteVector.empty,
+</span>214 <span style=''></span><span style='background: #AEF1AE'>                  enableHttp2,
+</span>215 <span style=''></span><span style='background: #AEF1AE'>                ).drain
+</span>216 <span style=''></span><span style='background: #AEF1AE'>              case (socket, None) =&gt; // Cleartext Protocol
+</span>217 <span style=''></span><span style='background: #AEF1AE'>                enableHttp2 match {
+</span>218 <span style=''></span><span style='background: #AEF1AE'>                  case true =&gt;
+</span>219 <span style=''></span><span style='background: #AEF1AE'>                    // Http2 Prior Knowledge Check, if prelude is first bytes received tread as http2
+</span>220 <span style=''></span><span style='background: #AEF1AE'>                    // Otherwise this is now http1
+</span>221 <span style=''></span><span style='background: #AEF1AE'>                    </span><span style='background: #F0ADAD'>Stream.eval(H2Server.checkConnectionPreface(socket)).flatMap {
+</span>222 <span style=''></span><span style='background: #F0ADAD'>                      case Left(bv) =&gt;
+</span>223 <span style=''></span><span style='background: #F0ADAD'>                        runConnection(
+</span>224 <span style=''></span><span style='background: #F0ADAD'>                          socket,
+</span>225 <span style=''></span><span style='background: #F0ADAD'>                          logger,
+</span>226 <span style=''></span><span style='background: #F0ADAD'>                          idleTimeout,
+</span>227 <span style=''></span><span style='background: #F0ADAD'>                          receiveBufferSize,
+</span>228 <span style=''></span><span style='background: #F0ADAD'>                          maxHeaderSize,
+</span>229 <span style=''></span><span style='background: #F0ADAD'>                          requestHeaderReceiveTimeout,
+</span>230 <span style=''></span><span style='background: #F0ADAD'>                          httpApp,
+</span>231 <span style=''></span><span style='background: #F0ADAD'>                          errorHandler,
+</span>232 <span style=''></span><span style='background: #F0ADAD'>                          onWriteFailure,
+</span>233 <span style=''></span><span style='background: #F0ADAD'>                          createRequestVault,
+</span>234 <span style=''></span><span style='background: #F0ADAD'>                          webSocketKey,
+</span>235 <span style=''></span><span style='background: #F0ADAD'>                          bv, // Pass read bytes we thought might be the prelude
+</span>236 <span style=''></span><span style='background: #F0ADAD'>                          enableHttp2,
+</span>237 <span style=''></span><span style='background: #F0ADAD'>                        ).drain
+</span>238 <span style=''></span><span style='background: #F0ADAD'>                      case Right(_) =&gt;
+</span>239 <span style=''></span><span style='background: #F0ADAD'>                        Stream
+</span>240 <span style=''></span><span style='background: #F0ADAD'>                          .resource(
+</span>241 <span style=''></span><span style='background: #F0ADAD'>                            H2Server.fromSocket[F](
+</span>242 <span style=''></span><span style='background: #F0ADAD'>                              socket,
+</span>243 <span style=''></span><span style='background: #F0ADAD'>                              httpApp,
+</span>244 <span style=''></span><span style='background: #F0ADAD'>                              H2Frame.Settings.ConnectionSettings.default,
+</span>245 <span style=''></span><span style='background: #F0ADAD'>                              logger,
+</span>246 <span style=''></span><span style='background: #F0ADAD'>                            )
+</span>247 <span style=''></span><span style='background: #F0ADAD'>                          )
+</span>248 <span style=''></span><span style='background: #F0ADAD'>                          .drain
+</span>249 <span style=''></span><span style='background: #F0ADAD'>                    }</span><span style='background: #AEF1AE'>
+</span>250 <span style=''></span><span style='background: #AEF1AE'>                  // Since its not enabled, run connection normally.
+</span>251 <span style=''></span><span style='background: #AEF1AE'>                  case false =&gt;
+</span>252 <span style=''></span><span style='background: #AEF1AE'>                    runConnection(
+</span>253 <span style=''></span><span style='background: #AEF1AE'>                      socket,
+</span>254 <span style=''></span><span style='background: #AEF1AE'>                      logger,
+</span>255 <span style=''></span><span style='background: #AEF1AE'>                      idleTimeout,
+</span>256 <span style=''></span><span style='background: #AEF1AE'>                      receiveBufferSize,
+</span>257 <span style=''></span><span style='background: #AEF1AE'>                      maxHeaderSize,
+</span>258 <span style=''></span><span style='background: #AEF1AE'>                      requestHeaderReceiveTimeout,
+</span>259 <span style=''></span><span style='background: #AEF1AE'>                      httpApp,
+</span>260 <span style=''></span><span style='background: #AEF1AE'>                      errorHandler,
+</span>261 <span style=''></span><span style='background: #AEF1AE'>                      onWriteFailure,
+</span>262 <span style=''></span><span style='background: #AEF1AE'>                      createRequestVault,
+</span>263 <span style=''></span><span style='background: #AEF1AE'>                      webSocketKey,
+</span>264 <span style=''></span><span style='background: #AEF1AE'>                      ByteVector.empty,
+</span>265 <span style=''></span><span style='background: #AEF1AE'>                      enableHttp2,
+</span>266 <span style=''></span><span style='background: #AEF1AE'>                    ).drain
+</span>267 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>268 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>269 <span style=''></span><span style='background: #AEF1AE'>
+</span>270 <span style=''></span><span style='background: #AEF1AE'>        handler.handleErrorWith { t =&gt;
+</span>271 <span style=''></span><span style='background: #AEF1AE'>          Stream.eval(logger.error(t)(&quot;Request handler failed with exception&quot;)).drain
+</span>272 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>273 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>274 <span style=''>
+</span>275 <span style=''>    </span><span style='background: #AEF1AE'>streams.parJoin(
+</span>276 <span style=''></span><span style='background: #AEF1AE'>      maxConnections
+</span>277 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''> // TODO: replace with forking after we fix serverResource upstream
+</span>278 <span style=''>    // StreamForking.forking(streams, maxConnections)
+</span>279 <span style=''>  }
+</span>280 <span style=''>
+</span>281 <span style=''>  // private[internal] def reachedEndError[F[_]: Sync](
+</span>282 <span style=''>  //     socket: Socket[F],
+</span>283 <span style=''>  //     idleTimeout: Duration,
+</span>284 <span style=''>  //     receiveBufferSize: Int): Stream[F, Byte] =
+</span>285 <span style=''>  //   Stream.repeatEval(socket.read(receiveBufferSize, durationToFinite(idleTimeout))).flatMap {
+</span>286 <span style=''>  //     case None =&gt;
+</span>287 <span style=''>  //       Stream.raiseError(new EOFException(&quot;Unexpected EOF - socket.read returned None&quot;) with NoStackTrace)
+</span>288 <span style=''>  //     case Some(value) =&gt; Stream.chunk(value)
+</span>289 <span style=''>  //   }
+</span>290 <span style=''>
+</span>291 <span style=''>  private[internal] def upgradeSocket[F[_]: Monad](
+</span>292 <span style=''>      socketInit: Socket[F],
+</span>293 <span style=''>      tlsInfoOpt: Option[(TLSContext[F], TLSParameters)],
+</span>294 <span style=''>      logger: Logger[F],
+</span>295 <span style=''>      enableHttp2: Boolean,
+</span>296 <span style=''>  ): Resource[F, (Socket[F], Option[String])] =
+</span>297 <span style=''>    </span><span style='background: #AEF1AE'>tlsInfoOpt.fold((socketInit, Option.empty[String]).pure[Resource[F, *]]) {
+</span>298 <span style=''></span><span style='background: #AEF1AE'>      case (context, params) =&gt;
+</span>299 <span style=''></span><span style='background: #AEF1AE'>        val newParams = if (enableHttp2) {
+</span>300 <span style=''></span><span style='background: #AEF1AE'>          // TODO for JS perhaps TLSParameters =&gt; TLSParameters is a platform specific way
+</span>301 <span style=''></span><span style='background: #AEF1AE'>          // As this is the only JVM specific code
+</span>302 <span style=''></span><span style='background: #AEF1AE'>          </span><span style='background: #F0ADAD'>H2TLS.transform(params)</span><span style='background: #AEF1AE'>
+</span>303 <span style=''></span><span style='background: #AEF1AE'>        } else params
+</span>304 <span style=''></span><span style='background: #AEF1AE'>
+</span>305 <span style=''></span><span style='background: #AEF1AE'>        context
+</span>306 <span style=''></span><span style='background: #AEF1AE'>          .serverBuilder(socketInit)
+</span>307 <span style=''></span><span style='background: #AEF1AE'>          .withParameters(newParams)
+</span>308 <span style=''></span><span style='background: #AEF1AE'>          .withLogging(s =&gt; logger.trace(s))
+</span>309 <span style=''></span><span style='background: #AEF1AE'>          .build
+</span>310 <span style=''></span><span style='background: #AEF1AE'>          .evalMap(tlsSocket =&gt;
+</span>311 <span style=''></span><span style='background: #AEF1AE'>            tlsSocket.write(fs2.Chunk.empty) &gt;&gt;
+</span>312 <span style=''></span><span style='background: #AEF1AE'>              tlsSocket.applicationProtocol.map(protocol =&gt; (tlsSocket: Socket[F], protocol.some))
+</span>313 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>314 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>315 <span style=''>
+</span>316 <span style=''>  private[internal] def runApp[F[_]](
+</span>317 <span style=''>      head: Array[Byte],
+</span>318 <span style=''>      read: Read[F],
+</span>319 <span style=''>      maxHeaderSize: Int,
+</span>320 <span style=''>      requestHeaderReceiveTimeout: Duration,
+</span>321 <span style=''>      httpApp: HttpApp[F],
+</span>322 <span style=''>      errorHandler: Throwable =&gt; F[Response[F]],
+</span>323 <span style=''>      socket: Socket[F],
+</span>324 <span style=''>      createRequestVault: Boolean,
+</span>325 <span style=''>  )(implicit F: Temporal[F], D: Defer[F]): F[(Request[F], Response[F], Drain[F])] = {
+</span>326 <span style=''>
+</span>327 <span style=''>    val parse = </span><span style='background: #AEF1AE'>Parser.Request.parser(maxHeaderSize)(head, read)</span><span style=''>
+</span>328 <span style=''>    val parseWithHeaderTimeout = </span><span style='background: #AEF1AE'>timeoutToMaybe(
+</span>329 <span style=''></span><span style='background: #AEF1AE'>      parse,
+</span>330 <span style=''></span><span style='background: #AEF1AE'>      requestHeaderReceiveTimeout,
+</span>331 <span style=''></span><span style='background: #AEF1AE'>      D.defer(
+</span>332 <span style=''></span><span style='background: #AEF1AE'>        F.raiseError[(Request[F], F[Option[Array[Byte]]])](
+</span>333 <span style=''></span><span style='background: #AEF1AE'>          EmberException.RequestHeadersTimeout(requestHeaderReceiveTimeout)
+</span>334 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>335 <span style=''></span><span style='background: #AEF1AE'>      ),
+</span>336 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>337 <span style=''>
+</span>338 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>339 <span style=''></span><span style='background: #AEF1AE'>      tmp &lt;- parseWithHeaderTimeout
+</span>340 <span style=''></span><span style='background: #AEF1AE'>      (req, drain) = tmp
+</span>341 <span style=''></span><span style='background: #AEF1AE'>      requestVault &lt;- if (createRequestVault) mkRequestVault(socket) else Vault.empty.pure[F]
+</span>342 <span style=''></span><span style='background: #AEF1AE'>      resp &lt;- httpApp
+</span>343 <span style=''></span><span style='background: #AEF1AE'>        .run(req.withAttributes(requestVault))
+</span>344 <span style=''></span><span style='background: #AEF1AE'>        .handleErrorWith(errorHandler)
+</span>345 <span style=''></span><span style='background: #AEF1AE'>        .handleError(_ =&gt; serverFailure.covary[F])
+</span>346 <span style=''></span><span style='background: #AEF1AE'>    } yield (req, resp, drain)</span><span style=''>
+</span>347 <span style=''>  }
+</span>348 <span style=''>
+</span>349 <span style=''>  private[internal] def send[F[_]: Temporal](socket: Socket[F])(
+</span>350 <span style=''>      request: Option[Request[F]],
+</span>351 <span style=''>      resp: Response[F],
+</span>352 <span style=''>      idleTimeout: Duration,
+</span>353 <span style=''>      onWriteFailure: (Option[Request[F]], Response[F], Throwable) =&gt; F[Unit],
+</span>354 <span style=''>  ): F[Unit] =
+</span>355 <span style=''>    </span><span style='background: #AEF1AE'>Encoder
+</span>356 <span style=''></span><span style='background: #AEF1AE'>      .respToBytes[F](resp)
+</span>357 <span style=''></span><span style='background: #AEF1AE'>      .through(_.chunks.foreach(c =&gt; timeoutMaybe(socket.write(c), idleTimeout)))
+</span>358 <span style=''></span><span style='background: #AEF1AE'>      .compile
+</span>359 <span style=''></span><span style='background: #AEF1AE'>      .drain
+</span>360 <span style=''></span><span style='background: #AEF1AE'>      .attempt
+</span>361 <span style=''></span><span style='background: #AEF1AE'>      .flatMap {
+</span>362 <span style=''></span><span style='background: #AEF1AE'>        case Left(err) =&gt; onWriteFailure(request, resp, err)
+</span>363 <span style=''></span><span style='background: #AEF1AE'>        case Right(()) =&gt; Applicative[F].unit
+</span>364 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>365 <span style=''>
+</span>366 <span style=''>  private[internal] def postProcessResponse[F[_]: Concurrent: Clock](
+</span>367 <span style=''>      req: Request[F],
+</span>368 <span style=''>      resp: Response[F],
+</span>369 <span style=''>  ): F[Response[F]] = {
+</span>370 <span style=''>    val connection = </span><span style='background: #AEF1AE'>connectionFor(req.httpVersion, req.headers)</span><span style=''>
+</span>371 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>372 <span style=''></span><span style='background: #AEF1AE'>      date &lt;- HttpDate.current[F].map(Date(_))
+</span>373 <span style=''></span><span style='background: #AEF1AE'>    } yield resp.withHeaders(Headers(date, connection) ++ resp.headers)</span><span style=''>
+</span>374 <span style=''>  }
+</span>375 <span style=''>
+</span>376 <span style=''>  private[internal] def runConnection[F[_]: Async](
+</span>377 <span style=''>      socket: Socket[F],
+</span>378 <span style=''>      logger: Logger[F],
+</span>379 <span style=''>      idleTimeout: Duration,
+</span>380 <span style=''>      receiveBufferSize: Int,
+</span>381 <span style=''>      maxHeaderSize: Int,
+</span>382 <span style=''>      requestHeaderReceiveTimeout: Duration,
+</span>383 <span style=''>      httpApp: HttpApp[F],
+</span>384 <span style=''>      errorHandler: Throwable =&gt; F[org.http4s.Response[F]],
+</span>385 <span style=''>      onWriteFailure: (Option[Request[F]], Response[F], Throwable) =&gt; F[Unit],
+</span>386 <span style=''>      createRequestVault: Boolean,
+</span>387 <span style=''>      webSocketKey: Key[WebSocketContext[F]],
+</span>388 <span style=''>      initialBuffer: ByteVector,
+</span>389 <span style=''>      enableHttp2: Boolean,
+</span>390 <span style=''>  ): Stream[F, Nothing] = {
+</span>391 <span style=''>    type State = (Array[Byte], Boolean)
+</span>392 <span style=''>    val finalApp = if (enableHttp2) </span><span style='background: #F0ADAD'>H2Server.h2cUpgradeMiddleware(httpApp)</span><span style=''> else </span><span style='background: #AEF1AE'>httpApp</span><span style=''>
+</span>393 <span style=''>    val read: Read[F] = </span><span style='background: #AEF1AE'>timeoutMaybe(socket.read(receiveBufferSize), idleTimeout)
+</span>394 <span style=''></span><span style='background: #AEF1AE'>      .adaptError {
+</span>395 <span style=''></span><span style='background: #AEF1AE'>        // TODO MERGE: Replace with TimeoutException on series/0.23+.
+</span>396 <span style=''></span><span style='background: #AEF1AE'>        case _: TimeoutException =&gt; EmberException.ReadTimeout(idleTimeout)
+</span>397 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>398 <span style=''>    </span><span style='background: #AEF1AE'>Stream
+</span>399 <span style=''></span><span style='background: #AEF1AE'>      .unfoldEval[F, State, (Request[F], Response[F])](initialBuffer.toArray -&gt; false) {
+</span>400 <span style=''></span><span style='background: #AEF1AE'>        case (buffer, reuse) =&gt;
+</span>401 <span style=''></span><span style='background: #AEF1AE'>          val initRead: F[Array[Byte]] = if (buffer.nonEmpty) {
+</span>402 <span style=''></span><span style='background: #AEF1AE'>            // next request has already been (partially) received
+</span>403 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>buffer.pure[F]</span><span style='background: #AEF1AE'>
+</span>404 <span style=''></span><span style='background: #AEF1AE'>          } else if (reuse) {
+</span>405 <span style=''></span><span style='background: #AEF1AE'>            // the connection is keep-alive, but we don't have any bytes.
+</span>406 <span style=''></span><span style='background: #AEF1AE'>            // we want to be on the idle timeout until the next request is received.
+</span>407 <span style=''></span><span style='background: #AEF1AE'>            read
+</span>408 <span style=''></span><span style='background: #AEF1AE'>              .flatMap {
+</span>409 <span style=''></span><span style='background: #AEF1AE'>                case Some(chunk) =&gt; chunk.toArray.pure[F]
+</span>410 <span style=''></span><span style='background: #AEF1AE'>                case None =&gt; Concurrent[F].raiseError(EmberException.EmptyStream())
+</span>411 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>412 <span style=''></span><span style='background: #AEF1AE'>          } else {
+</span>413 <span style=''></span><span style='background: #AEF1AE'>            // first request begins immediately
+</span>414 <span style=''></span><span style='background: #AEF1AE'>            Array.emptyByteArray.pure[F]
+</span>415 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>416 <span style=''></span><span style='background: #AEF1AE'>
+</span>417 <span style=''></span><span style='background: #AEF1AE'>          val result = initRead.flatMap { initBuffer =&gt;
+</span>418 <span style=''></span><span style='background: #AEF1AE'>            runApp(
+</span>419 <span style=''></span><span style='background: #AEF1AE'>              initBuffer,
+</span>420 <span style=''></span><span style='background: #AEF1AE'>              read,
+</span>421 <span style=''></span><span style='background: #AEF1AE'>              maxHeaderSize,
+</span>422 <span style=''></span><span style='background: #AEF1AE'>              requestHeaderReceiveTimeout,
+</span>423 <span style=''></span><span style='background: #AEF1AE'>              finalApp,
+</span>424 <span style=''></span><span style='background: #AEF1AE'>              errorHandler,
+</span>425 <span style=''></span><span style='background: #AEF1AE'>              socket,
+</span>426 <span style=''></span><span style='background: #AEF1AE'>              createRequestVault,
+</span>427 <span style=''></span><span style='background: #AEF1AE'>            )
+</span>428 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>429 <span style=''></span><span style='background: #AEF1AE'>
+</span>430 <span style=''></span><span style='background: #AEF1AE'>          result.attempt.flatMap {
+</span>431 <span style=''></span><span style='background: #AEF1AE'>            case Right((req, resp, drain)) =&gt;
+</span>432 <span style=''></span><span style='background: #AEF1AE'>              // TODO: Should we pay this cost for every HTTP request?
+</span>433 <span style=''></span><span style='background: #AEF1AE'>              // Intercept the response for various upgrade paths
+</span>434 <span style=''></span><span style='background: #AEF1AE'>              resp.attributes.lookup(webSocketKey) match {
+</span>435 <span style=''></span><span style='background: #AEF1AE'>                case Some(ctx) =&gt;
+</span>436 <span style=''></span><span style='background: #AEF1AE'>                  drain.flatMap {
+</span>437 <span style=''></span><span style='background: #AEF1AE'>                    case Some(buffer) =&gt;
+</span>438 <span style=''></span><span style='background: #AEF1AE'>                      WebSocketHelpers
+</span>439 <span style=''></span><span style='background: #AEF1AE'>                        .upgrade(
+</span>440 <span style=''></span><span style='background: #AEF1AE'>                          socket,
+</span>441 <span style=''></span><span style='background: #AEF1AE'>                          req,
+</span>442 <span style=''></span><span style='background: #AEF1AE'>                          ctx,
+</span>443 <span style=''></span><span style='background: #AEF1AE'>                          buffer,
+</span>444 <span style=''></span><span style='background: #AEF1AE'>                          receiveBufferSize,
+</span>445 <span style=''></span><span style='background: #AEF1AE'>                          idleTimeout,
+</span>446 <span style=''></span><span style='background: #AEF1AE'>                          onWriteFailure,
+</span>447 <span style=''></span><span style='background: #AEF1AE'>                          errorHandler,
+</span>448 <span style=''></span><span style='background: #AEF1AE'>                          logger,
+</span>449 <span style=''></span><span style='background: #AEF1AE'>                        )
+</span>450 <span style=''></span><span style='background: #AEF1AE'>                        .as(None)
+</span>451 <span style=''></span><span style='background: #AEF1AE'>                    case None =&gt;
+</span>452 <span style=''></span><span style='background: #AEF1AE'>                      </span><span style='background: #F0ADAD'>Applicative[F].pure(None)</span><span style='background: #AEF1AE'>
+</span>453 <span style=''></span><span style='background: #AEF1AE'>                  }
+</span>454 <span style=''></span><span style='background: #AEF1AE'>                case None =&gt;
+</span>455 <span style=''></span><span style='background: #AEF1AE'>                  resp.attributes.lookup(H2Keys.H2cUpgrade) match {
+</span>456 <span style=''></span><span style='background: #AEF1AE'>                    // Http1.1
+</span>457 <span style=''></span><span style='background: #AEF1AE'>                    case None =&gt;
+</span>458 <span style=''></span><span style='background: #AEF1AE'>                      for {
+</span>459 <span style=''></span><span style='background: #AEF1AE'>                        nextResp &lt;- postProcessResponse(req, resp)
+</span>460 <span style=''></span><span style='background: #AEF1AE'>                        _ &lt;- send(socket)(Some(req), nextResp, idleTimeout, onWriteFailure)
+</span>461 <span style=''></span><span style='background: #AEF1AE'>                        nextBuffer &lt;- drain
+</span>462 <span style=''></span><span style='background: #AEF1AE'>                      } yield nextBuffer.map(buffer =&gt; ((req, nextResp), (buffer, true)))
+</span>463 <span style=''></span><span style='background: #AEF1AE'>                    // h2c escalation of the connection
+</span>464 <span style=''></span><span style='background: #AEF1AE'>                    case Some((settings, newReq)) =&gt;
+</span>465 <span style=''></span><span style='background: #AEF1AE'>                      </span><span style='background: #F0ADAD'>for {
+</span>466 <span style=''></span><span style='background: #F0ADAD'>                        nextResp &lt;- postProcessResponse(req, resp)
+</span>467 <span style=''></span><span style='background: #F0ADAD'>                        _ &lt;- send(socket)(Some(req), nextResp, idleTimeout, onWriteFailure)
+</span>468 <span style=''></span><span style='background: #F0ADAD'>                        _ &lt;- H2Server.requireConnectionPreface(socket)
+</span>469 <span style=''></span><span style='background: #F0ADAD'>                        out &lt;- H2Server
+</span>470 <span style=''></span><span style='background: #F0ADAD'>                          .fromSocket(
+</span>471 <span style=''></span><span style='background: #F0ADAD'>                            socket,
+</span>472 <span style=''></span><span style='background: #F0ADAD'>                            httpApp,
+</span>473 <span style=''></span><span style='background: #F0ADAD'>                            H2Frame.Settings.ConnectionSettings.default,
+</span>474 <span style=''></span><span style='background: #F0ADAD'>                            logger,
+</span>475 <span style=''></span><span style='background: #F0ADAD'>                            settings,
+</span>476 <span style=''></span><span style='background: #F0ADAD'>                            newReq.some,
+</span>477 <span style=''></span><span style='background: #F0ADAD'>                          )
+</span>478 <span style=''></span><span style='background: #F0ADAD'>                          .use(_ =&gt; Async[F].never[Unit])
+</span>479 <span style=''></span><span style='background: #F0ADAD'>                          .as(None)
+</span>480 <span style=''></span><span style='background: #F0ADAD'>                      } yield out</span><span style='background: #AEF1AE'>
+</span>481 <span style=''></span><span style='background: #AEF1AE'>                  }
+</span>482 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>483 <span style=''></span><span style='background: #AEF1AE'>            case Left(err) =&gt;
+</span>484 <span style=''></span><span style='background: #AEF1AE'>              err match {
+</span>485 <span style=''></span><span style='background: #AEF1AE'>                case EmberException.EmptyStream() | EmberException.RequestHeadersTimeout(_) |
+</span>486 <span style=''></span><span style='background: #AEF1AE'>                    EmberException.ReadTimeout(_) =&gt;
+</span>487 <span style=''></span><span style='background: #AEF1AE'>                  Applicative[F].pure(None)
+</span>488 <span style=''></span><span style='background: #AEF1AE'>                case err =&gt;
+</span>489 <span style=''></span><span style='background: #AEF1AE'>                  </span><span style='background: #F0ADAD'>errorHandler(err)
+</span>490 <span style=''></span><span style='background: #F0ADAD'>                    .handleError(_ =&gt; serverFailure.covary[F])
+</span>491 <span style=''></span><span style='background: #F0ADAD'>                    .flatMap(send(socket)(None, _, idleTimeout, onWriteFailure))
+</span>492 <span style=''></span><span style='background: #F0ADAD'>                    .as(None)</span><span style='background: #AEF1AE'>
+</span>493 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>494 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>495 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>496 <span style=''></span><span style='background: #AEF1AE'>      .takeWhile { case (_, resp) =&gt;
+</span>497 <span style=''></span><span style='background: #AEF1AE'>        resp.headers.get[Connection].exists(_.hasKeepAlive)
+</span>498 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>499 <span style=''></span><span style='background: #AEF1AE'>      .drain</span><span style=''>
+</span>500 <span style=''>  }
+</span>501 <span style=''>
+</span>502 <span style=''>  private def mkRequestVault[F[_]: Applicative](socket: Socket[F]): F[Vault] =
+</span>503 <span style=''>    </span><span style='background: #AEF1AE'>(mkConnectionInfo(socket), mkSecureSession(socket)).mapN(_ ++ _)</span><span style=''>
+</span>504 <span style=''>
+</span>505 <span style=''>  private def mkConnectionInfo[F[_]: Apply](socket: Socket[F]) =
+</span>506 <span style=''>    </span><span style='background: #AEF1AE'>(socket.localAddress, socket.remoteAddress).mapN { case (local, remote) =&gt;
+</span>507 <span style=''></span><span style='background: #AEF1AE'>      Vault.empty.insert(
+</span>508 <span style=''></span><span style='background: #AEF1AE'>        Request.Keys.ConnectionInfo,
+</span>509 <span style=''></span><span style='background: #AEF1AE'>        Request.Connection(
+</span>510 <span style=''></span><span style='background: #AEF1AE'>          local = local,
+</span>511 <span style=''></span><span style='background: #AEF1AE'>          remote = remote,
+</span>512 <span style=''></span><span style='background: #AEF1AE'>          secure = socket.isInstanceOf[TLSSocket[F]],
+</span>513 <span style=''></span><span style='background: #AEF1AE'>        ),
+</span>514 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>515 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>516 <span style=''>
+</span>517 <span style=''>  private def mkSecureSession[F[_]: Applicative](socket: Socket[F]) =
+</span>518 <span style=''>    socket match {
+</span>519 <span style=''>      case socket: TLSSocket[F] =&gt;
+</span>520 <span style=''>        </span><span style='background: #AEF1AE'>socket.session
+</span>521 <span style=''></span><span style='background: #AEF1AE'>          .map(parseSSLSession(_))
+</span>522 <span style=''></span><span style='background: #AEF1AE'>          .map(Vault.empty.insert(ServerRequestKeys.SecureSession, _))</span><span style=''>
+</span>523 <span style=''>      case _ =&gt;
+</span>524 <span style=''>        </span><span style='background: #AEF1AE'>Vault.empty.pure[F]</span><span style=''>
+</span>525 <span style=''>    }
+</span>526 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10421
+        </td>
+        <td>
+          1781
+          -
+          1781
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10358
+        </td>
+        <td>
+          1781
+          -
+          1781
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10639
+        </td>
+        <td>
+          1865
+          -
+          1865
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10190
+        </td>
+        <td>
+          1781
+          -
+          1781
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10477
+        </td>
+        <td>
+          1829
+          -
+          1869
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10743
+        </td>
+        <td>
+          1781
+          -
+          1781
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10671
+        </td>
+        <td>
+          1790
+          -
+          1816
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.InternalServerError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Status.InternalServerError
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10955
+        </td>
+        <td>
+          1829
+          -
+          1869
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10138
+        </td>
+        <td>
+          1781
+          -
+          1870
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Response.apply[Nothing](org.http4s.Status.InternalServerError, org.http4s.Response.apply$default$2[Nothing], org.http4s.Response.apply$default$3[Nothing], org.http4s.Response.apply$default$4[Nothing], org.http4s.Response.apply$default$5[Nothing]).putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          10705
+        </td>
+        <td>
+          2744
+          -
+          2754
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[com.comcast.ip4s.Port](port)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          10360
+        </td>
+        <td>
+          2720
+          -
+          2780
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.net.SocketGroup.serverResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sg.serverResource(host, scala.Some.apply[com.comcast.ip4s.Port](port), additionalSocketOptions)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          10176
+        </td>
+        <td>
+          2842
+          -
+          2846
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1._1
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          10729
+        </td>
+        <td>
+          2836
+          -
+          2847
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          e.map[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](((x$1: (com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])) =&gt; x$1._1))
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          10424
+        </td>
+        <td>
+          2821
+          -
+          2848
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.DeferredSink.complete
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ready.complete(e.map[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](((x$1: (com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])) =&gt; x$1._1)))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          10621
+        </td>
+        <td>
+          2859
+          -
+          2859
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.RaiseThrowable.fromApplicativeError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.RaiseThrowable.fromApplicativeError[[x]F[x]](F)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          10946
+        </td>
+        <td>
+          2859
+          -
+          2859
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[Either[Throwable,(com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])]]
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          10446
+        </td>
+        <td>
+          2884
+          -
+          2888
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2._2
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          10118
+        </td>
+        <td>
+          2883
+          -
+          2883
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          10707
+        </td>
+        <td>
+          2695
+          -
+          2889
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.resource[[_]F[_], (com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])](sg.serverResource(host, scala.Some.apply[com.comcast.ip4s.Port](port), additionalSocketOptions))(F).attempt.evalTap[[x]F[x], Boolean](((e: Either[Throwable,(com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])]) =&gt; ready.complete(e.map[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](((x$1: (com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])) =&gt; x$1._1)))))(F).rethrow[[x]F[x], (com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])](scala.this.&lt;:&lt;.refl[Either[Throwable,(com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])]], fs2.this.RaiseThrowable.fromApplicativeError[[x]F[x]](F)).flatMap[[x]F[x], fs2.io.net.Socket[F]](((x$2: (com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], fs2.Stream[F,fs2.io.net.Socket[F]])) =&gt; x$2._2))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          10331
+        </td>
+        <td>
+          2894
+          -
+          3422
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.serverInternal
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.serverInternal[F](server, (httpApp: org.http4s.HttpApp[F]), (tlsInfoOpt: Option[(fs2.io.net.tls.TLSContext[F], fs2.io.net.tls.TLSParameters)]), (shutdown: org.http4s.ember.server.internal.Shutdown[F]), (errorHandler: Throwable =&gt; F[org.http4s.Response[F]]), (onWriteFailure: (Option[org.http4s.Request[F]], org.http4s.Response[F], Throwable) =&gt; F[Unit]), (maxConnections: Int), (receiveBufferSize: Int), (maxHeaderSize: Int), (requestHeaderReceiveTimeout: scala.concurrent.duration.Duration), (idleTimeout: scala.concurrent.duration.Duration), (logger: org.typelevel.log4cats.Logger[F]), true, webSocketKey, enableHttp2)(F)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          10612
+        </td>
+        <td>
+          4311
+          -
+          4506
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.DeferredSink.complete
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ready.complete(cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[Nothing, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.Ipv4Address]](com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.Ipv4Address](com.comcast.ip4s.Ipv4Address.fromBytes(0, 0, 0, 0), (com.comcast.ip4s.Port.fromInt(scala.Predef.augmentString(&quot;0&quot;).toInt).get: com.comcast.ip4s.Port))))
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          10733
+        </td>
+        <td>
+          4450
+          -
+          4483
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.comcast.ip4s.Ipv4Address.fromBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.Ipv4Address.fromBytes(0, 0, 0, 0)
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          10948
+        </td>
+        <td>
+          4423
+          -
+          4494
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.right
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[Nothing, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.Ipv4Address]](com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.Ipv4Address](com.comcast.ip4s.Ipv4Address.fromBytes(0, 0, 0, 0), (com.comcast.ip4s.Port.fromInt(scala.Predef.augmentString(&quot;0&quot;).toInt).get: com.comcast.ip4s.Port)))
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          10167
+        </td>
+        <td>
+          4423
+          -
+          4429
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          10409
+        </td>
+        <td>
+          4436
+          -
+          4493
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.comcast.ip4s.SocketAddress.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.Ipv4Address](com.comcast.ip4s.Ipv4Address.fromBytes(0, 0, 0, 0), (com.comcast.ip4s.Port.fromInt(scala.Predef.augmentString(&quot;0&quot;).toInt).get: com.comcast.ip4s.Port))
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          10120
+        </td>
+        <td>
+          4279
+          -
+          4633
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.eval[F, Boolean](ready.complete(cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[Nothing, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.Ipv4Address]](com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.Ipv4Address](com.comcast.ip4s.Ipv4Address.fromBytes(0, 0, 0, 0), (com.comcast.ip4s.Port.fromInt(scala.Predef.augmentString(&quot;0&quot;).toInt).get: com.comcast.ip4s.Port))))).drain.++[[x]F[x], fs2.io.net.Socket[F]](unixSockets.server(unixSocketAddress, deleteIfExists, deleteOnClose))
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          10472
+        </td>
+        <td>
+          4554
+          -
+          4633
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.net.unixsocket.UnixSockets.server
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          unixSockets.server(unixSocketAddress, deleteIfExists, deleteOnClose)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          10712
+        </td>
+        <td>
+          4639
+          -
+          5168
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.serverInternal
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.serverInternal[F](server, (httpApp: org.http4s.HttpApp[F]), (tlsInfoOpt: Option[(fs2.io.net.tls.TLSContext[F], fs2.io.net.tls.TLSParameters)]), (shutdown: org.http4s.ember.server.internal.Shutdown[F]), (errorHandler: Throwable =&gt; F[org.http4s.Response[F]]), (onWriteFailure: (Option[org.http4s.Request[F]], org.http4s.Response[F], Throwable) =&gt; F[Unit]), (maxConnections: Int), (receiveBufferSize: Int), (maxHeaderSize: Int), (requestHeaderReceiveTimeout: scala.concurrent.duration.Duration), (idleTimeout: scala.concurrent.duration.Duration), (logger: org.typelevel.log4cats.Logger[F]), false, webSocketKey, enableHttp2)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          10335
+        </td>
+        <td>
+          5901
+          -
+          5924
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.attempt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](shutdown.signal)(evidence$2).attempt(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          10631
+        </td>
+        <td>
+          5873
+          -
+          9756
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          server.interruptWhen[[x]F[x]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](shutdown.signal)(evidence$2).attempt(evidence$2)).map[fs2.Stream[[x]F[x],fs2.INothing]](((connect: fs2.io.net.Socket[F]) =&gt; {
+  val handler: fs2.Stream[F,fs2.INothing] = shutdown.trackConnection.&gt;&gt;[[x]F[x], fs2.INothing](fs2.Stream.resource[[_]F[_], (fs2.io.net.Socket[[_]F[_]], Option[String])](ServerHelpers.this.upgradeSocket[[_]F[_]](connect, tlsInfoOpt, logger, enableHttp2)(evidence$2))(evidence$2).flatMap[[x]F[x], fs2.INothing](((x0$1: (fs2.io.net.Socket[[_]F[_]], Option[String])) =&gt; x0$1 match {
+    case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), (value: String): Some[String](&quot;h2&quot;)) =&gt; fs2.Stream.exec[F](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$2)).++[[x]F[x], fs2.INothing](fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain)
+    case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), (value: String): Some[String](_)) =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, scodec.bits.ByteVector.empty, enableHttp2)(evidence$2).drain
+    case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), scala.None) =&gt; enableHttp2 match {
+      case true =&gt; fs2.Stream.eval[F, Either[scodec.bits.ByteVector,Unit]](org.http4s.ember.core.h2.H2Server.checkConnectionPreface[[_]F[_]](socket)(evidence$2)).flatMap[[x]F[x], fs2.INothing](((x0$2: Either[scodec.bits.ByteVector,Unit]) =&gt; x0$2 match {
+        case (value: scodec.bits.ByteVector): scala.util.Left[scodec.bits.ByteVector,Unit]((bv @ _)) =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, bv, enableHttp2)(evidence$2).drain
+        case (value: Unit): scala.util.Right[scodec.bits.ByteVector,Unit](_) =&gt; fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain
+      }))(compat.this.NotGiven.default[Nothing])
+      case false =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, scodec.bits.ByteVector.empty, enableHttp2)(evidence$2).drain
+    }
+  }))(compat.this.NotGiven.default[Nothing]))(compat.this.NotGiven.default[Nothing]);
+  handler.handleErrorWith[[x]F[x], fs2.INothing](((t: Throwable) =&gt; fs2.Stream.eval[F, Unit](logger.error(t)(&quot;Request handler failed with exception&quot;)).drain))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          10373
+        </td>
+        <td>
+          6022
+          -
+          6022
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          10926
+        </td>
+        <td>
+          5997
+          -
+          9612
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          shutdown.trackConnection.&gt;&gt;[[x]F[x], fs2.INothing](fs2.Stream.resource[[_]F[_], (fs2.io.net.Socket[[_]F[_]], Option[String])](ServerHelpers.this.upgradeSocket[[_]F[_]](connect, tlsInfoOpt, logger, enableHttp2)(evidence$2))(evidence$2).flatMap[[x]F[x], fs2.INothing](((x0$1: (fs2.io.net.Socket[[_]F[_]], Option[String])) =&gt; x0$1 match {
+  case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), (value: String): Some[String](&quot;h2&quot;)) =&gt; fs2.Stream.exec[F](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$2)).++[[x]F[x], fs2.INothing](fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain)
+  case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), (value: String): Some[String](_)) =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, scodec.bits.ByteVector.empty, enableHttp2)(evidence$2).drain
+  case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), scala.None) =&gt; enableHttp2 match {
+    case true =&gt; fs2.Stream.eval[F, Either[scodec.bits.ByteVector,Unit]](org.http4s.ember.core.h2.H2Server.checkConnectionPreface[[_]F[_]](socket)(evidence$2)).flatMap[[x]F[x], fs2.INothing](((x0$2: Either[scodec.bits.ByteVector,Unit]) =&gt; x0$2 match {
+      case (value: scodec.bits.ByteVector): scala.util.Left[scodec.bits.ByteVector,Unit]((bv @ _)) =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, bv, enableHttp2)(evidence$2).drain
+      case (value: Unit): scala.util.Right[scodec.bits.ByteVector,Unit](_) =&gt; fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain
+    }))(compat.this.NotGiven.default[Nothing])
+    case false =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, scodec.bits.ByteVector.empty, enableHttp2)(evidence$2).drain
+  }
+}))(compat.this.NotGiven.default[Nothing]))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          10935
+        </td>
+        <td>
+          6064
+          -
+          6119
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.upgradeSocket
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.upgradeSocket[[_]F[_]](connect, tlsInfoOpt, logger, enableHttp2)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          10152
+        </td>
+        <td>
+          6142
+          -
+          6142
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          10692
+        </td>
+        <td>
+          6035
+          -
+          9612
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.resource[[_]F[_], (fs2.io.net.Socket[[_]F[_]], Option[String])](ServerHelpers.this.upgradeSocket[[_]F[_]](connect, tlsInfoOpt, logger, enableHttp2)(evidence$2))(evidence$2).flatMap[[x]F[x], fs2.INothing](((x0$1: (fs2.io.net.Socket[[_]F[_]], Option[String])) =&gt; x0$1 match {
+  case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), (value: String): Some[String](&quot;h2&quot;)) =&gt; fs2.Stream.exec[F](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$2)).++[[x]F[x], fs2.INothing](fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain)
+  case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), (value: String): Some[String](_)) =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, scodec.bits.ByteVector.empty, enableHttp2)(evidence$2).drain
+  case (_1: fs2.io.net.Socket[[_]F[_]], _2: Option[String]): (fs2.io.net.Socket[[_]F[_]], Option[String])((socket @ _), scala.None) =&gt; enableHttp2 match {
+    case true =&gt; fs2.Stream.eval[F, Either[scodec.bits.ByteVector,Unit]](org.http4s.ember.core.h2.H2Server.checkConnectionPreface[[_]F[_]](socket)(evidence$2)).flatMap[[x]F[x], fs2.INothing](((x0$2: Either[scodec.bits.ByteVector,Unit]) =&gt; x0$2 match {
+      case (value: scodec.bits.ByteVector): scala.util.Left[scodec.bits.ByteVector,Unit]((bv @ _)) =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, bv, enableHttp2)(evidence$2).drain
+      case (value: Unit): scala.util.Right[scodec.bits.ByteVector,Unit](_) =&gt; fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain
+    }))(compat.this.NotGiven.default[Nothing])
+    case false =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, scodec.bits.ByteVector.empty, enableHttp2)(evidence$2).drain
+  }
+}))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          10616
+        </td>
+        <td>
+          6239
+          -
+          6672
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.exec[F](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$2)).++[[x]F[x], fs2.INothing](fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain)
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          10764
+        </td>
+        <td>
+          6251
+          -
+          6292
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2Server.requireConnectionPreface
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          10413
+        </td>
+        <td>
+          6375
+          -
+          6623
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2Server.fromSocket
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          10983
+        </td>
+        <td>
+          6315
+          -
+          6672
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          10474
+        </td>
+        <td>
+          7357
+          -
+          7373
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.empty
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          10149
+        </td>
+        <td>
+          6961
+          -
+          7429
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, scodec.bits.ByteVector.empty, enableHttp2)(evidence$2).drain
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          10715
+        </td>
+        <td>
+          7741
+          -
+          7780
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2Server.checkConnectionPreface
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2Server.checkConnectionPreface[[_]F[_]](socket)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          10987
+        </td>
+        <td>
+          7729
+          -
+          8934
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.eval[F, Either[scodec.bits.ByteVector,Unit]](org.http4s.ember.core.h2.H2Server.checkConnectionPreface[[_]F[_]](socket)(evidence$2)).flatMap[[x]F[x], fs2.INothing](((x0$2: Either[scodec.bits.ByteVector,Unit]) =&gt; x0$2 match {
+  case (value: scodec.bits.ByteVector): scala.util.Left[scodec.bits.ByteVector,Unit]((bv @ _)) =&gt; ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, bv, enableHttp2)(evidence$2).drain
+  case (value: Unit): scala.util.Right[scodec.bits.ByteVector,Unit](_) =&gt; fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain
+}))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          10400
+        </td>
+        <td>
+          7790
+          -
+          7790
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          10336
+        </td>
+        <td>
+          7855
+          -
+          8472
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, bv, enableHttp2)(evidence$2).drain
+        </td>
+      </tr><tr>
+        <td>
+          241
+        </td>
+        <td>
+          10924
+        </td>
+        <td>
+          8608
+          -
+          8851
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2Server.fromSocket
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          10766
+        </td>
+        <td>
+          8536
+          -
+          8912
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.resource[[_]F[_], Unit](org.http4s.ember.core.h2.H2Server.fromSocket[F](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, org.http4s.ember.core.h2.H2Server.fromSocket$default$5[F], org.http4s.ember.core.h2.H2Server.fromSocket$default$6[F])(evidence$2))(evidence$2).drain
+        </td>
+      </tr><tr>
+        <td>
+          264
+        </td>
+        <td>
+          10641
+        </td>
+        <td>
+          9500
+          -
+          9516
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.empty
+        </td>
+      </tr><tr>
+        <td>
+          266
+        </td>
+        <td>
+          10313
+        </td>
+        <td>
+          9056
+          -
+          9580
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.runConnection[F](socket, logger, idleTimeout, receiveBufferSize, maxHeaderSize, requestHeaderReceiveTimeout, httpApp, errorHandler, onWriteFailure, createRequestVault, webSocketKey, scodec.bits.ByteVector.empty, enableHttp2)(evidence$2).drain
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          10973
+        </td>
+        <td>
+          9622
+          -
+          9748
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.handleErrorWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          handler.handleErrorWith[[x]F[x], fs2.INothing](((t: Throwable) =&gt; fs2.Stream.eval[F, Unit](logger.error(t)(&quot;Request handler failed with exception&quot;)).drain))
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          10749
+        </td>
+        <td>
+          9675
+          -
+          9731
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.log4cats.ErrorLogger.error
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          logger.error(t)(&quot;Request handler failed with exception&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          10407
+        </td>
+        <td>
+          9663
+          -
+          9738
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.eval[F, Unit](logger.error(t)(&quot;Request handler failed with exception&quot;)).drain
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          10316
+        </td>
+        <td>
+          9762
+          -
+          9805
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.NestedStreamOps.parJoin
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.NestedStreamOps[[_]F[_], Nothing](streams).parJoin(maxConnections)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          10696
+        </td>
+        <td>
+          10634
+          -
+          11331
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          tlsInfoOpt.fold[cats.effect.kernel.Resource[F,(fs2.io.net.Socket[F], Option[String])]](cats.syntax.`package`.all.catsSyntaxApplicativeId[(fs2.io.net.Socket[F], Option[String])](scala.Tuple2.apply[fs2.io.net.Socket[F], Option[String]](socketInit, scala.Option.empty[String])).pure[[β$0$]cats.effect.kernel.Resource[F,β$0$]](kernel.this.Resource.catsEffectMonadForResource[[_]F[_]](evidence$3)))(((x0$1: (fs2.io.net.tls.TLSContext[F], fs2.io.net.tls.TLSParameters)) =&gt; x0$1 match {
+  case (_1: fs2.io.net.tls.TLSContext[F], _2: fs2.io.net.tls.TLSParameters): (fs2.io.net.tls.TLSContext[F], fs2.io.net.tls.TLSParameters)((context @ _), (params @ _)) =&gt; {
+    val newParams: fs2.io.net.tls.TLSParameters = if (enableHttp2)
+      org.http4s.ember.core.h2.H2TLS.transform(params)
+    else
+      params;
+    context.serverBuilder(socketInit).withParameters(newParams).withLogging(((s: =&gt; String) =&gt; logger.trace(s))).build.evalMap[(fs2.io.net.Socket[F], Option[String])](((tlsSocket: fs2.io.net.tls.TLSSocket[F]) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](tlsSocket.write(fs2.Chunk.empty[Nothing]))(evidence$3).&gt;&gt;[(fs2.io.net.Socket[F], Option[String])](cats.syntax.`package`.all.toFunctorOps[F, String](tlsSocket.applicationProtocol)(evidence$3).map[(fs2.io.net.Socket[F], Option[String])](((protocol: String) =&gt; scala.Tuple2.apply[fs2.io.net.Socket[F], Option[String]]((tlsSocket: fs2.io.net.Socket[F]), cats.syntax.`package`.all.catsSyntaxOptionId[String](protocol).some))))(evidence$3)))
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          10103
+        </td>
+        <td>
+          10663
+          -
+          10683
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Option.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.empty[String]
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          10333
+        </td>
+        <td>
+          10689
+          -
+          10689
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances5.catsEffectMonadForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Resource.catsEffectMonadForResource[[_]F[_]](evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          10910
+        </td>
+        <td>
+          10650
+          -
+          10705
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[(fs2.io.net.Socket[F], Option[String])](scala.Tuple2.apply[fs2.io.net.Socket[F], Option[String]](socketInit, scala.Option.empty[String])).pure[[β$0$]cats.effect.kernel.Resource[F,β$0$]](kernel.this.Resource.catsEffectMonadForResource[[_]F[_]](evidence$3))
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          10694
+        </td>
+        <td>
+          10650
+          -
+          10684
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[fs2.io.net.Socket[F], Option[String]](socketInit, scala.Option.empty[String])
+        </td>
+      </tr><tr>
+        <td>
+          302
+        </td>
+        <td>
+          10750
+        </td>
+        <td>
+          10936
+          -
+          10959
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2TLSPlatform.transform
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2TLS.transform(params)
+        </td>
+      </tr><tr>
+        <td>
+          302
+        </td>
+        <td>
+          10412
+        </td>
+        <td>
+          10936
+          -
+          10959
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2TLSPlatform.transform
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2TLS.transform(params)
+        </td>
+      </tr><tr>
+        <td>
+          303
+        </td>
+        <td>
+          10968
+        </td>
+        <td>
+          10975
+          -
+          10981
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.params
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          params
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          10613
+        </td>
+        <td>
+          11101
+          -
+          11116
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.log4cats.MessageLogger.trace
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          logger.trace(s)
+        </td>
+      </tr><tr>
+        <td>
+          310
+        </td>
+        <td>
+          10104
+        </td>
+        <td>
+          10991
+          -
+          11325
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.evalMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          context.serverBuilder(socketInit).withParameters(newParams).withLogging(((s: =&gt; String) =&gt; logger.trace(s))).build.evalMap[(fs2.io.net.Socket[F], Option[String])](((tlsSocket: fs2.io.net.tls.TLSSocket[F]) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](tlsSocket.write(fs2.Chunk.empty[Nothing]))(evidence$3).&gt;&gt;[(fs2.io.net.Socket[F], Option[String])](cats.syntax.`package`.all.toFunctorOps[F, String](tlsSocket.applicationProtocol)(evidence$3).map[(fs2.io.net.Socket[F], Option[String])](((protocol: String) =&gt; scala.Tuple2.apply[fs2.io.net.Socket[F], Option[String]]((tlsSocket: fs2.io.net.Socket[F]), cats.syntax.`package`.all.catsSyntaxOptionId[String](protocol).some))))(evidence$3)))
+        </td>
+      </tr><tr>
+        <td>
+          311
+        </td>
+        <td>
+          10300
+        </td>
+        <td>
+          11179
+          -
+          11313
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](tlsSocket.write(fs2.Chunk.empty[Nothing]))(evidence$3).&gt;&gt;[(fs2.io.net.Socket[F], Option[String])](cats.syntax.`package`.all.toFunctorOps[F, String](tlsSocket.applicationProtocol)(evidence$3).map[(fs2.io.net.Socket[F], Option[String])](((protocol: String) =&gt; scala.Tuple2.apply[fs2.io.net.Socket[F], Option[String]]((tlsSocket: fs2.io.net.Socket[F]), cats.syntax.`package`.all.catsSyntaxOptionId[String](protocol).some))))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          10370
+        </td>
+        <td>
+          11727
+          -
+          11775
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.Parser.Request.parser
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.Parser.Request.parser[[_]F[_]](maxHeaderSize)(head, read)(F)
+        </td>
+      </tr><tr>
+        <td>
+          328
+        </td>
+        <td>
+          10893
+        </td>
+        <td>
+          11809
+          -
+          12048
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.Util.timeoutToMaybe
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.Util.timeoutToMaybe[F, (org.http4s.Request[F], F[Option[Array[Byte]]])](parse, requestHeaderReceiveTimeout, D.defer[(org.http4s.Request[F], F[Option[Array[Byte]]])](F.raiseError[(org.http4s.Request[F], F[Option[Array[Byte]]])](org.http4s.ember.core.EmberException.RequestHeadersTimeout.apply(requestHeaderReceiveTimeout))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          339
+        </td>
+        <td>
+          10394
+        </td>
+        <td>
+          12054
+          -
+          12404
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, (org.http4s.Request[F], F[Option[Array[Byte]]])](parseWithHeaderTimeout)(F).flatMap[(org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]])](((tmp: (org.http4s.Request[F], F[Option[Array[Byte]]])) =&gt; {
+  &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$5: ((org.http4s.Request[F], F[Option[Array[Byte]]]), org.http4s.Request[F], F[Option[Array[Byte]]]) = (tmp: (org.http4s.Request[F], F[Option[Array[Byte]]]) @unchecked) match {
+    case (x$4 @ (_1: org.http4s.Request[F], _2: F[Option[Array[Byte]]]): (org.http4s.Request[F], F[Option[Array[Byte]]])((req @ _), (drain @ _))) =&gt; scala.Tuple3.apply[(org.http4s.Request[F], F[Option[Array[Byte]]]), org.http4s.Request[F], F[Option[Array[Byte]]]](x$4, req, drain)
+  };
+  &lt;synthetic&gt; val $suppressedUnused$1: (org.http4s.Request[F], F[Option[Array[Byte]]]) = x$5._1;
+  val req: org.http4s.Request[F] = x$5._2;
+  val drain: F[Option[Array[Byte]]] = x$5._3;
+  cats.syntax.`package`.all.toFlatMapOps[F, org.typelevel.vault.Vault](if (createRequestVault)
+  ServerHelpers.this.mkRequestVault[[_]F[_]](socket)(F)
+else
+  cats.syntax.`package`.all.catsSyntaxApplicativeId[org.typelevel.vault.Vault](org.typelevel.vault.Vault.empty).pure[F](F))(F).flatMap[(org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]])](((requestVault: org.typelevel.vault.Vault) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](httpApp.run.apply(req.withAttributes(requestVault)))(F).handleErrorWith(errorHandler)(F))(F).handleError(((x$3: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(F))(F).map[(org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]])](((resp: org.http4s.Response[F]) =&gt; scala.Tuple3.apply[org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]]](req, resp, drain)))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          340
+        </td>
+        <td>
+          10391
+        </td>
+        <td>
+          12108
+          -
+          12108
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple3._3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$5._3
+        </td>
+      </tr><tr>
+        <td>
+          340
+        </td>
+        <td>
+          10560
+        </td>
+        <td>
+          12103
+          -
+          12103
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple3._2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$5._2
+        </td>
+      </tr><tr>
+        <td>
+          341
+        </td>
+        <td>
+          10275
+        </td>
+        <td>
+          12195
+          -
+          12214
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.typelevel.vault.Vault](org.typelevel.vault.Vault.empty).pure[F](F)
+        </td>
+      </tr><tr>
+        <td>
+          341
+        </td>
+        <td>
+          10969
+        </td>
+        <td>
+          12167
+          -
+          12189
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.mkRequestVault
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.mkRequestVault[[_]F[_]](socket)(F)
+        </td>
+      </tr><tr>
+        <td>
+          341
+        </td>
+        <td>
+          10654
+        </td>
+        <td>
+          12167
+          -
+          12189
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.mkRequestVault
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.mkRequestVault[[_]F[_]](socket)(F)
+        </td>
+      </tr><tr>
+        <td>
+          341
+        </td>
+        <td>
+          10600
+        </td>
+        <td>
+          12127
+          -
+          12404
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.typelevel.vault.Vault](if (createRequestVault)
+  ServerHelpers.this.mkRequestVault[[_]F[_]](socket)(F)
+else
+  cats.syntax.`package`.all.catsSyntaxApplicativeId[org.typelevel.vault.Vault](org.typelevel.vault.Vault.empty).pure[F](F))(F).flatMap[(org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]])](((requestVault: org.typelevel.vault.Vault) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](httpApp.run.apply(req.withAttributes(requestVault)))(F).handleErrorWith(errorHandler)(F))(F).handleError(((x$3: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(F))(F).map[(org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]])](((resp: org.http4s.Response[F]) =&gt; scala.Tuple3.apply[org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]]](req, resp, drain)))))
+        </td>
+      </tr><tr>
+        <td>
+          341
+        </td>
+        <td>
+          10106
+        </td>
+        <td>
+          12195
+          -
+          12214
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.typelevel.vault.Vault](org.typelevel.vault.Vault.empty).pure[F](F)
+        </td>
+      </tr><tr>
+        <td>
+          342
+        </td>
+        <td>
+          10937
+        </td>
+        <td>
+          12221
+          -
+          12404
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](httpApp.run.apply(req.withAttributes(requestVault)))(F).handleErrorWith(errorHandler)(F))(F).handleError(((x$3: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(F))(F).map[(org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]])](((resp: org.http4s.Response[F]) =&gt; scala.Tuple3.apply[org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]]](req, resp, drain)))
+        </td>
+      </tr><tr>
+        <td>
+          345
+        </td>
+        <td>
+          10676
+        </td>
+        <td>
+          12229
+          -
+          12373
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.handleError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](httpApp.run.apply(req.withAttributes(requestVault)))(F).handleErrorWith(errorHandler)(F))(F).handleError(((x$3: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(F)
+        </td>
+      </tr><tr>
+        <td>
+          346
+        </td>
+        <td>
+          10374
+        </td>
+        <td>
+          12386
+          -
+          12404
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple3.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple3.apply[org.http4s.Request[F], org.http4s.Response[F], F[Option[Array[Byte]]]](req, resp, drain)
+        </td>
+      </tr><tr>
+        <td>
+          360
+        </td>
+        <td>
+          10977
+        </td>
+        <td>
+          12662
+          -
+          12822
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.attempt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](org.http4s.ember.core.Encoder.respToBytes[F](resp, org.http4s.ember.core.Encoder.respToBytes$default$2[F]).through[[x]F[x], fs2.INothing](((x$7: fs2.Stream[F,Byte]) =&gt; x$7.chunks.foreach[[x]F[x]](((c: fs2.Chunk[Byte]) =&gt; org.http4s.ember.core.Util.timeoutMaybe[F, Unit](socket.write(c), idleTimeout)(evidence$4))))).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$4))).drain)(evidence$4).attempt(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          10139
+        </td>
+        <td>
+          12662
+          -
+          12954
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Either[Throwable,Unit]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](org.http4s.ember.core.Encoder.respToBytes[F](resp, org.http4s.ember.core.Encoder.respToBytes$default$2[F]).through[[x]F[x], fs2.INothing](((x$7: fs2.Stream[F,Byte]) =&gt; x$7.chunks.foreach[[x]F[x]](((c: fs2.Chunk[Byte]) =&gt; org.http4s.ember.core.Util.timeoutMaybe[F, Unit](socket.write(c), idleTimeout)(evidence$4))))).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$4))).drain)(evidence$4).attempt(evidence$4))(evidence$4).flatMap[Unit](((x0$1: Either[Throwable,Unit]) =&gt; x0$1 match {
+  case (value: Throwable): scala.util.Left[Throwable,Unit]((err @ _)) =&gt; onWriteFailure.apply(request, resp, err)
+  case (value: Unit): scala.util.Right[Throwable,Unit](()) =&gt; cats.Applicative.apply[F](evidence$4).unit
+}))
+        </td>
+      </tr><tr>
+        <td>
+          362
+        </td>
+        <td>
+          10659
+        </td>
+        <td>
+          12866
+          -
+          12900
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function3.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          onWriteFailure.apply(request, resp, err)
+        </td>
+      </tr><tr>
+        <td>
+          363
+        </td>
+        <td>
+          10297
+        </td>
+        <td>
+          12927
+          -
+          12946
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Applicative.apply[F](evidence$4).unit
+        </td>
+      </tr><tr>
+        <td>
+          370
+        </td>
+        <td>
+          10679
+        </td>
+        <td>
+          13133
+          -
+          13148
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.httpVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.httpVersion
+        </td>
+      </tr><tr>
+        <td>
+          370
+        </td>
+        <td>
+          10939
+        </td>
+        <td>
+          13119
+          -
+          13162
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.Util.connectionFor
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.Util.connectionFor(req.httpVersion, req.headers)
+        </td>
+      </tr><tr>
+        <td>
+          370
+        </td>
+        <td>
+          10361
+        </td>
+        <td>
+          13150
+          -
+          13161
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers
+        </td>
+      </tr><tr>
+        <td>
+          372
+        </td>
+        <td>
+          10427
+        </td>
+        <td>
+          13167
+          -
+          13291
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.headers.Date](cats.syntax.`package`.all.toFunctorOps[F, org.http4s.HttpDate](org.http4s.HttpDate.current[F](evidence$5, evidence$6))(evidence$5).map[org.http4s.headers.Date](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Date.apply(x$8))))(evidence$5).map[resp.Self](((date: org.http4s.headers.Date) =&gt; resp.withHeaders(org.http4s.Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](date)(headers.this.Date.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](connection)(headers.this.Connection.headerInstance)).++(resp.headers))))
+        </td>
+      </tr><tr>
+        <td>
+          372
+        </td>
+        <td>
+          10603
+        </td>
+        <td>
+          13187
+          -
+          13206
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.HttpDate.current
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.HttpDate.current[F](evidence$5, evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          372
+        </td>
+        <td>
+          10426
+        </td>
+        <td>
+          13211
+          -
+          13218
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Date.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Date.apply(x$8)
+        </td>
+      </tr><tr>
+        <td>
+          372
+        </td>
+        <td>
+          10979
+        </td>
+        <td>
+          13187
+          -
+          13219
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.HttpDate](org.http4s.HttpDate.current[F](evidence$5, evidence$6))(evidence$5).map[org.http4s.headers.Date](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Date.apply(x$8)))
+        </td>
+      </tr><tr>
+        <td>
+          373
+        </td>
+        <td>
+          10912
+        </td>
+        <td>
+          13249
+          -
+          13290
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](date)(headers.this.Date.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](connection)(headers.this.Connection.headerInstance)).++(resp.headers)
+        </td>
+      </tr><tr>
+        <td>
+          373
+        </td>
+        <td>
+          10672
+        </td>
+        <td>
+          13263
+          -
+          13273
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](connection)(headers.this.Connection.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          373
+        </td>
+        <td>
+          10298
+        </td>
+        <td>
+          13257
+          -
+          13261
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](date)(headers.this.Date.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          373
+        </td>
+        <td>
+          10881
+        </td>
+        <td>
+          13263
+          -
+          13263
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Connection.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          373
+        </td>
+        <td>
+          10644
+        </td>
+        <td>
+          13257
+          -
+          13257
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Date.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Date.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          373
+        </td>
+        <td>
+          10363
+        </td>
+        <td>
+          13278
+          -
+          13290
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers
+        </td>
+      </tr><tr>
+        <td>
+          373
+        </td>
+        <td>
+          10587
+        </td>
+        <td>
+          13232
+          -
+          13291
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.withHeaders(org.http4s.Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](date)(headers.this.Date.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](connection)(headers.this.Connection.headerInstance)).++(resp.headers))
+        </td>
+      </tr><tr>
+        <td>
+          392
+        </td>
+        <td>
+          10954
+        </td>
+        <td>
+          13941
+          -
+          13979
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2Server.h2cUpgradeMiddleware
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2Server.h2cUpgradeMiddleware[[_]F[_]](httpApp)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          392
+        </td>
+        <td>
+          10648
+        </td>
+        <td>
+          13941
+          -
+          13979
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2Server.h2cUpgradeMiddleware
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2Server.h2cUpgradeMiddleware[[_]F[_]](httpApp)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          392
+        </td>
+        <td>
+          10301
+        </td>
+        <td>
+          13985
+          -
+          13992
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.httpApp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          httpApp
+        </td>
+      </tr><tr>
+        <td>
+          394
+        </td>
+        <td>
+          10873
+        </td>
+        <td>
+          14017
+          -
+          14248
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.MonadErrorOps.adaptError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxMonadError[F, Throwable, Option[fs2.Chunk[Byte]]](org.http4s.ember.core.Util.timeoutMaybe[F, Option[fs2.Chunk[Byte]]](socket.read(receiveBufferSize), idleTimeout)(evidence$7))(evidence$7).adaptError(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,Throwable] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; Throwable&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: Throwable](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.util.concurrent.TimeoutException) =&gt; org.http4s.ember.core.EmberException.ReadTimeout.apply(idleTimeout)
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: java.util.concurrent.TimeoutException) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,Throwable]))(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          399
+        </td>
+        <td>
+          10278
+        </td>
+        <td>
+          14253
+          -
+          18228
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.unfoldEval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.unfoldEval[F, State, (org.http4s.Request[F], org.http4s.Response[F])](scala.Predef.ArrowAssoc[Array[Byte]](initialBuffer.toArray).-&gt;[Boolean](false))(((x0$1: State) =&gt; x0$1 match {
+  case (_1: Array[Byte], _2: Boolean): (Array[Byte], Boolean)((buffer @ _), (reuse @ _)) =&gt; {
+    val initRead: F[Array[Byte]] = if (scala.Predef.byteArrayOps(buffer).nonEmpty)
+      cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](buffer).pure[F](evidence$7)
+    else
+      if (reuse)
+        cats.syntax.`package`.all.toFlatMapOps[F, Option[fs2.Chunk[Byte]]](read)(evidence$7).flatMap[Array[Byte]](((x0$2: Option[fs2.Chunk[Byte]]) =&gt; x0$2 match {
+          case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((chunk @ _)) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).pure[F](evidence$7)
+          case scala.None =&gt; cats.effect.`package`.Concurrent.apply[F](evidence$7, scala.this.DummyImplicit.dummyImplicit).raiseError[Array[Byte]](org.http4s.ember.core.EmberException.EmptyStream.apply())
+        }))
+      else
+        cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](scala.Array.emptyByteArray).pure[F](evidence$7);
+    val result: F[(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])] = cats.syntax.`package`.all.toFlatMapOps[F, Array[Byte]](initRead)(evidence$7).flatMap[(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])](((initBuffer: Array[Byte]) =&gt; ServerHelpers.this.runApp[F](initBuffer, read, maxHeaderSize, requestHeaderReceiveTimeout, finalApp, errorHandler, socket, createRequestVault)(evidence$7, evidence$7)));
+    cats.syntax.`package`.all.toFlatMapOps[F, Either[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])](result)(evidence$7).attempt(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x0$3: Either[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]) =&gt; x0$3 match {
+      case (value: (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])): scala.util.Right[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]((_1: org.http4s.Request[F], _2: org.http4s.Response[F], _3: org.http4s.ember.core.Drain[F]): (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])((req @ _), (resp @ _), (drain @ _))) =&gt; resp.attributes.lookup[org.http4s.websocket.WebSocketContext[F]](webSocketKey) match {
+        case (value: org.http4s.websocket.WebSocketContext[F]): Some[org.http4s.websocket.WebSocketContext[F]]((ctx @ _)) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[Array[Byte]]](drain)(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x0$4: Option[Array[Byte]]) =&gt; x0$4 match {
+          case (value: Array[Byte]): Some[Array[Byte]]((buffer @ _)) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](WebSocketHelpers.upgrade[F](socket, req, ctx, buffer, receiveBufferSize, idleTimeout, onWriteFailure, errorHandler, logger)(evidence$7))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+          case scala.None =&gt; cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+        }))
+        case scala.None =&gt; resp.attributes.lookup[(org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])](org.http4s.ember.core.h2.H2Keys.H2cUpgrade) match {
+          case scala.None =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[[_]F[_]]](ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((nextResp: org.http4s.Response[[_]F[_]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$9: Unit) =&gt; (x$9: Unit @unchecked) match {
+            case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Option[Array[Byte]]](drain)(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))]](((nextBuffer: Option[Array[Byte]]) =&gt; nextBuffer.map[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))](((buffer: Array[Byte]) =&gt; scala.Tuple2.apply[(org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean)](scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp), scala.Tuple2.apply[Array[Byte], Boolean](buffer, true))))))
+          }))))
+          case (value: (org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])): Some[(org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])]((_1: org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, _2: org.http4s.Request[fs2.Pure]): (org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])((settings @ _), (newReq @ _))) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[[_]F[_]]](ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((nextResp: org.http4s.Response[[_]F[_]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$12: Unit) =&gt; (x$12: Unit @unchecked) match {
+            case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$11: Unit) =&gt; (x$11: Unit @unchecked) match {
+              case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, None.type](cats.syntax.`package`.all.toFunctorOps[F, Unit](org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7))(evidence$7).as[None.type](scala.None))(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((out: None.type) =&gt; out))
+            }))
+          }))))
+        }
+      }
+      case (value: Throwable): scala.util.Left[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]((err @ _)) =&gt; err match {
+        case ((): org.http4s.ember.core.EmberException.EmptyStream()| (duration: scala.concurrent.duration.Duration): org.http4s.ember.core.EmberException.RequestHeadersTimeout(_)| (duration: scala.concurrent.duration.Duration): org.http4s.ember.core.EmberException.ReadTimeout(_)) =&gt; cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+        case (err @ _) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](errorHandler.apply(err))(evidence$7).handleError(((x$13: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(evidence$7))(evidence$7).flatMap[Unit](((x$14: org.http4s.Response[F]) =&gt; ServerHelpers.this.send[[_]F[_]](socket)(scala.None, x$14, idleTimeout, onWriteFailure)(evidence$7))))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+      }
+    }))
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          399
+        </td>
+        <td>
+          10674
+        </td>
+        <td>
+          14315
+          -
+          14345
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[Array[Byte]](initialBuffer.toArray).-&gt;[Boolean](false)
+        </td>
+      </tr><tr>
+        <td>
+          401
+        </td>
+        <td>
+          10337
+        </td>
+        <td>
+          14426
+          -
+          14441
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.ArrayOps.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.byteArrayOps(buffer).nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          403
+        </td>
+        <td>
+          10899
+        </td>
+        <td>
+          14523
+          -
+          14537
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](buffer).pure[F](evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          403
+        </td>
+        <td>
+          10590
+        </td>
+        <td>
+          14523
+          -
+          14537
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](buffer).pure[F](evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          404
+        </td>
+        <td>
+          10572
+        </td>
+        <td>
+          14555
+          -
+          15046
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          if (reuse)
+  cats.syntax.`package`.all.toFlatMapOps[F, Option[fs2.Chunk[Byte]]](read)(evidence$7).flatMap[Array[Byte]](((x0$2: Option[fs2.Chunk[Byte]]) =&gt; x0$2 match {
+    case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((chunk @ _)) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).pure[F](evidence$7)
+    case scala.None =&gt; cats.effect.`package`.Concurrent.apply[F](evidence$7, scala.this.DummyImplicit.dummyImplicit).raiseError[Array[Byte]](org.http4s.ember.core.EmberException.EmptyStream.apply())
+  }))
+else
+  cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](scala.Array.emptyByteArray).pure[F](evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          408
+        </td>
+        <td>
+          10875
+        </td>
+        <td>
+          14739
+          -
+          14926
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[fs2.Chunk[Byte]]](read)(evidence$7).flatMap[Array[Byte]](((x0$2: Option[fs2.Chunk[Byte]]) =&gt; x0$2 match {
+  case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((chunk @ _)) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).pure[F](evidence$7)
+  case scala.None =&gt; cats.effect.`package`.Concurrent.apply[F](evidence$7, scala.this.DummyImplicit.dummyImplicit).raiseError[Array[Byte]](org.http4s.ember.core.EmberException.EmptyStream.apply())
+}))
+        </td>
+      </tr><tr>
+        <td>
+          408
+        </td>
+        <td>
+          10716
+        </td>
+        <td>
+          14739
+          -
+          14926
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[fs2.Chunk[Byte]]](read)(evidence$7).flatMap[Array[Byte]](((x0$2: Option[fs2.Chunk[Byte]]) =&gt; x0$2 match {
+  case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((chunk @ _)) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).pure[F](evidence$7)
+  case scala.None =&gt; cats.effect.`package`.Concurrent.apply[F](evidence$7, scala.this.DummyImplicit.dummyImplicit).raiseError[Array[Byte]](org.http4s.ember.core.EmberException.EmptyStream.apply())
+}))
+        </td>
+      </tr><tr>
+        <td>
+          409
+        </td>
+        <td>
+          10227
+        </td>
+        <td>
+          14805
+          -
+          14826
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).pure[F](evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          410
+        </td>
+        <td>
+          10957
+        </td>
+        <td>
+          14866
+          -
+          14866
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.DummyImplicit.dummyImplicit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.DummyImplicit.dummyImplicit
+        </td>
+      </tr><tr>
+        <td>
+          410
+        </td>
+        <td>
+          10283
+        </td>
+        <td>
+          14856
+          -
+          14910
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Concurrent.apply[F](evidence$7, scala.this.DummyImplicit.dummyImplicit).raiseError[Array[Byte]](org.http4s.ember.core.EmberException.EmptyStream.apply())
+        </td>
+      </tr><tr>
+        <td>
+          410
+        </td>
+        <td>
+          10656
+        </td>
+        <td>
+          14881
+          -
+          14909
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.EmberException.EmptyStream.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.EmberException.EmptyStream.apply()
+        </td>
+      </tr><tr>
+        <td>
+          414
+        </td>
+        <td>
+          10339
+        </td>
+        <td>
+          15006
+          -
+          15034
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](scala.Array.emptyByteArray).pure[F](evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          414
+        </td>
+        <td>
+          10940
+        </td>
+        <td>
+          15006
+          -
+          15034
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](scala.Array.emptyByteArray).pure[F](evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          417
+        </td>
+        <td>
+          10958
+        </td>
+        <td>
+          15071
+          -
+          15375
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Array[Byte]](initRead)(evidence$7).flatMap[(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])](((initBuffer: Array[Byte]) =&gt; ServerHelpers.this.runApp[F](initBuffer, read, maxHeaderSize, requestHeaderReceiveTimeout, finalApp, errorHandler, socket, createRequestVault)(evidence$7, evidence$7)))
+        </td>
+      </tr><tr>
+        <td>
+          418
+        </td>
+        <td>
+          10228
+        </td>
+        <td>
+          15116
+          -
+          15363
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.runApp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.runApp[F](initBuffer, read, maxHeaderSize, requestHeaderReceiveTimeout, finalApp, errorHandler, socket, createRequestVault)(evidence$7, evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          430
+        </td>
+        <td>
+          10661
+        </td>
+        <td>
+          15387
+          -
+          18220
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Either[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])](result)(evidence$7).attempt(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x0$3: Either[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]) =&gt; x0$3 match {
+  case (value: (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])): scala.util.Right[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]((_1: org.http4s.Request[F], _2: org.http4s.Response[F], _3: org.http4s.ember.core.Drain[F]): (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])((req @ _), (resp @ _), (drain @ _))) =&gt; resp.attributes.lookup[org.http4s.websocket.WebSocketContext[F]](webSocketKey) match {
+    case (value: org.http4s.websocket.WebSocketContext[F]): Some[org.http4s.websocket.WebSocketContext[F]]((ctx @ _)) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[Array[Byte]]](drain)(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x0$4: Option[Array[Byte]]) =&gt; x0$4 match {
+      case (value: Array[Byte]): Some[Array[Byte]]((buffer @ _)) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](WebSocketHelpers.upgrade[F](socket, req, ctx, buffer, receiveBufferSize, idleTimeout, onWriteFailure, errorHandler, logger)(evidence$7))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+      case scala.None =&gt; cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+    }))
+    case scala.None =&gt; resp.attributes.lookup[(org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])](org.http4s.ember.core.h2.H2Keys.H2cUpgrade) match {
+      case scala.None =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[[_]F[_]]](ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((nextResp: org.http4s.Response[[_]F[_]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$9: Unit) =&gt; (x$9: Unit @unchecked) match {
+        case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Option[Array[Byte]]](drain)(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))]](((nextBuffer: Option[Array[Byte]]) =&gt; nextBuffer.map[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))](((buffer: Array[Byte]) =&gt; scala.Tuple2.apply[(org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean)](scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp), scala.Tuple2.apply[Array[Byte], Boolean](buffer, true))))))
+      }))))
+      case (value: (org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])): Some[(org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])]((_1: org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, _2: org.http4s.Request[fs2.Pure]): (org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])((settings @ _), (newReq @ _))) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[[_]F[_]]](ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((nextResp: org.http4s.Response[[_]F[_]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$12: Unit) =&gt; (x$12: Unit @unchecked) match {
+        case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$11: Unit) =&gt; (x$11: Unit @unchecked) match {
+          case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, None.type](cats.syntax.`package`.all.toFunctorOps[F, Unit](org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7))(evidence$7).as[None.type](scala.None))(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((out: None.type) =&gt; out))
+        }))
+      }))))
+    }
+  }
+  case (value: Throwable): scala.util.Left[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]((err @ _)) =&gt; err match {
+    case ((): org.http4s.ember.core.EmberException.EmptyStream()| (duration: scala.concurrent.duration.Duration): org.http4s.ember.core.EmberException.RequestHeadersTimeout(_)| (duration: scala.concurrent.duration.Duration): org.http4s.ember.core.EmberException.ReadTimeout(_)) =&gt; cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+    case (err @ _) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](errorHandler.apply(err))(evidence$7).handleError(((x$13: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(evidence$7))(evidence$7).flatMap[Unit](((x$14: org.http4s.Response[F]) =&gt; ServerHelpers.this.send[[_]F[_]](socket)(scala.None, x$14, idleTimeout, onWriteFailure)(evidence$7))))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          430
+        </td>
+        <td>
+          10642
+        </td>
+        <td>
+          15387
+          -
+          15401
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.attempt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])](result)(evidence$7).attempt(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          434
+        </td>
+        <td>
+          10325
+        </td>
+        <td>
+          15609
+          -
+          15645
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.vault.Vault.lookup
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.attributes.lookup[org.http4s.websocket.WebSocketContext[F]](webSocketKey)
+        </td>
+      </tr><tr>
+        <td>
+          436
+        </td>
+        <td>
+          10269
+        </td>
+        <td>
+          15706
+          -
+          16326
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[Array[Byte]]](drain)(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x0$4: Option[Array[Byte]]) =&gt; x0$4 match {
+  case (value: Array[Byte]): Some[Array[Byte]]((buffer @ _)) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](WebSocketHelpers.upgrade[F](socket, req, ctx, buffer, receiveBufferSize, idleTimeout, onWriteFailure, errorHandler, logger)(evidence$7))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+  case scala.None =&gt; cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          439
+        </td>
+        <td>
+          10888
+        </td>
+        <td>
+          15785
+          -
+          16191
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.upgrade
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.upgrade[F](socket, req, ctx, buffer, receiveBufferSize, idleTimeout, onWriteFailure, errorHandler, logger)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          450
+        </td>
+        <td>
+          10342
+        </td>
+        <td>
+          15785
+          -
+          16225
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Unit](WebSocketHelpers.upgrade[F](socket, req, ctx, buffer, receiveBufferSize, idleTimeout, onWriteFailure, errorHandler, logger)(evidence$7))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          450
+        </td>
+        <td>
+          10718
+        </td>
+        <td>
+          16220
+          -
+          16224
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          452
+        </td>
+        <td>
+          10929
+        </td>
+        <td>
+          16301
+          -
+          16305
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          452
+        </td>
+        <td>
+          10608
+        </td>
+        <td>
+          16281
+          -
+          16306
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          455
+        </td>
+        <td>
+          10993
+        </td>
+        <td>
+          16397
+          -
+          16414
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2Keys.H2cUpgrade
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.h2.H2Keys.H2cUpgrade
+        </td>
+      </tr><tr>
+        <td>
+          455
+        </td>
+        <td>
+          10646
+        </td>
+        <td>
+          16374
+          -
+          16415
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.vault.Vault.lookup
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.attributes.lookup[(org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])](org.http4s.ember.core.h2.H2Keys.H2cUpgrade)
+        </td>
+      </tr><tr>
+        <td>
+          459
+        </td>
+        <td>
+          10634
+        </td>
+        <td>
+          16510
+          -
+          16808
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[[_]F[_]]](ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((nextResp: org.http4s.Response[[_]F[_]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$9: Unit) =&gt; (x$9: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Option[Array[Byte]]](drain)(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))]](((nextBuffer: Option[Array[Byte]]) =&gt; nextBuffer.map[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))](((buffer: Array[Byte]) =&gt; scala.Tuple2.apply[(org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean)](scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp), scala.Tuple2.apply[Array[Byte], Boolean](buffer, true))))))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          459
+        </td>
+        <td>
+          10317
+        </td>
+        <td>
+          16552
+          -
+          16582
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.postProcessResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          460
+        </td>
+        <td>
+          10943
+        </td>
+        <td>
+          16607
+          -
+          16808
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$9: Unit) =&gt; (x$9: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Option[Array[Byte]]](drain)(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))]](((nextBuffer: Option[Array[Byte]]) =&gt; nextBuffer.map[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))](((buffer: Array[Byte]) =&gt; scala.Tuple2.apply[(org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean)](scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp), scala.Tuple2.apply[Array[Byte], Boolean](buffer, true))))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          460
+        </td>
+        <td>
+          10871
+        </td>
+        <td>
+          16612
+          -
+          16674
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.send
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          461
+        </td>
+        <td>
+          10254
+        </td>
+        <td>
+          16699
+          -
+          16808
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Option[Array[Byte]]](drain)(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))]](((nextBuffer: Option[Array[Byte]]) =&gt; nextBuffer.map[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))](((buffer: Array[Byte]) =&gt; scala.Tuple2.apply[(org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean)](scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp), scala.Tuple2.apply[Array[Byte], Boolean](buffer, true))))))
+        </td>
+      </tr><tr>
+        <td>
+          462
+        </td>
+        <td>
+          10508
+        </td>
+        <td>
+          16775
+          -
+          16790
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp)
+        </td>
+      </tr><tr>
+        <td>
+          462
+        </td>
+        <td>
+          10570
+        </td>
+        <td>
+          16749
+          -
+          16808
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nextBuffer.map[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))](((buffer: Array[Byte]) =&gt; scala.Tuple2.apply[(org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean)](scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp), scala.Tuple2.apply[Array[Byte], Boolean](buffer, true))))
+        </td>
+      </tr><tr>
+        <td>
+          462
+        </td>
+        <td>
+          10354
+        </td>
+        <td>
+          16792
+          -
+          16806
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[Array[Byte], Boolean](buffer, true)
+        </td>
+      </tr><tr>
+        <td>
+          462
+        </td>
+        <td>
+          10931
+        </td>
+        <td>
+          16774
+          -
+          16807
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[(org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean)](scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp), scala.Tuple2.apply[Array[Byte], Boolean](buffer, true))
+        </td>
+      </tr><tr>
+        <td>
+          466
+        </td>
+        <td>
+          10321
+        </td>
+        <td>
+          16982
+          -
+          17012
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.postProcessResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          466
+        </td>
+        <td>
+          10276
+        </td>
+        <td>
+          16940
+          -
+          17671
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[[_]F[_]]](ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((nextResp: org.http4s.Response[[_]F[_]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$12: Unit) =&gt; (x$12: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$11: Unit) =&gt; (x$11: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, None.type](cats.syntax.`package`.all.toFunctorOps[F, Unit](org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7))(evidence$7).as[None.type](scala.None))(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((out: None.type) =&gt; out))
+  }))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          467
+        </td>
+        <td>
+          10637
+        </td>
+        <td>
+          17037
+          -
+          17671
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$12: Unit) =&gt; (x$12: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$11: Unit) =&gt; (x$11: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, None.type](cats.syntax.`package`.all.toFunctorOps[F, Unit](org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7))(evidence$7).as[None.type](scala.None))(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((out: None.type) =&gt; out))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          467
+        </td>
+        <td>
+          10859
+        </td>
+        <td>
+          17042
+          -
+          17104
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.send
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          468
+        </td>
+        <td>
+          10526
+        </td>
+        <td>
+          17134
+          -
+          17175
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.H2Server.requireConnectionPreface
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          468
+        </td>
+        <td>
+          10990
+        </td>
+        <td>
+          17129
+          -
+          17671
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$11: Unit) =&gt; (x$11: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, None.type](cats.syntax.`package`.all.toFunctorOps[F, Unit](org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7))(evidence$7).as[None.type](scala.None))(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((out: None.type) =&gt; out))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          469
+        </td>
+        <td>
+          10255
+        </td>
+        <td>
+          17200
+          -
+          17671
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, None.type](cats.syntax.`package`.all.toFunctorOps[F, Unit](org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7))(evidence$7).as[None.type](scala.None))(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((out: None.type) =&gt; out))
+        </td>
+      </tr><tr>
+        <td>
+          478
+        </td>
+        <td>
+          10355
+        </td>
+        <td>
+          17207
+          -
+          17601
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Resource.use
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          479
+        </td>
+        <td>
+          10573
+        </td>
+        <td>
+          17207
+          -
+          17637
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, Unit](org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7))(evidence$7).as[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          479
+        </td>
+        <td>
+          10916
+        </td>
+        <td>
+          17632
+          -
+          17636
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          487
+        </td>
+        <td>
+          10861
+        </td>
+        <td>
+          17949
+          -
+          17953
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          487
+        </td>
+        <td>
+          10527
+        </td>
+        <td>
+          17929
+          -
+          17954
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          490
+        </td>
+        <td>
+          10376
+        </td>
+        <td>
+          18001
+          -
+          18081
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.handleError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](errorHandler.apply(err))(evidence$7).handleError(((x$13: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          491
+        </td>
+        <td>
+          10921
+        </td>
+        <td>
+          18111
+          -
+          18161
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.send
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerHelpers.this.send[[_]F[_]](socket)(scala.None, x$14, idleTimeout, onWriteFailure)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          491
+        </td>
+        <td>
+          10574
+        </td>
+        <td>
+          18001
+          -
+          18162
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](errorHandler.apply(err))(evidence$7).handleError(((x$13: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(evidence$7))(evidence$7).flatMap[Unit](((x$14: org.http4s.Response[F]) =&gt; ServerHelpers.this.send[[_]F[_]](socket)(scala.None, x$14, idleTimeout, onWriteFailure)(evidence$7)))
+        </td>
+      </tr><tr>
+        <td>
+          492
+        </td>
+        <td>
+          10245
+        </td>
+        <td>
+          18187
+          -
+          18191
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          492
+        </td>
+        <td>
+          10788
+        </td>
+        <td>
+          18001
+          -
+          18192
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](errorHandler.apply(err))(evidence$7).handleError(((x$13: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(evidence$7))(evidence$7).flatMap[Unit](((x$14: org.http4s.Response[F]) =&gt; ServerHelpers.this.send[[_]F[_]](socket)(scala.None, x$14, idleTimeout, onWriteFailure)(evidence$7))))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          496
+        </td>
+        <td>
+          10831
+        </td>
+        <td>
+          14253
+          -
+          18333
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.takeWhile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          qual$1.takeWhile(x$1, x$2)
+        </td>
+      </tr><tr>
+        <td>
+          496
+        </td>
+        <td>
+          10249
+        </td>
+        <td>
+          18236
+          -
+          18236
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.takeWhile$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          qual$1.takeWhile$default$2
+        </td>
+      </tr><tr>
+        <td>
+          497
+        </td>
+        <td>
+          10379
+        </td>
+        <td>
+          18290
+          -
+          18290
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.recurringHeadersWithMerge
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Connection](headers.this.Connection.headerSemigroupInstance, headers.this.Connection.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          497
+        </td>
+        <td>
+          10561
+        </td>
+        <td>
+          18274
+          -
+          18325
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers.get[org.http4s.headers.Connection](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Connection](headers.this.Connection.headerSemigroupInstance, headers.this.Connection.headerInstance)).exists(((x$15: org.http4s.headers.Connection) =&gt; x$15.hasKeepAlive))
+        </td>
+      </tr><tr>
+        <td>
+          497
+        </td>
+        <td>
+          10551
+        </td>
+        <td>
+          18290
+          -
+          18290
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Connection.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          497
+        </td>
+        <td>
+          10865
+        </td>
+        <td>
+          18290
+          -
+          18290
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerSemigroupInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Connection.headerSemigroupInstance
+        </td>
+      </tr><tr>
+        <td>
+          497
+        </td>
+        <td>
+          10913
+        </td>
+        <td>
+          18310
+          -
+          18324
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.hasKeepAlive
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$15.hasKeepAlive
+        </td>
+      </tr><tr>
+        <td>
+          499
+        </td>
+        <td>
+          10662
+        </td>
+        <td>
+          14253
+          -
+          18346
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  &lt;artifact&gt; val qual$1: fs2.Stream[F,(org.http4s.Request[F], org.http4s.Response[F])] @scala.reflect.internal.annotations.uncheckedBounds = fs2.Stream.unfoldEval[F, State, (org.http4s.Request[F], org.http4s.Response[F])](scala.Predef.ArrowAssoc[Array[Byte]](initialBuffer.toArray).-&gt;[Boolean](false))(((x0$1: State) =&gt; x0$1 match {
+    case (_1: Array[Byte], _2: Boolean): (Array[Byte], Boolean)((buffer @ _), (reuse @ _)) =&gt; {
+      val initRead: F[Array[Byte]] = if (scala.Predef.byteArrayOps(buffer).nonEmpty)
+        cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](buffer).pure[F](evidence$7)
+      else
+        if (reuse)
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[fs2.Chunk[Byte]]](read)(evidence$7).flatMap[Array[Byte]](((x0$2: Option[fs2.Chunk[Byte]]) =&gt; x0$2 match {
+            case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((chunk @ _)) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).pure[F](evidence$7)
+            case scala.None =&gt; cats.effect.`package`.Concurrent.apply[F](evidence$7, scala.this.DummyImplicit.dummyImplicit).raiseError[Array[Byte]](org.http4s.ember.core.EmberException.EmptyStream.apply())
+          }))
+        else
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[Array[Byte]](scala.Array.emptyByteArray).pure[F](evidence$7);
+      val result: F[(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])] = cats.syntax.`package`.all.toFlatMapOps[F, Array[Byte]](initRead)(evidence$7).flatMap[(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])](((initBuffer: Array[Byte]) =&gt; ServerHelpers.this.runApp[F](initBuffer, read, maxHeaderSize, requestHeaderReceiveTimeout, finalApp, errorHandler, socket, createRequestVault)(evidence$7, evidence$7)));
+      cats.syntax.`package`.all.toFlatMapOps[F, Either[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])](result)(evidence$7).attempt(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x0$3: Either[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]) =&gt; x0$3 match {
+        case (value: (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])): scala.util.Right[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]((_1: org.http4s.Request[F], _2: org.http4s.Response[F], _3: org.http4s.ember.core.Drain[F]): (org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])((req @ _), (resp @ _), (drain @ _))) =&gt; resp.attributes.lookup[org.http4s.websocket.WebSocketContext[F]](webSocketKey) match {
+          case (value: org.http4s.websocket.WebSocketContext[F]): Some[org.http4s.websocket.WebSocketContext[F]]((ctx @ _)) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[Array[Byte]]](drain)(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x0$4: Option[Array[Byte]]) =&gt; x0$4 match {
+            case (value: Array[Byte]): Some[Array[Byte]]((buffer @ _)) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](WebSocketHelpers.upgrade[F](socket, req, ctx, buffer, receiveBufferSize, idleTimeout, onWriteFailure, errorHandler, logger)(evidence$7))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+            case scala.None =&gt; cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+          }))
+          case scala.None =&gt; resp.attributes.lookup[(org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])](org.http4s.ember.core.h2.H2Keys.H2cUpgrade) match {
+            case scala.None =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[[_]F[_]]](ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((nextResp: org.http4s.Response[[_]F[_]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$9: Unit) =&gt; (x$9: Unit @unchecked) match {
+              case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Option[Array[Byte]]](drain)(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))]](((nextBuffer: Option[Array[Byte]]) =&gt; nextBuffer.map[((org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean))](((buffer: Array[Byte]) =&gt; scala.Tuple2.apply[(org.http4s.Request[F], org.http4s.Response[[_]F[_]]), (Array[Byte], Boolean)](scala.Tuple2.apply[org.http4s.Request[F], org.http4s.Response[[_]F[_]]](req, nextResp), scala.Tuple2.apply[Array[Byte], Boolean](buffer, true))))))
+            }))))
+            case (value: (org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])): Some[(org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])]((_1: org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, _2: org.http4s.Request[fs2.Pure]): (org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings, org.http4s.Request[fs2.Pure])((settings @ _), (newReq @ _))) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[[_]F[_]]](ServerHelpers.this.postProcessResponse[[_]F[_]](req, resp)(evidence$7, evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((nextResp: org.http4s.Response[[_]F[_]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.this.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), nextResp, idleTimeout, onWriteFailure)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$12: Unit) =&gt; (x$12: Unit @unchecked) match {
+              case _ =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](org.http4s.ember.core.h2.H2Server.requireConnectionPreface[[_]F[_]](socket)(evidence$7))(evidence$7).flatMap[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((x$11: Unit) =&gt; (x$11: Unit @unchecked) match {
+                case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, None.type](cats.syntax.`package`.all.toFunctorOps[F, Unit](org.http4s.ember.core.h2.H2Server.fromSocket[[_]F[_]](socket, httpApp, org.http4s.ember.core.h2.H2Frame.Settings.ConnectionSettings.default, logger, settings, cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Request[fs2.Pure]](newReq).some)(evidence$7).use[Unit](((x$10: Unit) =&gt; cats.effect.`package`.Async.apply[F](evidence$7).never[Unit]))(evidence$7))(evidence$7).as[None.type](scala.None))(evidence$7).map[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](((out: None.type) =&gt; out))
+              }))
+            }))))
+          }
+        }
+        case (value: Throwable): scala.util.Left[Throwable,(org.http4s.Request[F], org.http4s.Response[F], org.http4s.ember.core.Drain[F])]((err @ _)) =&gt; err match {
+          case ((): org.http4s.ember.core.EmberException.EmptyStream()| (duration: scala.concurrent.duration.Duration): org.http4s.ember.core.EmberException.RequestHeadersTimeout(_)| (duration: scala.concurrent.duration.Duration): org.http4s.ember.core.EmberException.ReadTimeout(_)) =&gt; cats.Applicative.apply[F](evidence$7).pure[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+          case (err @ _) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](errorHandler.apply(err))(evidence$7).handleError(((x$13: Throwable) =&gt; ServerHelpers.this.serverFailure.covary[F]))(evidence$7))(evidence$7).flatMap[Unit](((x$14: org.http4s.Response[F]) =&gt; ServerHelpers.this.send[[_]F[_]](socket)(scala.None, x$14, idleTimeout, onWriteFailure)(evidence$7))))(evidence$7).as[Option[((org.http4s.Request[F], org.http4s.Response[F]), State)]](scala.None)
+        }
+      }))
+    }
+  }));
+  &lt;artifact&gt; val x$1: ((org.http4s.Request[F], org.http4s.Response[F])) =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = ((x0$5: (org.http4s.Request[F], org.http4s.Response[F])) =&gt; x0$5 match {
+    case (_1: org.http4s.Request[F], _2: org.http4s.Response[F]): (org.http4s.Request[F], org.http4s.Response[F])(_, (resp @ _)) =&gt; resp.headers.get[org.http4s.headers.Connection](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Connection](headers.this.Connection.headerSemigroupInstance, headers.this.Connection.headerInstance)).exists(((x$15: org.http4s.headers.Connection) =&gt; x$15.hasKeepAlive))
+  });
+  &lt;artifact&gt; val x$2: Boolean = qual$1.takeWhile$default$2;
+  qual$1.takeWhile(x$1, x$2)
+}.drain
+        </td>
+      </tr><tr>
+        <td>
+          503
+        </td>
+        <td>
+          10319
+        </td>
+        <td>
+          18435
+          -
+          18499
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.Tuple2SemigroupalOps.mapN
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxTuple2Semigroupal[F, org.typelevel.vault.Vault, org.typelevel.vault.Vault](scala.Tuple2.apply[F[org.typelevel.vault.Vault], F[org.typelevel.vault.Vault]](ServerHelpers.this.mkConnectionInfo[[_]F[_]](socket)(evidence$8), ServerHelpers.this.mkSecureSession[[_]F[_]](socket)(evidence$8))).mapN[org.typelevel.vault.Vault](((x$16: org.typelevel.vault.Vault, x$17: org.typelevel.vault.Vault) =&gt; x$16.++(x$17)))(evidence$8, evidence$8)
+        </td>
+      </tr><tr>
+        <td>
+          506
+        </td>
+        <td>
+          10851
+        </td>
+        <td>
+          18570
+          -
+          18866
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.Tuple2SemigroupalOps.mapN
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxTuple2Semigroupal[F, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](scala.Tuple2.apply[F[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]], F[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]]](socket.localAddress, socket.remoteAddress)).mapN[org.typelevel.vault.Vault](((x0$1: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], x1$1: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]) =&gt; scala.Tuple2.apply[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](x0$1, x1$1) match {
+  case (_1: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], _2: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]): (com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress], com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress])((local @ _), (remote @ _)) =&gt; org.typelevel.vault.Vault.empty.insert[org.http4s.Request.Connection](org.http4s.Request.Keys.ConnectionInfo, org.http4s.Request.Connection.apply(local, remote, socket.isInstanceOf[fs2.io.net.tls.TLSSocket[F]]))
+}))(evidence$9, evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          520
+        </td>
+        <td>
+          10552
+        </td>
+        <td>
+          19000
+          -
+          19014
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.net.tls.TLSSocket.session
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          socket.session
+        </td>
+      </tr><tr>
+        <td>
+          521
+        </td>
+        <td>
+          10917
+        </td>
+        <td>
+          19000
+          -
+          19049
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, fs2.io.net.tls.SSLSession](socket.session)(evidence$10).map[Option[org.http4s.server.SecureSession]](((x$18: fs2.io.net.tls.SSLSession) =&gt; ServerHelpers.this.parseSSLSession(x$18)))
+        </td>
+      </tr><tr>
+        <td>
+          521
+        </td>
+        <td>
+          10213
+        </td>
+        <td>
+          19030
+          -
+          19048
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpersPlatform.parseSSLSession
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.this.parseSSLSession(x$18)
+        </td>
+      </tr><tr>
+        <td>
+          522
+        </td>
+        <td>
+          10604
+        </td>
+        <td>
+          19084
+          -
+          19115
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.ServerRequestKeys.SecureSession
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.server.`package`.ServerRequestKeys.SecureSession
+        </td>
+      </tr><tr>
+        <td>
+          522
+        </td>
+        <td>
+          10261
+        </td>
+        <td>
+          19065
+          -
+          19119
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.vault.Vault.insert
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.vault.Vault.empty.insert[Option[org.http4s.server.SecureSession]](org.http4s.server.`package`.ServerRequestKeys.SecureSession, x$19)
+        </td>
+      </tr><tr>
+        <td>
+          522
+        </td>
+        <td>
+          10835
+        </td>
+        <td>
+          19000
+          -
+          19120
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Option[org.http4s.server.SecureSession]](cats.syntax.`package`.all.toFunctorOps[F, fs2.io.net.tls.SSLSession](socket.session)(evidence$10).map[Option[org.http4s.server.SecureSession]](((x$18: fs2.io.net.tls.SSLSession) =&gt; ServerHelpers.this.parseSSLSession(x$18))))(evidence$10).map[org.typelevel.vault.Vault](((x$19: Option[org.http4s.server.SecureSession]) =&gt; org.typelevel.vault.Vault.empty.insert[Option[org.http4s.server.SecureSession]](org.http4s.server.`package`.ServerRequestKeys.SecureSession, x$19)))
+        </td>
+      </tr><tr>
+        <td>
+          524
+        </td>
+        <td>
+          10624
+        </td>
+        <td>
+          19145
+          -
+          19164
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.typelevel.vault.Vault](org.typelevel.vault.Vault.empty).pure[F](evidence$10)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

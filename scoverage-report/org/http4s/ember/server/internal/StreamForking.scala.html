@@ -1,0 +1,1098 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ember/server/internal/StreamForking.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2019 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.ember.server.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.effect.Concurrent
+</span>20 <span style=''>import cats.effect.std.Semaphore
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import fs2.INothing
+</span>23 <span style=''>import fs2.Stream
+</span>24 <span style=''>import fs2.concurrent.Signal
+</span>25 <span style=''>import fs2.concurrent.SignallingRef
+</span>26 <span style=''>
+</span>27 <span style=''>private[internal] object StreamForking {
+</span>28 <span style=''>
+</span>29 <span style=''>  /** forking has similar semantics to parJoin, but there are two key differences.
+</span>30 <span style=''>    * The first is that inner stream outputs are not shuffled to the forked stream.
+</span>31 <span style=''>    * The second is that the outer stream may terminate and finalize before inner
+</span>32 <span style=''>    * streams complete. This is generally unsafe, because inner streams are lexically
+</span>33 <span style=''>    * scoped within the outer stream and accordingly has resources bound to the outer
+</span>34 <span style=''>    * stream available in scope. However, network servers built on top of fs2.io can
+</span>35 <span style=''>    * safely utilize this because inner streams are created fresh from socket Resources
+</span>36 <span style=''>    * that don't close over any resources from the outer stream.
+</span>37 <span style=''>    *
+</span>38 <span style=''>    * One important semantic that the previous prefetch trick didn't have was backpressuring
+</span>39 <span style=''>    * the outer stream from continuing if the max concurrency is reached, which has been
+</span>40 <span style=''>    * recovered here.
+</span>41 <span style=''>    */
+</span>42 <span style=''>  def forking[F[_], O](streams: Stream[F, Stream[F, O]], maxConcurrency: Int = Int.MaxValue)(
+</span>43 <span style=''>      implicit F: Concurrent[F]
+</span>44 <span style=''>  ): Stream[F, INothing] = {
+</span>45 <span style=''>    val fstream = </span><span style='background: #AEF1AE'>for {
+</span>46 <span style=''></span><span style='background: #AEF1AE'>      done &lt;- SignallingRef[F, Option[Option[Throwable]]](None)
+</span>47 <span style=''></span><span style='background: #AEF1AE'>      available &lt;- Semaphore[F](maxConcurrency.toLong)
+</span>48 <span style=''></span><span style='background: #AEF1AE'>      running &lt;- SignallingRef[F, Long](1)
+</span>49 <span style=''></span><span style='background: #AEF1AE'>    } yield {
+</span>50 <span style=''></span><span style='background: #AEF1AE'>      val incrementRunning: F[Unit] = running.update(_ + 1)
+</span>51 <span style=''></span><span style='background: #AEF1AE'>      val decrementRunning: F[Unit] = running.update(_ - 1)
+</span>52 <span style=''></span><span style='background: #AEF1AE'>      val awaitWhileRunning: F[Unit] = running.discrete.dropWhile(_ &gt; 0).take(1).compile.drain
+</span>53 <span style=''></span><span style='background: #AEF1AE'>
+</span>54 <span style=''></span><span style='background: #AEF1AE'>      val stop: F[Unit] = done.update(_.orElse(Some(None)))
+</span>55 <span style=''></span><span style='background: #AEF1AE'>      val stopSignal: Signal[F, Boolean] = done.map(_.nonEmpty)
+</span>56 <span style=''></span><span style='background: #AEF1AE'>      def stopFailed(err: Throwable): F[Unit] =
+</span>57 <span style=''></span><span style='background: #AEF1AE'>        done.update(_.orElse(Some(Some(err))))
+</span>58 <span style=''></span><span style='background: #AEF1AE'>
+</span>59 <span style=''></span><span style='background: #AEF1AE'>      def runInner(inner: Stream[F, O]): F[Unit] = {
+</span>60 <span style=''></span><span style='background: #AEF1AE'>        val fa = inner
+</span>61 <span style=''></span><span style='background: #AEF1AE'>          .interruptWhen(stopSignal)
+</span>62 <span style=''></span><span style='background: #AEF1AE'>          .compile
+</span>63 <span style=''></span><span style='background: #AEF1AE'>          .drain
+</span>64 <span style=''></span><span style='background: #AEF1AE'>          .handleErrorWith(stopFailed) &gt;&gt; available.release &gt;&gt; decrementRunning
+</span>65 <span style=''></span><span style='background: #AEF1AE'>
+</span>66 <span style=''></span><span style='background: #AEF1AE'>        available.acquire &gt;&gt; incrementRunning &gt;&gt; F.start(fa).void
+</span>67 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>68 <span style=''></span><span style='background: #AEF1AE'>
+</span>69 <span style=''></span><span style='background: #AEF1AE'>      val runOuter: F[Unit] =
+</span>70 <span style=''></span><span style='background: #AEF1AE'>        streams
+</span>71 <span style=''></span><span style='background: #AEF1AE'>          .evalMap(runInner(_))
+</span>72 <span style=''></span><span style='background: #AEF1AE'>          .interruptWhen(stopSignal)
+</span>73 <span style=''></span><span style='background: #AEF1AE'>          .compile
+</span>74 <span style=''></span><span style='background: #AEF1AE'>          .drain
+</span>75 <span style=''></span><span style='background: #AEF1AE'>          .handleErrorWith(stopFailed) &gt;&gt; decrementRunning
+</span>76 <span style=''></span><span style='background: #AEF1AE'>
+</span>77 <span style=''></span><span style='background: #AEF1AE'>      val signalResult: F[Unit] =
+</span>78 <span style=''></span><span style='background: #AEF1AE'>        done.get.flatMap {
+</span>79 <span style=''></span><span style='background: #AEF1AE'>          case Some(Some(err)) =&gt; F.raiseError(err)
+</span>80 <span style=''></span><span style='background: #AEF1AE'>          case _ =&gt; F.unit
+</span>81 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>82 <span style=''></span><span style='background: #AEF1AE'>
+</span>83 <span style=''></span><span style='background: #AEF1AE'>      Stream.bracket(F.start(runOuter))(_ =&gt; stop &gt;&gt; awaitWhileRunning &gt;&gt; signalResult) &gt;&gt;
+</span>84 <span style=''></span><span style='background: #AEF1AE'>        Stream.eval(awaitWhileRunning).drain
+</span>85 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>86 <span style=''>
+</span>87 <span style=''>    </span><span style='background: #AEF1AE'>Stream.eval(fstream).flatten</span><span style=''>
+</span>88 <span style=''>  }
+</span>89 <span style=''>
+</span>90 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          10815
+        </td>
+        <td>
+          1940
+          -
+          1989
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.concurrent.SignallingRef.apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.streamforkingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.concurrent.SignallingRef.apply[F, Option[Option[Throwable]]](scala.None)(F)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          10219
+        </td>
+        <td>
+          1920
+          -
+          3346
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.ember.server.internal.streamforkingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, fs2.concurrent.SignallingRef[F,Option[Option[Throwable]]]](fs2.concurrent.SignallingRef.apply[F, Option[Option[Throwable]]](scala.None)(F))(F).flatMap[fs2.Stream[[x]F[x],fs2.INothing]](((done: fs2.concurrent.SignallingRef[F,Option[Option[Throwable]]]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.std.Semaphore[F]](cats.effect.std.Semaphore.apply[F](maxConcurrency.toLong)(F))(F).flatMap[fs2.Stream[[x]F[x],fs2.INothing]](((available: cats.effect.std.Semaphore[F]) =&gt; cats.syntax.`package`.all.toFunctorOps[F, fs2.concurrent.SignallingRef[F,Long]](fs2.concurrent.SignallingRef.apply[F, Long](1L)(F))(F).map[fs2.Stream[[x]F[x],fs2.INothing]](((running: fs2.concurrent.SignallingRef[F,Long]) =&gt; {
+  val incrementRunning: F[Unit] = running.update(((x$1: Long) =&gt; x$1.+(1)));
+  val decrementRunning: F[Unit] = running.update(((x$2: Long) =&gt; x$2.-(1)));
+  val awaitWhileRunning: F[Unit] = running.discrete.dropWhile(((x$3: Long) =&gt; x$3.&gt;(0))).take(1L).compile[[x]F[x], [x]F[x], Long](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain;
+  val stop: F[Unit] = done.update(((x$4: Option[Option[Throwable]]) =&gt; x$4.orElse[Option[Throwable]](scala.Some.apply[None.type](scala.None))));
+  val stopSignal: fs2.concurrent.Signal[F,Boolean] = concurrent.this.Signal.SignalOps[[_]F[_], Option[Option[Throwable]]](done).map[Boolean](((x$5: Option[Option[Throwable]]) =&gt; x$5.nonEmpty))(F);
+  def stopFailed(err: Throwable): F[Unit] = done.update(((x$6: Option[Option[Throwable]]) =&gt; x$6.orElse[Option[Throwable]](scala.Some.apply[Some[Throwable]](scala.Some.apply[Throwable](err)))));
+  def runInner(inner: fs2.Stream[F,O]): F[Unit] = {
+    val fa: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](inner.interruptWhen[[x]F[x]](stopSignal)(F).compile[[x]F[x], [x]F[x], O](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).handleErrorWith(((err: Throwable) =&gt; stopFailed(err)))(F))(F).&gt;&gt;[Unit](available.release)(F))(F).&gt;&gt;[Unit](decrementRunning)(F);
+    cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](available.acquire)(F).&gt;&gt;[Unit](incrementRunning)(F))(F).&gt;&gt;[Unit](cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](F.start[Unit](fa))(F).void)(F)
+  };
+  val runOuter: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](streams.evalMap[[x]F[x], Unit](((x$7: fs2.Stream[F,O]) =&gt; runInner(x$7))).interruptWhen[[x]F[x]](stopSignal)(F).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).handleErrorWith(((err: Throwable) =&gt; stopFailed(err)))(F))(F).&gt;&gt;[Unit](decrementRunning)(F);
+  val signalResult: F[Unit] = cats.syntax.`package`.all.toFlatMapOps[F, Option[Option[Throwable]]](done.get)(F).flatMap[Unit](((x0$1: Option[Option[Throwable]]) =&gt; x0$1 match {
+    case (value: Option[Throwable]): Some[Option[Throwable]]((value: Throwable): Some[Throwable]((err @ _))) =&gt; F.raiseError[Unit](err)
+    case _ =&gt; F.unit
+  }));
+  fs2.Stream.bracket[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](F.start[Unit](runOuter))(((x$8: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](stop)(F).&gt;&gt;[Unit](awaitWhileRunning)(F))(F).&gt;&gt;[Unit](signalResult)(F))).&gt;&gt;[[x]F[x], fs2.INothing](fs2.Stream.eval[F, Unit](awaitWhileRunning).drain)(compat.this.NotGiven.default[Nothing])
+}))))))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          10496
+        </td>
+        <td>
+          2009
+          -
+          2044
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.Semaphore.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.std.Semaphore.apply[F](maxConcurrency.toLong)(F)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          10567
+        </td>
+        <td>
+          1996
+          -
+          3346
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.std.Semaphore[F]](cats.effect.std.Semaphore.apply[F](maxConcurrency.toLong)(F))(F).flatMap[fs2.Stream[[x]F[x],fs2.INothing]](((available: cats.effect.std.Semaphore[F]) =&gt; cats.syntax.`package`.all.toFunctorOps[F, fs2.concurrent.SignallingRef[F,Long]](fs2.concurrent.SignallingRef.apply[F, Long](1L)(F))(F).map[fs2.Stream[[x]F[x],fs2.INothing]](((running: fs2.concurrent.SignallingRef[F,Long]) =&gt; {
+  val incrementRunning: F[Unit] = running.update(((x$1: Long) =&gt; x$1.+(1)));
+  val decrementRunning: F[Unit] = running.update(((x$2: Long) =&gt; x$2.-(1)));
+  val awaitWhileRunning: F[Unit] = running.discrete.dropWhile(((x$3: Long) =&gt; x$3.&gt;(0))).take(1L).compile[[x]F[x], [x]F[x], Long](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain;
+  val stop: F[Unit] = done.update(((x$4: Option[Option[Throwable]]) =&gt; x$4.orElse[Option[Throwable]](scala.Some.apply[None.type](scala.None))));
+  val stopSignal: fs2.concurrent.Signal[F,Boolean] = concurrent.this.Signal.SignalOps[[_]F[_], Option[Option[Throwable]]](done).map[Boolean](((x$5: Option[Option[Throwable]]) =&gt; x$5.nonEmpty))(F);
+  def stopFailed(err: Throwable): F[Unit] = done.update(((x$6: Option[Option[Throwable]]) =&gt; x$6.orElse[Option[Throwable]](scala.Some.apply[Some[Throwable]](scala.Some.apply[Throwable](err)))));
+  def runInner(inner: fs2.Stream[F,O]): F[Unit] = {
+    val fa: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](inner.interruptWhen[[x]F[x]](stopSignal)(F).compile[[x]F[x], [x]F[x], O](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).handleErrorWith(((err: Throwable) =&gt; stopFailed(err)))(F))(F).&gt;&gt;[Unit](available.release)(F))(F).&gt;&gt;[Unit](decrementRunning)(F);
+    cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](available.acquire)(F).&gt;&gt;[Unit](incrementRunning)(F))(F).&gt;&gt;[Unit](cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](F.start[Unit](fa))(F).void)(F)
+  };
+  val runOuter: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](streams.evalMap[[x]F[x], Unit](((x$7: fs2.Stream[F,O]) =&gt; runInner(x$7))).interruptWhen[[x]F[x]](stopSignal)(F).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).handleErrorWith(((err: Throwable) =&gt; stopFailed(err)))(F))(F).&gt;&gt;[Unit](decrementRunning)(F);
+  val signalResult: F[Unit] = cats.syntax.`package`.all.toFlatMapOps[F, Option[Option[Throwable]]](done.get)(F).flatMap[Unit](((x0$1: Option[Option[Throwable]]) =&gt; x0$1 match {
+    case (value: Option[Throwable]): Some[Option[Throwable]]((value: Throwable): Some[Throwable]((err @ _))) =&gt; F.raiseError[Unit](err)
+    case _ =&gt; F.unit
+  }));
+  fs2.Stream.bracket[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](F.start[Unit](runOuter))(((x$8: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](stop)(F).&gt;&gt;[Unit](awaitWhileRunning)(F))(F).&gt;&gt;[Unit](signalResult)(F))).&gt;&gt;[[x]F[x], fs2.INothing](fs2.Stream.eval[F, Unit](awaitWhileRunning).drain)(compat.this.NotGiven.default[Nothing])
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          10285
+        </td>
+        <td>
+          2062
+          -
+          2087
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.concurrent.SignallingRef.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.concurrent.SignallingRef.apply[F, Long](1L)(F)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          10739
+        </td>
+        <td>
+          2051
+          -
+          3346
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, fs2.concurrent.SignallingRef[F,Long]](fs2.concurrent.SignallingRef.apply[F, Long](1L)(F))(F).map[fs2.Stream[[x]F[x],fs2.INothing]](((running: fs2.concurrent.SignallingRef[F,Long]) =&gt; {
+  val incrementRunning: F[Unit] = running.update(((x$1: Long) =&gt; x$1.+(1)));
+  val decrementRunning: F[Unit] = running.update(((x$2: Long) =&gt; x$2.-(1)));
+  val awaitWhileRunning: F[Unit] = running.discrete.dropWhile(((x$3: Long) =&gt; x$3.&gt;(0))).take(1L).compile[[x]F[x], [x]F[x], Long](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain;
+  val stop: F[Unit] = done.update(((x$4: Option[Option[Throwable]]) =&gt; x$4.orElse[Option[Throwable]](scala.Some.apply[None.type](scala.None))));
+  val stopSignal: fs2.concurrent.Signal[F,Boolean] = concurrent.this.Signal.SignalOps[[_]F[_], Option[Option[Throwable]]](done).map[Boolean](((x$5: Option[Option[Throwable]]) =&gt; x$5.nonEmpty))(F);
+  def stopFailed(err: Throwable): F[Unit] = done.update(((x$6: Option[Option[Throwable]]) =&gt; x$6.orElse[Option[Throwable]](scala.Some.apply[Some[Throwable]](scala.Some.apply[Throwable](err)))));
+  def runInner(inner: fs2.Stream[F,O]): F[Unit] = {
+    val fa: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](inner.interruptWhen[[x]F[x]](stopSignal)(F).compile[[x]F[x], [x]F[x], O](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).handleErrorWith(((err: Throwable) =&gt; stopFailed(err)))(F))(F).&gt;&gt;[Unit](available.release)(F))(F).&gt;&gt;[Unit](decrementRunning)(F);
+    cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](available.acquire)(F).&gt;&gt;[Unit](incrementRunning)(F))(F).&gt;&gt;[Unit](cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](F.start[Unit](fa))(F).void)(F)
+  };
+  val runOuter: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](streams.evalMap[[x]F[x], Unit](((x$7: fs2.Stream[F,O]) =&gt; runInner(x$7))).interruptWhen[[x]F[x]](stopSignal)(F).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).handleErrorWith(((err: Throwable) =&gt; stopFailed(err)))(F))(F).&gt;&gt;[Unit](decrementRunning)(F);
+  val signalResult: F[Unit] = cats.syntax.`package`.all.toFlatMapOps[F, Option[Option[Throwable]]](done.get)(F).flatMap[Unit](((x0$1: Option[Option[Throwable]]) =&gt; x0$1 match {
+    case (value: Option[Throwable]): Some[Option[Throwable]]((value: Throwable): Some[Throwable]((err @ _))) =&gt; F.raiseError[Unit](err)
+    case _ =&gt; F.unit
+  }));
+  fs2.Stream.bracket[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](F.start[Unit](runOuter))(((x$8: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](stop)(F).&gt;&gt;[Unit](awaitWhileRunning)(F))(F).&gt;&gt;[Unit](signalResult)(F))).&gt;&gt;[[x]F[x], fs2.INothing](fs2.Stream.eval[F, Unit](awaitWhileRunning).drain)(compat.this.NotGiven.default[Nothing])
+}))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          10516
+        </td>
+        <td>
+          2140
+          -
+          2161
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          running.update(((x$1: Long) =&gt; x$1.+(1)))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          10841
+        </td>
+        <td>
+          2155
+          -
+          2160
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          10193
+        </td>
+        <td>
+          2215
+          -
+          2220
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.-(1)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          10779
+        </td>
+        <td>
+          2200
+          -
+          2221
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          running.update(((x$2: Long) =&gt; x$2.-(1)))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10819
+        </td>
+        <td>
+          2303
+          -
+          2303
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](F)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10481
+        </td>
+        <td>
+          2303
+          -
+          2303
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10223
+        </td>
+        <td>
+          2300
+          -
+          2301
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          1L
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10575
+        </td>
+        <td>
+          2288
+          -
+          2293
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$3.&gt;(0)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10288
+        </td>
+        <td>
+          2261
+          -
+          2316
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.CompileOps.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          running.discrete.dropWhile(((x$3: Long) =&gt; x$3.&gt;(0))).take(1L).compile[[x]F[x], [x]F[x], Long](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          10878
+        </td>
+        <td>
+          2370
+          -
+          2374
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          10528
+        </td>
+        <td>
+          2365
+          -
+          2375
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          10734
+        </td>
+        <td>
+          2344
+          -
+          2377
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          done.update(((x$4: Option[Option[Throwable]]) =&gt; x$4.orElse[Option[Throwable]](scala.Some.apply[None.type](scala.None))))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          10198
+        </td>
+        <td>
+          2356
+          -
+          2376
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.orElse[Option[Throwable]](scala.Some.apply[None.type](scala.None))
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10577
+        </td>
+        <td>
+          2421
+          -
+          2441
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.concurrent.Signal.SignalOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          concurrent.this.Signal.SignalOps[[_]F[_], Option[Option[Throwable]]](done).map[Boolean](((x$5: Option[Option[Throwable]]) =&gt; x$5.nonEmpty))(F)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          10257
+        </td>
+        <td>
+          2524
+          -
+          2533
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Throwable](err)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          10484
+        </td>
+        <td>
+          2510
+          -
+          2535
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.orElse[Option[Throwable]](scala.Some.apply[Some[Throwable]](scala.Some.apply[Throwable](err)))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          10124
+        </td>
+        <td>
+          2498
+          -
+          2536
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          done.update(((x$6: Option[Option[Throwable]]) =&gt; x$6.orElse[Option[Throwable]](scala.Some.apply[Some[Throwable]](scala.Some.apply[Throwable](err)))))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          10802
+        </td>
+        <td>
+          2519
+          -
+          2534
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Some[Throwable]](scala.Some.apply[Throwable](err))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          10867
+        </td>
+        <td>
+          2608
+          -
+          2766
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](inner.interruptWhen[[x]F[x]](stopSignal)(F).compile[[x]F[x], [x]F[x], O](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).handleErrorWith(((err: Throwable) =&gt; stopFailed(err)))(F))(F).&gt;&gt;[Unit](available.release)(F))(F).&gt;&gt;[Unit](decrementRunning)(F)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          10511
+        </td>
+        <td>
+          2776
+          -
+          2833
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](available.acquire)(F).&gt;&gt;[Unit](incrementRunning)(F))(F).&gt;&gt;[Unit](cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](F.start[Unit](fa))(F).void)(F)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          10180
+        </td>
+        <td>
+          2881
+          -
+          3052
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](streams.evalMap[[x]F[x], Unit](((x$7: fs2.Stream[F,O]) =&gt; runInner(x$7))).interruptWhen[[x]F[x]](stopSignal)(F).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain)(F).handleErrorWith(((err: Throwable) =&gt; stopFailed(err)))(F))(F).&gt;&gt;[Unit](decrementRunning)(F)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          10789
+        </td>
+        <td>
+          3096
+          -
+          3203
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[Option[Throwable]]](done.get)(F).flatMap[Unit](((x0$1: Option[Option[Throwable]]) =&gt; x0$1 match {
+  case (value: Option[Throwable]): Some[Option[Throwable]]((value: Throwable): Some[Throwable]((err @ _))) =&gt; F.raiseError[Unit](err)
+  case _ =&gt; F.unit
+}))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          10735
+        </td>
+        <td>
+          3096
+          -
+          3104
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.concurrent.Signal.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          done.get
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          10582
+        </td>
+        <td>
+          3149
+          -
+          3166
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.raiseError[Unit](err)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          10273
+        </td>
+        <td>
+          3187
+          -
+          3193
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          10463
+        </td>
+        <td>
+          3226
+          -
+          3243
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.GenSpawn.start
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.start[Unit](runOuter)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          10125
+        </td>
+        <td>
+          3250
+          -
+          3291
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](stop)(F).&gt;&gt;[Unit](awaitWhileRunning)(F))(F).&gt;&gt;[Unit](signalResult)(F)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          10555
+        </td>
+        <td>
+          3293
+          -
+          3293
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          10169
+        </td>
+        <td>
+          3211
+          -
+          3340
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.bracket[F, cats.effect.kernel.Fiber[F,Throwable,Unit]](F.start[Unit](runOuter))(((x$8: cats.effect.kernel.Fiber[F,Throwable,Unit]) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](stop)(F).&gt;&gt;[Unit](awaitWhileRunning)(F))(F).&gt;&gt;[Unit](signalResult)(F))).&gt;&gt;[[x]F[x], fs2.INothing](fs2.Stream.eval[F, Unit](awaitWhileRunning).drain)(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          10870
+        </td>
+        <td>
+          3304
+          -
+          3340
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.eval[F, Unit](awaitWhileRunning).drain
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          10837
+        </td>
+        <td>
+          3373
+          -
+          3373
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.http4s.ember.server.internal.streamforkingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[fs2.Stream[[x]F[x],fs2.INothing]]
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          10479
+        </td>
+        <td>
+          3352
+          -
+          3380
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatten
+        </td>
+        <td>
+          org.http4s.ember.server.internal.streamforkingsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.eval[F, fs2.Stream[[x]F[x],fs2.INothing]](fstream).flatten[[_]F[_], fs2.INothing](scala.this.&lt;:&lt;.refl[fs2.Stream[[x]F[x],fs2.INothing]])
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

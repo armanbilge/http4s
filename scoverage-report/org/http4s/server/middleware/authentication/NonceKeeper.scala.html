@@ -1,0 +1,1415 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/authentication/NonceKeeper.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server.middleware.authentication
+</span>18 <span style=''>
+</span>19 <span style=''>import java.util.LinkedHashMap
+</span>20 <span style=''>import scala.annotation.tailrec
+</span>21 <span style=''>
+</span>22 <span style=''>private[authentication] object NonceKeeper {
+</span>23 <span style=''>  sealed abstract class Reply
+</span>24 <span style=''>
+</span>25 <span style=''>  case object StaleReply extends Reply
+</span>26 <span style=''>
+</span>27 <span style=''>  case object OKReply extends Reply
+</span>28 <span style=''>
+</span>29 <span style=''>  case object BadNCReply extends Reply
+</span>30 <span style=''>}
+</span>31 <span style=''>
+</span>32 <span style=''>/** A thread-safe class used to manage a database of nonces.
+</span>33 <span style=''>  *
+</span>34 <span style=''>  * @param staleTimeout Amount of time (in milliseconds) after which a nonce
+</span>35 <span style=''>  *                     is considered stale (i.e. not used for authentication
+</span>36 <span style=''>  *                     purposes anymore).
+</span>37 <span style=''>  * @param bits The number of random bits a nonce should consist of.
+</span>38 <span style=''>  */
+</span>39 <span style=''>@deprecated(&quot;Side-effecting. Use NonceKeeperF.&quot;, &quot;0.23.12&quot;)
+</span>40 <span style=''>private[authentication] class NonceKeeper(
+</span>41 <span style=''>    staleTimeout: Long,
+</span>42 <span style=''>    nonceCleanupInterval: Long,
+</span>43 <span style=''>    bits: Int,
+</span>44 <span style=''>) {
+</span>45 <span style=''>  </span><span style='background: #F0ADAD'>require(bits &gt; 0, &quot;Please supply a positive integer for bits.&quot;)</span><span style=''>
+</span>46 <span style=''>  private val nonces = </span><span style='background: #F0ADAD'>new LinkedHashMap[String, Nonce]</span><span style=''>
+</span>47 <span style=''>  private var lastCleanup = </span><span style='background: #F0ADAD'>System.currentTimeMillis()</span><span style=''>
+</span>48 <span style=''>
+</span>49 <span style=''>  /** Removes nonces that are older than staleTimeout
+</span>50 <span style=''>    * Note: this _MUST_ be executed inside a block synchronized on `nonces`
+</span>51 <span style=''>    */
+</span>52 <span style=''>  private def checkStale() = {
+</span>53 <span style=''>    val d = </span><span style='background: #F0ADAD'>System.currentTimeMillis()</span><span style=''>
+</span>54 <span style=''>    if (</span><span style='background: #F0ADAD'>d - lastCleanup &gt; nonceCleanupInterval</span><span style=''>) </span><span style='background: #F0ADAD'>{
+</span>55 <span style=''></span><span style='background: #F0ADAD'>      lastCleanup = d
+</span>56 <span style=''></span><span style='background: #F0ADAD'>
+</span>57 <span style=''></span><span style='background: #F0ADAD'>      // Because we are using an LinkedHashMap, the keys will be returned in the order they were
+</span>58 <span style=''></span><span style='background: #F0ADAD'>      // inserted. Therefor, once we reach a non-stale value, the remaining values are also not stale.
+</span>59 <span style=''></span><span style='background: #F0ADAD'>      val it = nonces.values().iterator()
+</span>60 <span style=''></span><span style='background: #F0ADAD'>      @tailrec
+</span>61 <span style=''></span><span style='background: #F0ADAD'>      def dropStale(): Unit =
+</span>62 <span style=''></span><span style='background: #F0ADAD'>        if (it.hasNext &amp;&amp; staleTimeout &gt; d - it.next().created.getTime) {
+</span>63 <span style=''></span><span style='background: #F0ADAD'>          it.remove()
+</span>64 <span style=''></span><span style='background: #F0ADAD'>          dropStale()
+</span>65 <span style=''></span><span style='background: #F0ADAD'>        }
+</span>66 <span style=''></span><span style='background: #F0ADAD'>      dropStale()
+</span>67 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>68 <span style=''>  }
+</span>69 <span style=''>
+</span>70 <span style=''>  /** Get a fresh nonce in form of a {@link String}.
+</span>71 <span style=''>    * @return A fresh nonce.
+</span>72 <span style=''>    */
+</span>73 <span style=''>  def newNonce(): String = {
+</span>74 <span style=''>    var n: Nonce = </span><span style='background: #F0ADAD'>null</span><span style=''>
+</span>75 <span style=''>    </span><span style='background: #F0ADAD'>nonces.synchronized {
+</span>76 <span style=''></span><span style='background: #F0ADAD'>      checkStale()
+</span>77 <span style=''></span><span style='background: #F0ADAD'>      n = Nonce.gen(bits)
+</span>78 <span style=''></span><span style='background: #F0ADAD'>      while (nonces.get(n.data) != null) n = Nonce.gen(bits)
+</span>79 <span style=''></span><span style='background: #F0ADAD'>      nonces.put(n.data, n)
+</span>80 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>81 <span style=''>    </span><span style='background: #F0ADAD'>n.data</span><span style=''>
+</span>82 <span style=''>  }
+</span>83 <span style=''>
+</span>84 <span style=''>  /** Checks if the nonce {@link data} is known and the {@link nc} value is
+</span>85 <span style=''>    * correct. If this is so, the nc value associated with the nonce is increased
+</span>86 <span style=''>    * and the appropriate status is returned.
+</span>87 <span style=''>    * @param data The nonce.
+</span>88 <span style=''>    * @param nc The nonce counter.
+</span>89 <span style=''>    * @return A reply indicating the status of (data, nc).
+</span>90 <span style=''>    */
+</span>91 <span style=''>  def receiveNonce(data: String, nc: Int): NonceKeeper.Reply =
+</span>92 <span style=''>    </span><span style='background: #F0ADAD'>nonces.synchronized {
+</span>93 <span style=''></span><span style='background: #F0ADAD'>      checkStale()
+</span>94 <span style=''></span><span style='background: #F0ADAD'>      nonces.get(data) match {
+</span>95 <span style=''></span><span style='background: #F0ADAD'>        case null =&gt; NonceKeeper.StaleReply
+</span>96 <span style=''></span><span style='background: #F0ADAD'>        case n: Nonce =&gt;
+</span>97 <span style=''></span><span style='background: #F0ADAD'>          if (nc &gt; n.nc) {
+</span>98 <span style=''></span><span style='background: #F0ADAD'>            n.nc = n.nc + 1
+</span>99 <span style=''></span><span style='background: #F0ADAD'>            NonceKeeper.OKReply
+</span>100 <span style=''></span><span style='background: #F0ADAD'>          } else
+</span>101 <span style=''></span><span style='background: #F0ADAD'>            NonceKeeper.BadNCReply
+</span>102 <span style=''></span><span style='background: #F0ADAD'>      }
+</span>103 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>104 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          9713
+        </td>
+        <td>
+          1432
+          -
+          1440
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.bits.&gt;(0)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          9057
+        </td>
+        <td>
+          1442
+          -
+          1486
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;Please supply a positive integer for bits.&quot;
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          8019
+        </td>
+        <td>
+          1424
+          -
+          1487
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.require
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.require(NonceKeeper.this.bits.&gt;(0), &quot;Please supply a positive integer for bits.&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          9822
+        </td>
+        <td>
+          1511
+          -
+          1543
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.LinkedHashMap.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.util.LinkedHashMap[String,org.http4s.server.middleware.authentication.Nonce]()
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          8753
+        </td>
+        <td>
+          1572
+          -
+          1598
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.currentTimeMillis
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.System.currentTimeMillis()
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7642
+        </td>
+        <td>
+          1780
+          -
+          1806
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.currentTimeMillis
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.System.currentTimeMillis()
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          10027
+        </td>
+        <td>
+          1819
+          -
+          1830
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.lastCleanup
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.lastCleanup
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          9013
+        </td>
+        <td>
+          1833
+          -
+          1853
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.nonceCleanupInterval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.nonceCleanupInterval
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          8833
+        </td>
+        <td>
+          1811
+          -
+          1811
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          7830
+        </td>
+        <td>
+          1815
+          -
+          1853
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          d.-(NonceKeeper.this.lastCleanup).&gt;(NonceKeeper.this.nonceCleanupInterval)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          9741
+        </td>
+        <td>
+          1855
+          -
+          2318
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  NonceKeeper.this.lastCleanup_=(d);
+  val it: java.util.Iterator[org.http4s.server.middleware.authentication.Nonce] = NonceKeeper.this.nonces.values().iterator();
+  @scala.annotation.tailrec def dropStale(): Unit = if (it.hasNext().&amp;&amp;(NonceKeeper.this.staleTimeout.&gt;(d.-(it.next().created.getTime()))))
+    {
+      it.remove();
+      dropStale()
+    }
+  else
+    ();
+  dropStale()
+}
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          7602
+        </td>
+        <td>
+          1811
+          -
+          1811
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          9680
+        </td>
+        <td>
+          1863
+          -
+          1878
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.lastCleanup_=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.lastCleanup_=(d)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          8559
+        </td>
+        <td>
+          2095
+          -
+          2121
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.Collection.iterator
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.nonces.values().iterator()
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          8564
+        </td>
+        <td>
+          2175
+          -
+          2175
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          9915
+        </td>
+        <td>
+          2208
+          -
+          2237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          d.-(it.next().created.getTime())
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          8025
+        </td>
+        <td>
+          2212
+          -
+          2237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.Date.getTime
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          it.next().created.getTime()
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7920
+        </td>
+        <td>
+          2239
+          -
+          2294
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  it.remove();
+  dropStale()
+}
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          8760
+        </td>
+        <td>
+          2193
+          -
+          2237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.staleTimeout.&gt;(d.-(it.next().created.getTime()))
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          9588
+        </td>
+        <td>
+          2175
+          -
+          2175
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7596
+        </td>
+        <td>
+          2179
+          -
+          2237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          it.hasNext().&amp;&amp;(NonceKeeper.this.staleTimeout.&gt;(d.-(it.next().created.getTime())))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          9976
+        </td>
+        <td>
+          2251
+          -
+          2262
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.Iterator.remove
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          it.remove()
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          8837
+        </td>
+        <td>
+          2273
+          -
+          2284
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.dropStale
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          dropStale()
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          8065
+        </td>
+        <td>
+          2301
+          -
+          2312
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.dropStale
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          dropStale()
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          9984
+        </td>
+        <td>
+          2461
+          -
+          2465
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          null
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          8608
+        </td>
+        <td>
+          2470
+          -
+          2631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.synchronized
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.nonces.synchronized[org.http4s.server.middleware.authentication.Nonce]({
+  NonceKeeper.this.checkStale();
+  n = Nonce.gen(NonceKeeper.this.bits);
+  while$1(){
+    if (NonceKeeper.this.nonces.get(n.data).!=(null))
+      {
+        n = Nonce.gen(NonceKeeper.this.bits);
+        while$1()
+      }
+    else
+      ()
+  };
+  NonceKeeper.this.nonces.put(n.data, n)
+})
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8971
+        </td>
+        <td>
+          2498
+          -
+          2510
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.checkStale
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.checkStale()
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          9671
+        </td>
+        <td>
+          2521
+          -
+          2536
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.Nonce.gen
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Nonce.gen(NonceKeeper.this.bits)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          7740
+        </td>
+        <td>
+          2531
+          -
+          2535
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.bits
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.bits
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7712
+        </td>
+        <td>
+          2578
+          -
+          2597
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  n = Nonce.gen(NonceKeeper.this.bits);
+  while$1()
+}
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8525
+        </td>
+        <td>
+          2550
+          -
+          2576
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.!=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.nonces.get(n.data).!=(null)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9437
+        </td>
+        <td>
+          2543
+          -
+          2543
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9873
+        </td>
+        <td>
+          2582
+          -
+          2597
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.Nonce.gen
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Nonce.gen(NonceKeeper.this.bits)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8979
+        </td>
+        <td>
+          2543
+          -
+          2543
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8072
+        </td>
+        <td>
+          2592
+          -
+          2596
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.bits
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.bits
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8748
+        </td>
+        <td>
+          2580
+          -
+          2580
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.while$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          while$1()
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          9677
+        </td>
+        <td>
+          2604
+          -
+          2625
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.HashMap.put
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.nonces.put(n.data, n)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          7884
+        </td>
+        <td>
+          2615
+          -
+          2621
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.Nonce.data
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          n.data
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          8045
+        </td>
+        <td>
+          2636
+          -
+          2642
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.Nonce.data
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          n.data
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          7691
+        </td>
+        <td>
+          3049
+          -
+          3342
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.synchronized
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.nonces.synchronized[org.http4s.server.middleware.authentication.NonceKeeper.Reply]({
+  NonceKeeper.this.checkStale();
+  NonceKeeper.this.nonces.get(data) match {
+    case null =&gt; NonceKeeper.StaleReply
+    case (n @ (_: org.http4s.server.middleware.authentication.Nonce)) =&gt; if (nc.&gt;(n.nc))
+      {
+        n.nc_=(n.nc.+(1));
+        NonceKeeper.OKReply
+      }
+    else
+      NonceKeeper.BadNCReply
+  }
+})
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          9881
+        </td>
+        <td>
+          3077
+          -
+          3089
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.checkStale
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.checkStale()
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          8758
+        </td>
+        <td>
+          3096
+          -
+          3112
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.LinkedHashMap.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.this.nonces.get(data)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          7688
+        </td>
+        <td>
+          3142
+          -
+          3164
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.StaleReply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.StaleReply
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          9459
+        </td>
+        <td>
+          3209
+          -
+          3213
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.Nonce.nc
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          n.nc
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          7985
+        </td>
+        <td>
+          3215
+          -
+          3288
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  n.nc_=(n.nc.+(1));
+  NonceKeeper.OKReply
+}
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          8936
+        </td>
+        <td>
+          3204
+          -
+          3213
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          nc.&gt;(n.nc)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          7783
+        </td>
+        <td>
+          3236
+          -
+          3244
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          n.nc.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          9684
+        </td>
+        <td>
+          3229
+          -
+          3244
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.Nonce.nc_=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          n.nc_=(n.nc.+(1))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          8589
+        </td>
+        <td>
+          3257
+          -
+          3276
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.OKReply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.OKReply
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          8705
+        </td>
+        <td>
+          3306
+          -
+          3328
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.BadNCReply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.BadNCReply
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          9829
+        </td>
+        <td>
+          3306
+          -
+          3328
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.BadNCReply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NonceKeeper.BadNCReply
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

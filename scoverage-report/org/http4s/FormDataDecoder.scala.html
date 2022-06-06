@@ -1,0 +1,3121 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/FormDataDecoder.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Applicative
+</span>20 <span style=''>import cats.data.Chain
+</span>21 <span style=''>import cats.data.Validated.Valid
+</span>22 <span style=''>import cats.data.ValidatedNel
+</span>23 <span style=''>import cats.effect.Concurrent
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>
+</span>26 <span style=''>/** A decoder ware that uses [[QueryParamDecoder]] to decode values in [[org.http4s.UrlForm]]
+</span>27 <span style=''>  *
+</span>28 <span style=''>  * @example
+</span>29 <span style=''>  * {{{
+</span>30 <span style=''>  * scala&gt; import cats.syntax.all._
+</span>31 <span style=''>  * scala&gt; import cats.data._
+</span>32 <span style=''>  * scala&gt; import org.http4s.FormDataDecoder._
+</span>33 <span style=''>  * scala&gt; import org.http4s.ParseFailure
+</span>34 <span style=''>  * scala&gt; case class Foo(a: String, b: Boolean)
+</span>35 <span style=''>  * scala&gt; case class Bar(fs: List[Foo], f: Foo, d: Boolean)
+</span>36 <span style=''>  * scala&gt;
+</span>37 <span style=''>  * scala&gt; implicit val fooMapper: FormDataDecoder[Foo] = (
+</span>38 <span style=''>  *      |   field[String](&quot;a&quot;),
+</span>39 <span style=''>  *      |   field[Boolean](&quot;b&quot;)
+</span>40 <span style=''>  *      | ).mapN(Foo.apply)
+</span>41 <span style=''>  * scala&gt;
+</span>42 <span style=''>  * scala&gt; val barMapper = (
+</span>43 <span style=''>  *      |   list[Foo](&quot;fs&quot;),
+</span>44 <span style=''>  *      |   nested[Foo](&quot;f&quot;),
+</span>45 <span style=''>  *      |   field[Boolean](&quot;d&quot;)
+</span>46 <span style=''>  *      | ).mapN(Bar.apply)
+</span>47 <span style=''>  * scala&gt;
+</span>48 <span style=''>  * scala&gt; barMapper(
+</span>49 <span style=''>  *      |   Map(
+</span>50 <span style=''>  *      |    &quot;fs[].a&quot; -&gt; Chain(&quot;a1&quot;, &quot;a2&quot;),
+</span>51 <span style=''>  *      |    &quot;fs[].b&quot; -&gt; Chain(&quot;true&quot;, &quot;false&quot;),
+</span>52 <span style=''>  *      |    &quot;f.a&quot; -&gt; Chain(&quot;fa&quot;),
+</span>53 <span style=''>  *      |    &quot;f.b&quot; -&gt; Chain(&quot;false&quot;),
+</span>54 <span style=''>  *      |    &quot;d&quot; -&gt; Chain(&quot;true&quot;))
+</span>55 <span style=''>  *      | )
+</span>56 <span style=''>  * res1: ValidatedNel[ParseFailure, Bar] = Valid(Bar(List(Foo(a1,true), Foo(a2,false)),Foo(fa,false),true))
+</span>57 <span style=''>  *
+</span>58 <span style=''>  * }}}
+</span>59 <span style=''>  *
+</span>60 <span style=''>  * The companion object provides a [[EntityDecoder]] from
+</span>61 <span style=''>  * HTML form parameters.
+</span>62 <span style=''>  * @example
+</span>63 <span style=''>  * {{{
+</span>64 <span style=''>  *   import org.http4s.FormDataDecoder.formEntityDecoder
+</span>65 <span style=''>  *   HttpRoutes
+</span>66 <span style=''>  *    .of[F] {
+</span>67 <span style=''>  *      case req @ POST -&gt; Root =&gt;
+</span>68 <span style=''>  *        req.as[MyEntity].flatMap { entity =&gt;
+</span>69 <span style=''>  *          Ok()
+</span>70 <span style=''>  *        }
+</span>71 <span style=''>  *    }
+</span>72 <span style=''>  * }}}
+</span>73 <span style=''>  *
+</span>74 <span style=''>  * For more examples, check the tests
+</span>75 <span style=''>  * https://github.com/http4s/http4s/blob/main/tests/src/test/scala/org/http4s/FormDataDecoderSpec.scala
+</span>76 <span style=''>  */
+</span>77 <span style=''>sealed trait FormDataDecoder[A] {
+</span>78 <span style=''>  def apply(data: Map[String, Chain[String]]): ValidatedNel[ParseFailure, A]
+</span>79 <span style=''>
+</span>80 <span style=''>  def mapValidated[B](f: A =&gt; ValidatedNel[ParseFailure, B]): FormDataDecoder[B] =
+</span>81 <span style=''>    </span><span style='background: #AEF1AE'>FormDataDecoder(this(_).andThen(f))</span><span style=''>
+</span>82 <span style=''>
+</span>83 <span style=''>  /** Filters out empty strings including spaces before decoding
+</span>84 <span style=''>    */
+</span>85 <span style=''>  def sanitized: FormDataDecoder[A] =
+</span>86 <span style=''>    </span><span style='background: #F0ADAD'>FormDataDecoder { data =&gt;
+</span>87 <span style=''></span><span style='background: #F0ADAD'>      this(data.map { case (k, v) =&gt;
+</span>88 <span style=''></span><span style='background: #F0ADAD'>        (k, v.filter(_.trim.nonEmpty))
+</span>89 <span style=''></span><span style='background: #F0ADAD'>      })
+</span>90 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>91 <span style=''>
+</span>92 <span style=''>}
+</span>93 <span style=''>
+</span>94 <span style=''>object FormDataDecoder {
+</span>95 <span style=''>  type FormData = Map[String, Chain[String]]
+</span>96 <span style=''>  type Result[A] = ValidatedNel[ParseFailure, A]
+</span>97 <span style=''>
+</span>98 <span style=''>  def apply[A](f: FormData =&gt; Result[A]): FormDataDecoder[A] =
+</span>99 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> FormDataDecoder[A] {
+</span>100 <span style=''>      def apply(data: FormData): Result[A] = </span><span style='background: #AEF1AE'>f(data)</span><span style=''>
+</span>101 <span style=''>    }
+</span>102 <span style=''>
+</span>103 <span style=''>  implicit def formEntityDecoder[F[_]: Concurrent, A](implicit
+</span>104 <span style=''>      fdd: FormDataDecoder[A]
+</span>105 <span style=''>  ): EntityDecoder[F, A] =
+</span>106 <span style=''>    </span><span style='background: #F0ADAD'>UrlForm.entityDecoder[F].flatMapR { d =&gt;
+</span>107 <span style=''></span><span style='background: #F0ADAD'>      fdd(d.values)
+</span>108 <span style=''></span><span style='background: #F0ADAD'>        .leftMap(es =&gt; InvalidMessageBodyFailure(es.map(_.sanitized).mkString_(&quot;\n&quot;)))
+</span>109 <span style=''></span><span style='background: #F0ADAD'>        .liftTo[DecodeResult[F, *]]
+</span>110 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>111 <span style=''>
+</span>112 <span style=''>  private def apply[Data, A](
+</span>113 <span style=''>      extract: FormData =&gt; Either[String, Data]
+</span>114 <span style=''>  )(decode: Data =&gt; Result[A]): FormDataDecoder[Either[String, A]] =
+</span>115 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> FormDataDecoder[Either[String, A]] {
+</span>116 <span style=''>      def apply(data: FormData): Result[Either[String, A]] =
+</span>117 <span style=''>        </span><span style='background: #AEF1AE'>extract(data).traverse(decode(_))</span><span style=''>
+</span>118 <span style=''>    }
+</span>119 <span style=''>
+</span>120 <span style=''>  implicit class FormDataDecoderSyntax[A](private val decoder: FormDataDecoder[Either[String, A]])
+</span>121 <span style=''>      extends AnyVal {
+</span>122 <span style=''>
+</span>123 <span style=''>    def required: FormDataDecoder[A] =
+</span>124 <span style=''>      </span><span style='background: #AEF1AE'>decoder.mapValidated(_.fold(ParseFailure(_, &quot;&quot;).invalidNel[A], Valid(_)))</span><span style=''>
+</span>125 <span style=''>
+</span>126 <span style=''>    def optional: FormDataDecoder[Option[A]] =
+</span>127 <span style=''>      </span><span style='background: #AEF1AE'>decoder.map(_.map(Some(_)).getOrElse(None))</span><span style=''>
+</span>128 <span style=''>
+</span>129 <span style=''>    /** Use a default value when the field is missing
+</span>130 <span style=''>      * @param defaultValue
+</span>131 <span style=''>      */
+</span>132 <span style=''>    def default(defaultValue: A): FormDataDecoder[A] =
+</span>133 <span style=''>      </span><span style='background: #AEF1AE'>decoder.map(_.getOrElse(defaultValue))</span><span style=''>
+</span>134 <span style=''>  }
+</span>135 <span style=''>
+</span>136 <span style=''>  def fieldEither[A](
+</span>137 <span style=''>      key: String
+</span>138 <span style=''>  )(implicit
+</span>139 <span style=''>      qpd: QueryParamDecoder[A]
+</span>140 <span style=''>  ): FormDataDecoder[Either[String, A]] =
+</span>141 <span style=''>    </span><span style='background: #AEF1AE'>apply[String, A] { data =&gt;
+</span>142 <span style=''></span><span style='background: #AEF1AE'>      nonEmptyFields(data)
+</span>143 <span style=''></span><span style='background: #AEF1AE'>        .get(key)
+</span>144 <span style=''></span><span style='background: #AEF1AE'>        .flatMap(_.headOption)
+</span>145 <span style=''></span><span style='background: #AEF1AE'>        .toRight(s&quot;$key is missing&quot;)
+</span>146 <span style=''></span><span style='background: #AEF1AE'>    }(v =&gt; qpd.decode(QueryParameterValue(v)))</span><span style=''>
+</span>147 <span style=''>
+</span>148 <span style=''>  def field[A: QueryParamDecoder](key: String): FormDataDecoder[A] = </span><span style='background: #AEF1AE'>fieldEither(key).required</span><span style=''>
+</span>149 <span style=''>
+</span>150 <span style=''>  def fieldOptional[A: QueryParamDecoder](key: String): FormDataDecoder[Option[A]] = </span><span style='background: #AEF1AE'>fieldEither(
+</span>151 <span style=''></span><span style='background: #AEF1AE'>    key
+</span>152 <span style=''></span><span style='background: #AEF1AE'>  ).optional</span><span style=''>
+</span>153 <span style=''>
+</span>154 <span style=''>  /** For nested, this decoder assumes that the form parameter name use &quot;.&quot; as deliminator for levels.
+</span>155 <span style=''>    * E.g. For a field named &quot;bar&quot; inside a nested class under the field &quot;foo&quot;,
+</span>156 <span style=''>    * the parameter name is &quot;foo.bar&quot;.
+</span>157 <span style=''>    */
+</span>158 <span style=''>  def nested[A: FormDataDecoder](key: String): FormDataDecoder[A] =
+</span>159 <span style=''>    </span><span style='background: #AEF1AE'>nestedEither(key).required</span><span style=''>
+</span>160 <span style=''>
+</span>161 <span style=''>  /** For nested, this decoder assumes that the form parameter name use &quot;.&quot; as deliminator for levels.
+</span>162 <span style=''>    * E.g. For a field named &quot;bar&quot; inside a nested class under the field &quot;foo&quot;,
+</span>163 <span style=''>    * the parameter name is &quot;foo.bar&quot;.
+</span>164 <span style=''>    */
+</span>165 <span style=''>  def nestedOptional[A: FormDataDecoder](key: String): FormDataDecoder[Option[A]] =
+</span>166 <span style=''>    </span><span style='background: #AEF1AE'>nestedEither(key).optional</span><span style=''>
+</span>167 <span style=''>
+</span>168 <span style=''>  def nestedEither[A](
+</span>169 <span style=''>      key: String
+</span>170 <span style=''>  )(implicit
+</span>171 <span style=''>      fdd: FormDataDecoder[A]
+</span>172 <span style=''>  ): FormDataDecoder[Either[String, A]] =
+</span>173 <span style=''>    </span><span style='background: #AEF1AE'>apply[FormData, A](extractPrefix(key + &quot;.&quot;))(fdd.apply)</span><span style=''>
+</span>174 <span style=''>
+</span>175 <span style=''>  def chain[A: FormDataDecoder](key: String): FormDataDecoder[Chain[A]] =
+</span>176 <span style=''>    </span><span style='background: #AEF1AE'>chainEither(key).mapValidated(_.fold(_ =&gt; Valid(Chain.empty), Valid(_)))</span><span style=''>
+</span>177 <span style=''>
+</span>178 <span style=''>  def chainOf[A](key: String)(qd: QueryParamDecoder[A]): FormDataDecoder[Chain[A]] =
+</span>179 <span style=''>    </span><span style='background: #AEF1AE'>apply(data =&gt;
+</span>180 <span style=''></span><span style='background: #AEF1AE'>      data
+</span>181 <span style=''></span><span style='background: #AEF1AE'>        .get(key + &quot;[]&quot;)
+</span>182 <span style=''></span><span style='background: #AEF1AE'>        .orElse(data.get(key))
+</span>183 <span style=''></span><span style='background: #AEF1AE'>        .getOrElse(Chain.empty)
+</span>184 <span style=''></span><span style='background: #AEF1AE'>        .traverse(v =&gt; qd.decode(QueryParameterValue(v)))
+</span>185 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>186 <span style=''>
+</span>187 <span style=''>  def chainEither[A](
+</span>188 <span style=''>      key: String
+</span>189 <span style=''>  )(implicit A: FormDataDecoder[A]): FormDataDecoder[Either[String, Chain[A]]] =
+</span>190 <span style=''>    </span><span style='background: #AEF1AE'>apply[FormData, Chain[A]](extractPrefix(key + &quot;[].&quot;))(
+</span>191 <span style=''></span><span style='background: #AEF1AE'>      _.toList
+</span>192 <span style=''></span><span style='background: #AEF1AE'>        .map { case (k, cv) =&gt;
+</span>193 <span style=''></span><span style='background: #AEF1AE'>          cv.map(v =&gt; List((k, Chain(v))))
+</span>194 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>195 <span style=''></span><span style='background: #AEF1AE'>        .reduceOption { (left, right) =&gt;
+</span>196 <span style=''></span><span style='background: #AEF1AE'>          left.zipWith(right)(_ ++ _)
+</span>197 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>198 <span style=''></span><span style='background: #AEF1AE'>        .getOrElse(</span><span style='background: #F0ADAD'>Chain.empty</span><span style='background: #AEF1AE'>)
+</span>199 <span style=''></span><span style='background: #AEF1AE'>        .map(_.toMap)
+</span>200 <span style=''></span><span style='background: #AEF1AE'>        .traverse(d =&gt; A(d))
+</span>201 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>202 <span style=''>
+</span>203 <span style=''>  /** For repeated nested values, assuming that the form parameter name use &quot;[].&quot; as a suffix
+</span>204 <span style=''>    * E.g. &quot;foos[].bar&quot;
+</span>205 <span style=''>    */
+</span>206 <span style=''>  def list[A: FormDataDecoder](key: String): FormDataDecoder[List[A]] =
+</span>207 <span style=''>    </span><span style='background: #AEF1AE'>chain(key).map(_.toList)</span><span style=''>
+</span>208 <span style=''>
+</span>209 <span style=''>  /** For repeated primitive values, assuming that the form parameter name use &quot;[]&quot; as a suffix
+</span>210 <span style=''>    * E.g. &quot;foos[]&quot;
+</span>211 <span style=''>    */
+</span>212 <span style=''>  def listOf[A](key: String)(implicit A: QueryParamDecoder[A]): FormDataDecoder[List[A]] =
+</span>213 <span style=''>    </span><span style='background: #AEF1AE'>chainOf(key)(A).map(_.toList)</span><span style=''>
+</span>214 <span style=''>
+</span>215 <span style=''>  private def nonEmptyFields(data: FormData): FormData =
+</span>216 <span style=''>    </span><span style='background: #AEF1AE'>data.filter(_._2.nonEmpty)</span><span style=''>
+</span>217 <span style=''>
+</span>218 <span style=''>  private def extractPrefix(
+</span>219 <span style=''>      prefix: String
+</span>220 <span style=''>  )(data: FormData): Either[String, FormData] = {
+</span>221 <span style=''>    val extracted = </span><span style='background: #AEF1AE'>nonEmptyFields(data).toList.mapFilter { case (k, v) =&gt;
+</span>222 <span style=''></span><span style='background: #AEF1AE'>      if (k.startsWith(prefix))
+</span>223 <span style=''></span><span style='background: #AEF1AE'>        Some((k.stripPrefix(prefix), v))
+</span>224 <span style=''></span><span style='background: #AEF1AE'>      else None
+</span>225 <span style=''></span><span style='background: #AEF1AE'>    }.toMap</span><span style=''>
+</span>226 <span style=''>
+</span>227 <span style=''>    if (</span><span style='background: #AEF1AE'>extracted.isEmpty</span><span style=''>)
+</span>228 <span style=''>      </span><span style='background: #AEF1AE'>Left(s&quot;There are no keys that starts with $prefix&quot;)</span><span style=''>
+</span>229 <span style=''>    else </span><span style='background: #AEF1AE'>Right(extracted)</span><span style=''>
+</span>230 <span style=''>  }
+</span>231 <span style=''>
+</span>232 <span style=''>  implicit val formDataDecoderInstances: Applicative[FormDataDecoder] =
+</span>233 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Applicative[FormDataDecoder] {
+</span>234 <span style=''>
+</span>235 <span style=''>      def pure[A](a: A): FormDataDecoder[A] =
+</span>236 <span style=''>        </span><span style='background: #F0ADAD'>apply(_ =&gt; Valid(a))</span><span style=''>
+</span>237 <span style=''>
+</span>238 <span style=''>      override def map[A, B](fa: FormDataDecoder[A])(f: A =&gt; B): FormDataDecoder[B] =
+</span>239 <span style=''>        </span><span style='background: #AEF1AE'>apply(data =&gt; fa(data).map(f))</span><span style=''>
+</span>240 <span style=''>
+</span>241 <span style=''>      def ap[A, B](
+</span>242 <span style=''>          ff: FormDataDecoder[A =&gt; B]
+</span>243 <span style=''>      )(fa: FormDataDecoder[A]): FormDataDecoder[B] =
+</span>244 <span style=''>        </span><span style='background: #AEF1AE'>apply { data =&gt;
+</span>245 <span style=''></span><span style='background: #AEF1AE'>          fa(data).ap(ff(data))
+</span>246 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>247 <span style=''>    }
+</span>248 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          15297
+        </td>
+        <td>
+          2570
+          -
+          2605
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.apply[B](((x$1: org.http4s.FormDataDecoder.FormData) =&gt; this.apply(x$1).andThen[cats.data.NonEmptyList[org.http4s.ParseFailure], B](f)))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          19191
+        </td>
+        <td>
+          2586
+          -
+          2604
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.andThen
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          this.apply(x$1).andThen[cats.data.NonEmptyList[org.http4s.ParseFailure], B](f)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          22567
+        </td>
+        <td>
+          2721
+          -
+          2837
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          FormDataDecoder.apply[A](((data: org.http4s.FormDataDecoder.FormData) =&gt; this.apply(data.map[String, cats.data.Chain[String]](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (v @ _)) =&gt; scala.Tuple2.apply[String, cats.data.Chain[String]](k, v.filter(((x$2: String) =&gt; scala.Predef.augmentString(x$2.trim()).nonEmpty)))
+})))))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          14545
+        </td>
+        <td>
+          2753
+          -
+          2831
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.apply(data.map[String, cats.data.Chain[String]](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (v @ _)) =&gt; scala.Tuple2.apply[String, cats.data.Chain[String]](k, v.filter(((x$2: String) =&gt; scala.Predef.augmentString(x$2.trim()).nonEmpty)))
+})))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          18253
+        </td>
+        <td>
+          2758
+          -
+          2830
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          data.map[String, cats.data.Chain[String]](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (v @ _)) =&gt; scala.Tuple2.apply[String, cats.data.Chain[String]](k, v.filter(((x$2: String) =&gt; scala.Predef.augmentString(x$2.trim()).nonEmpty)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          21606
+        </td>
+        <td>
+          2805
+          -
+          2811
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.trim
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$2.trim()
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          22383
+        </td>
+        <td>
+          2792
+          -
+          2822
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Tuple2.apply[String, cats.data.Chain[String]](k, v.filter(((x$2: String) =&gt; scala.Predef.augmentString(x$2.trim()).nonEmpty)))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          17532
+        </td>
+        <td>
+          2805
+          -
+          2820
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.augmentString(x$2.trim()).nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          15877
+        </td>
+        <td>
+          2796
+          -
+          2821
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.filter
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          v.filter(((x$2: String) =&gt; scala.Predef.augmentString(x$2.trim()).nonEmpty))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          15315
+        </td>
+        <td>
+          3029
+          -
+          3032
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          19082
+        </td>
+        <td>
+          3099
+          -
+          3106
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(data)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          21470
+        </td>
+        <td>
+          3238
+          -
+          3427
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.flatMapR
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          UrlForm.entityDecoder[F](evidence$1, UrlForm.entityDecoder$default$2[F]).flatMapR[A](((d: org.http4s.UrlForm) =&gt; cats.syntax.`package`.all.catsSyntaxValidatedExtension[org.http4s.InvalidMessageBodyFailure, A](fdd.apply(d.values).leftMap[org.http4s.InvalidMessageBodyFailure](((es: cats.data.NonEmptyList[org.http4s.ParseFailure]) =&gt; InvalidMessageBodyFailure.apply(cats.syntax.`package`.all.catsSyntaxFoldableOps0[cats.data.NonEmptyList, String](es.map[String](((x$3: org.http4s.ParseFailure) =&gt; x$3.sanitized))).mkString_(&quot;\n&quot;)(cats.this.Show.catsShowForString, data.this.NonEmptyList.catsDataInstancesForNonEmptyList), InvalidMessageBodyFailure.apply$default$2)))).liftTo[[β$0$]cats.data.EitherT[F,org.http4s.DecodeFailure,β$0$]](data.this.EitherT.catsDataMonadErrorForEitherT[[_]F[_], org.http4s.DecodeFailure](evidence$1))))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          23163
+        </td>
+        <td>
+          3580
+          -
+          3583
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          14564
+        </td>
+        <td>
+          3690
+          -
+          3723
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.EitherOps.traverse
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[String, Data](extract.apply(data)).traverse[org.http4s.FormDataDecoder.Result, String, A](((x$4: Data) =&gt; decode.apply(x$4)))(data.this.Validated.catsDataApplicativeErrorForValidated[cats.data.NonEmptyList[org.http4s.ParseFailure]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          18271
+        </td>
+        <td>
+          3712
+          -
+          3712
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.ValidatedInstances.catsDataApplicativeErrorForValidated
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Validated.catsDataApplicativeErrorForValidated[cats.data.NonEmptyList[org.http4s.ParseFailure]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure])
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          22254
+        </td>
+        <td>
+          3712
+          -
+          3712
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataSemigroupForNonEmptyList
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          15892
+        </td>
+        <td>
+          3713
+          -
+          3722
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          decode.apply(x$4)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          17782
+        </td>
+        <td>
+          3690
+          -
+          3703
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          extract.apply(data)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          17799
+        </td>
+        <td>
+          3920
+          -
+          3971
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$5.fold[cats.data.ValidatedNel[org.http4s.ParseFailure,A]](((x$6: String) =&gt; cats.syntax.`package`.all.catsSyntaxValidatedId[org.http4s.ParseFailure](ParseFailure.apply(x$6, &quot;&quot;)).invalidNel[A]), ((x$7: A) =&gt; cats.data.Validated.Valid.apply[A](x$7)))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          19100
+        </td>
+        <td>
+          3927
+          -
+          3946
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.apply(x$6, &quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          21491
+        </td>
+        <td>
+          3962
+          -
+          3970
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.Valid.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Validated.Valid.apply[A](x$7)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          16095
+        </td>
+        <td>
+          3899
+          -
+          3972
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.mapValidated
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoderSyntax.this.decoder.mapValidated[A](((x$5: Either[String,A]) =&gt; x$5.fold[cats.data.ValidatedNel[org.http4s.ParseFailure,A]](((x$6: String) =&gt; cats.syntax.`package`.all.catsSyntaxValidatedId[org.http4s.ParseFailure](ParseFailure.apply(x$6, &quot;&quot;)).invalidNel[A]), ((x$7: A) =&gt; cats.data.Validated.Valid.apply[A](x$7)))))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          14929
+        </td>
+        <td>
+          3927
+          -
+          3960
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.ValidatedIdSyntax.invalidNel
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxValidatedId[org.http4s.ParseFailure](ParseFailure.apply(x$6, &quot;&quot;)).invalidNel[A]
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          18290
+        </td>
+        <td>
+          4027
+          -
+          4027
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.formDataDecoderInstances
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.formDataDecoderInstances
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          20721
+        </td>
+        <td>
+          4064
+          -
+          4068
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          22273
+        </td>
+        <td>
+          4027
+          -
+          4034
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.FormDataDecoderSyntax.decoder
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoderSyntax.this.decoder
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          14425
+        </td>
+        <td>
+          4045
+          -
+          4052
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[A](x$9)
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          14948
+        </td>
+        <td>
+          4027
+          -
+          4070
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[org.http4s.FormDataDecoder, Either[String,A]](FormDataDecoderSyntax.this.decoder)(FormDataDecoder.this.formDataDecoderInstances).map[Option[A]](((x$8: Either[String,A]) =&gt; x$8.map[Some[A]](((x$9: A) =&gt; scala.Some.apply[A](x$9))).getOrElse[Option[A]](scala.None)))
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          19322
+        </td>
+        <td>
+          4039
+          -
+          4069
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.getOrElse
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$8.map[Some[A]](((x$9: A) =&gt; scala.Some.apply[A](x$9))).getOrElse[Option[A]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          21511
+        </td>
+        <td>
+          4224
+          -
+          4231
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.FormDataDecoderSyntax.decoder
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoderSyntax.this.decoder
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          22229
+        </td>
+        <td>
+          4224
+          -
+          4262
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[org.http4s.FormDataDecoder, Either[String,A]](FormDataDecoderSyntax.this.decoder)(FormDataDecoder.this.formDataDecoderInstances).map[A](((x$10: Either[String,A]) =&gt; x$10.getOrElse[A](defaultValue)))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          16113
+        </td>
+        <td>
+          4236
+          -
+          4261
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.getOrElse
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$10.getOrElse[A](defaultValue)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          18033
+        </td>
+        <td>
+          4224
+          -
+          4224
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.formDataDecoderInstances
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.formDataDecoderInstances
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          18182
+        </td>
+        <td>
+          4488
+          -
+          4500
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.headOption
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$11.headOption
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          14443
+        </td>
+        <td>
+          4432
+          -
+          4538
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.toRight
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.nonEmptyFields(data).get(key).flatMap[String](((x$11: cats.data.Chain[String]) =&gt; x$11.headOption)).toRight[String]((&quot;&quot;.+(key).+(&quot; is missing&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          15305
+        </td>
+        <td>
+          4399
+          -
+          4585
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.apply[String, A](((data: org.http4s.FormDataDecoder.FormData) =&gt; FormDataDecoder.this.nonEmptyFields(data).get(key).flatMap[String](((x$11: cats.data.Chain[String]) =&gt; x$11.headOption)).toRight[String]((&quot;&quot;.+(key).+(&quot; is missing&quot;): String))))(((v: String) =&gt; qpd.decode(QueryParameterValue.apply(v))))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          19340
+        </td>
+        <td>
+          4550
+          -
+          4584
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.decode
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          qpd.decode(QueryParameterValue.apply(v))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          21224
+        </td>
+        <td>
+          4561
+          -
+          4583
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParameterValue.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParameterValue.apply(v)
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          18054
+        </td>
+        <td>
+          4656
+          -
+          4681
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.FormDataDecoderSyntax.required
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.FormDataDecoderSyntax[A](FormDataDecoder.this.fieldEither[A](key)(evidence$2)).required
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          21385
+        </td>
+        <td>
+          4656
+          -
+          4672
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.fieldEither
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.fieldEither[A](key)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          14144
+        </td>
+        <td>
+          4768
+          -
+          4792
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.fieldEither
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.fieldEither[A](key)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          22247
+        </td>
+        <td>
+          4768
+          -
+          4801
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.FormDataDecoderSyntax.optional
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.FormDataDecoderSyntax[A](FormDataDecoder.this.fieldEither[A](key)(evidence$3)).optional
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          18555
+        </td>
+        <td>
+          5104
+          -
+          5121
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.nestedEither
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.nestedEither[A](key)(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          14715
+        </td>
+        <td>
+          5104
+          -
+          5130
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.FormDataDecoderSyntax.required
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.FormDataDecoderSyntax[A](FormDataDecoder.this.nestedEither[A](key)(evidence$4)).required
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          18974
+        </td>
+        <td>
+          5449
+          -
+          5475
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.FormDataDecoderSyntax.optional
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.FormDataDecoderSyntax[A](FormDataDecoder.this.nestedEither[A](key)(evidence$5)).optional
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          21246
+        </td>
+        <td>
+          5449
+          -
+          5466
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.nestedEither
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.nestedEither[A](key)(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          21771
+        </td>
+        <td>
+          5652
+          -
+          5661
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          fdd.apply(data)
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          17938
+        </td>
+        <td>
+          5607
+          -
+          5662
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.apply[org.http4s.FormDataDecoder.FormData, A]({
+  &lt;synthetic&gt; val eta$0$1: String = key.+(&quot;.&quot;);
+  ((data: org.http4s.FormDataDecoder.FormData) =&gt; FormDataDecoder.this.extractPrefix(eta$0$1)(data))
+})(((data: Map[String,cats.data.Chain[String]]) =&gt; fdd.apply(data)))
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          15171
+        </td>
+        <td>
+          5626
+          -
+          5650
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.extractPrefix
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.extractPrefix(eta$0$1)(data)
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          14168
+        </td>
+        <td>
+          5790
+          -
+          5801
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.Chain.empty
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Chain.empty[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          22263
+        </td>
+        <td>
+          5784
+          -
+          5802
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.Valid.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Validated.Valid.apply[cats.data.Chain[Nothing]](cats.data.Chain.empty[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          18423
+        </td>
+        <td>
+          5804
+          -
+          5812
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.Valid.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Validated.Valid.apply[cats.data.Chain[A]](x$14)
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          14415
+        </td>
+        <td>
+          5772
+          -
+          5813
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$12.fold[cats.data.Validated.Valid[cats.data.Chain[A]]](((x$13: String) =&gt; cats.data.Validated.Valid.apply[cats.data.Chain[Nothing]](cats.data.Chain.empty[Nothing])), ((x$14: cats.data.Chain[A]) =&gt; cats.data.Validated.Valid.apply[cats.data.Chain[A]](x$14)))
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          21120
+        </td>
+        <td>
+          5742
+          -
+          5814
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.mapValidated
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.chainEither[A](key)(evidence$6).mapValidated[cats.data.Chain[A]](((x$12: Either[String,cats.data.Chain[A]]) =&gt; x$12.fold[cats.data.Validated.Valid[cats.data.Chain[A]]](((x$13: String) =&gt; cats.data.Validated.Valid.apply[cats.data.Chain[Nothing]](cats.data.Chain.empty[Nothing])), ((x$14: cats.data.Chain[A]) =&gt; cats.data.Validated.Valid.apply[cats.data.Chain[A]](x$14)))))
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          15067
+        </td>
+        <td>
+          5905
+          -
+          6081
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.apply[cats.data.Chain[A]](((data: org.http4s.FormDataDecoder.FormData) =&gt; cats.syntax.`package`.all.toTraverseOps[cats.data.Chain, String](data.get(key.+(&quot;[]&quot;)).orElse[cats.data.Chain[String]](data.get(key)).getOrElse[cats.data.Chain[String]](cats.data.Chain.empty[Nothing]))(data.this.Chain.catsDataInstancesForChain).traverse[[+A]cats.data.ValidatedNel[org.http4s.ParseFailure,A], A](((v: String) =&gt; qd.decode(QueryParameterValue.apply(v))))(data.this.Validated.catsDataApplicativeErrorForValidated[cats.data.NonEmptyList[org.http4s.ParseFailure]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]))))
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          18988
+        </td>
+        <td>
+          5943
+          -
+          5953
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.+
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          key.+(&quot;[]&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          15190
+        </td>
+        <td>
+          5971
+          -
+          5984
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.get
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.get(key)
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          17660
+        </td>
+        <td>
+          5925
+          -
+          6017
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.get(key.+(&quot;[]&quot;)).orElse[cats.data.Chain[String]](data.get(key)).getOrElse[cats.data.Chain[String]](cats.data.Chain.empty[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          21362
+        </td>
+        <td>
+          6005
+          -
+          6016
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.Chain.empty
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Chain.empty[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          13539
+        </td>
+        <td>
+          6004
+          -
+          6004
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.ChainInstances.catsDataInstancesForChain
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Chain.catsDataInstancesForChain
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          14285
+        </td>
+        <td>
+          6035
+          -
+          6035
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataSemigroupForNonEmptyList
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          17123
+        </td>
+        <td>
+          5925
+          -
+          6075
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.Traverse.Ops.traverse
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toTraverseOps[cats.data.Chain, String](data.get(key.+(&quot;[]&quot;)).orElse[cats.data.Chain[String]](data.get(key)).getOrElse[cats.data.Chain[String]](cats.data.Chain.empty[Nothing]))(data.this.Chain.catsDataInstancesForChain).traverse[[+A]cats.data.ValidatedNel[org.http4s.ParseFailure,A], A](((v: String) =&gt; qd.decode(QueryParameterValue.apply(v))))(data.this.Validated.catsDataApplicativeErrorForValidated[cats.data.NonEmptyList[org.http4s.ParseFailure]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]))
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          22150
+        </td>
+        <td>
+          6051
+          -
+          6073
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParameterValue.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          QueryParameterValue.apply(v)
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          20872
+        </td>
+        <td>
+          6035
+          -
+          6035
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.ValidatedInstances.catsDataApplicativeErrorForValidated
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Validated.catsDataApplicativeErrorForValidated[cats.data.NonEmptyList[org.http4s.ParseFailure]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure])
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          18443
+        </td>
+        <td>
+          6041
+          -
+          6074
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.QueryParamDecoder.decode
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          qd.decode(QueryParameterValue.apply(v))
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          21379
+        </td>
+        <td>
+          6234
+          -
+          6260
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.extractPrefix
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.extractPrefix(eta$0$1)(data)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          17392
+        </td>
+        <td>
+          6208
+          -
+          6539
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.apply[org.http4s.FormDataDecoder.FormData, cats.data.Chain[A]]({
+  &lt;synthetic&gt; val eta$0$1: String = key.+(&quot;[].&quot;);
+  ((data: org.http4s.FormDataDecoder.FormData) =&gt; FormDataDecoder.this.extractPrefix(eta$0$1)(data))
+})(((x$15: org.http4s.FormDataDecoder.FormData) =&gt; cats.syntax.`package`.all.toTraverseOps[cats.data.Chain, scala.collection.immutable.Map[String,cats.data.Chain[String]]](x$15.toList.map[cats.data.Chain[List[(String, cats.data.Chain[String])]]](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (cv @ _)) =&gt; cv.map[List[(String, cats.data.Chain[String])]](((v: String) =&gt; scala.`package`.List.apply[(String, cats.data.Chain[String])](scala.Tuple2.apply[String, cats.data.Chain[String]](k, cats.data.Chain.apply[String](v)))))
+})).reduceOption[cats.data.Chain[List[(String, cats.data.Chain[String])]]](((left: cats.data.Chain[List[(String, cats.data.Chain[String])]], right: cats.data.Chain[List[(String, cats.data.Chain[String])]]) =&gt; left.zipWith[List[(String, cats.data.Chain[String])], List[(String, cats.data.Chain[String])]](right)(((x$16: List[(String, cats.data.Chain[String])], x$17: List[(String, cats.data.Chain[String])]) =&gt; x$16.++[(String, cats.data.Chain[String])](x$17))))).getOrElse[cats.data.Chain[List[(String, cats.data.Chain[String])]]](cats.data.Chain.empty[Nothing]).map[scala.collection.immutable.Map[String,cats.data.Chain[String]]](((x$18: List[(String, cats.data.Chain[String])]) =&gt; x$18.toMap[String, cats.data.Chain[String]](scala.this.&lt;:&lt;.refl[(String, cats.data.Chain[String])]))))(data.this.Chain.catsDataInstancesForChain).traverse[[+A]cats.data.ValidatedNel[org.http4s.ParseFailure,A], A](((d: scala.collection.immutable.Map[String,cats.data.Chain[String]]) =&gt; A.apply(d)))(data.this.Validated.catsDataApplicativeErrorForValidated[cats.data.NonEmptyList[org.http4s.ParseFailure]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]))))
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          18719
+        </td>
+        <td>
+          6319
+          -
+          6351
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.map
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cv.map[List[(String, cats.data.Chain[String])]](((v: String) =&gt; scala.`package`.List.apply[(String, cats.data.Chain[String])](scala.Tuple2.apply[String, cats.data.Chain[String]](k, cats.data.Chain.apply[String](v)))))
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          14140
+        </td>
+        <td>
+          6336
+          -
+          6349
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, cats.data.Chain[String]](k, cats.data.Chain.apply[String](v))
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          17531
+        </td>
+        <td>
+          6340
+          -
+          6348
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Chain.apply[String](v)
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          22169
+        </td>
+        <td>
+          6331
+          -
+          6350
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[(String, cats.data.Chain[String])](scala.Tuple2.apply[String, cats.data.Chain[String]](k, cats.data.Chain.apply[String](v)))
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          20889
+        </td>
+        <td>
+          6413
+          -
+          6440
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.zipWith
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          left.zipWith[List[(String, cats.data.Chain[String])], List[(String, cats.data.Chain[String])]](right)(((x$16: List[(String, cats.data.Chain[String])], x$17: List[(String, cats.data.Chain[String])]) =&gt; x$16.++[(String, cats.data.Chain[String])](x$17)))
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          14302
+        </td>
+        <td>
+          6433
+          -
+          6439
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$16.++[(String, cats.data.Chain[String])](x$17)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          17374
+        </td>
+        <td>
+          6470
+          -
+          6481
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.Chain.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Chain.empty[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          14160
+        </td>
+        <td>
+          6495
+          -
+          6495
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.ChainInstances.catsDataInstancesForChain
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Chain.catsDataInstancesForChain
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          21914
+        </td>
+        <td>
+          6496
+          -
+          6503
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toMap
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$18.toMap[String, cats.data.Chain[String]](scala.this.&lt;:&lt;.refl[(String, cats.data.Chain[String])])
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          17553
+        </td>
+        <td>
+          6269
+          -
+          6504
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Chain.map
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$15.toList.map[cats.data.Chain[List[(String, cats.data.Chain[String])]]](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (cv @ _)) =&gt; cv.map[List[(String, cats.data.Chain[String])]](((v: String) =&gt; scala.`package`.List.apply[(String, cats.data.Chain[String])](scala.Tuple2.apply[String, cats.data.Chain[String]](k, cats.data.Chain.apply[String](v)))))
+})).reduceOption[cats.data.Chain[List[(String, cats.data.Chain[String])]]](((left: cats.data.Chain[List[(String, cats.data.Chain[String])]], right: cats.data.Chain[List[(String, cats.data.Chain[String])]]) =&gt; left.zipWith[List[(String, cats.data.Chain[String])], List[(String, cats.data.Chain[String])]](right)(((x$16: List[(String, cats.data.Chain[String])], x$17: List[(String, cats.data.Chain[String])]) =&gt; x$16.++[(String, cats.data.Chain[String])](x$17))))).getOrElse[cats.data.Chain[List[(String, cats.data.Chain[String])]]](cats.data.Chain.empty[Nothing]).map[scala.collection.immutable.Map[String,cats.data.Chain[String]]](((x$18: List[(String, cats.data.Chain[String])]) =&gt; x$18.toMap[String, cats.data.Chain[String]](scala.this.&lt;:&lt;.refl[(String, cats.data.Chain[String])])))
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          15085
+        </td>
+        <td>
+          6498
+          -
+          6498
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[(String, cats.data.Chain[String])]
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          18089
+        </td>
+        <td>
+          6522
+          -
+          6522
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataSemigroupForNonEmptyList
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          20595
+        </td>
+        <td>
+          6528
+          -
+          6532
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          A.apply(d)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          14323
+        </td>
+        <td>
+          6522
+          -
+          6522
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.ValidatedInstances.catsDataApplicativeErrorForValidated
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Validated.catsDataApplicativeErrorForValidated[cats.data.NonEmptyList[org.http4s.ParseFailure]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure])
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          21117
+        </td>
+        <td>
+          6269
+          -
+          6533
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.Traverse.Ops.traverse
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toTraverseOps[cats.data.Chain, scala.collection.immutable.Map[String,cats.data.Chain[String]]](x$15.toList.map[cats.data.Chain[List[(String, cats.data.Chain[String])]]](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (cv @ _)) =&gt; cv.map[List[(String, cats.data.Chain[String])]](((v: String) =&gt; scala.`package`.List.apply[(String, cats.data.Chain[String])](scala.Tuple2.apply[String, cats.data.Chain[String]](k, cats.data.Chain.apply[String](v)))))
+})).reduceOption[cats.data.Chain[List[(String, cats.data.Chain[String])]]](((left: cats.data.Chain[List[(String, cats.data.Chain[String])]], right: cats.data.Chain[List[(String, cats.data.Chain[String])]]) =&gt; left.zipWith[List[(String, cats.data.Chain[String])], List[(String, cats.data.Chain[String])]](right)(((x$16: List[(String, cats.data.Chain[String])], x$17: List[(String, cats.data.Chain[String])]) =&gt; x$16.++[(String, cats.data.Chain[String])](x$17))))).getOrElse[cats.data.Chain[List[(String, cats.data.Chain[String])]]](cats.data.Chain.empty[Nothing]).map[scala.collection.immutable.Map[String,cats.data.Chain[String]]](((x$18: List[(String, cats.data.Chain[String])]) =&gt; x$18.toMap[String, cats.data.Chain[String]](scala.this.&lt;:&lt;.refl[(String, cats.data.Chain[String])]))))(data.this.Chain.catsDataInstancesForChain).traverse[[+A]cats.data.ValidatedNel[org.http4s.ParseFailure,A], A](((d: scala.collection.immutable.Map[String,cats.data.Chain[String]]) =&gt; A.apply(d)))(data.this.Validated.catsDataApplicativeErrorForValidated[cats.data.NonEmptyList[org.http4s.ParseFailure]](data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]))
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          14025
+        </td>
+        <td>
+          6742
+          -
+          6766
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[org.http4s.FormDataDecoder, cats.data.Chain[A]](FormDataDecoder.this.chain[A](key)(evidence$7))(FormDataDecoder.this.formDataDecoderInstances).map[List[A]](((x$19: cats.data.Chain[A]) =&gt; x$19.toList))
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          21286
+        </td>
+        <td>
+          6747
+          -
+          6747
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.formDataDecoderInstances
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.formDataDecoderInstances
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          15041
+        </td>
+        <td>
+          6742
+          -
+          6752
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.chain
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.chain[A](key)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          17573
+        </td>
+        <td>
+          6757
+          -
+          6765
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.toList
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$19.toList
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          21134
+        </td>
+        <td>
+          6986
+          -
+          7015
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[org.http4s.FormDataDecoder, cats.data.Chain[A]](FormDataDecoder.this.chainOf[A](key)(A))(FormDataDecoder.this.formDataDecoderInstances).map[List[A]](((x$20: cats.data.Chain[A]) =&gt; x$20.toList))
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          14204
+        </td>
+        <td>
+          7006
+          -
+          7014
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.toList
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$20.toList
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          18289
+        </td>
+        <td>
+          6998
+          -
+          6998
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.formDataDecoderInstances
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.formDataDecoderInstances
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          20614
+        </td>
+        <td>
+          6986
+          -
+          7001
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.chainOf
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.chainOf[A](key)(A)
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          15058
+        </td>
+        <td>
+          7078
+          -
+          7104
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.filter
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          data.filter(((x$21: (String, cats.data.Chain[String])) =&gt; x$21._2.nonEmpty))
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          17256
+        </td>
+        <td>
+          7090
+          -
+          7103
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.nonEmpty
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          x$21._2.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          21663
+        </td>
+        <td>
+          7226
+          -
+          7253
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.nonEmptyFields(data).toList
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          17845
+        </td>
+        <td>
+          7247
+          -
+          7247
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.FunctorFilter.catsTraverseFilterForList
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.FunctorFilter.catsTraverseFilterForList
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          14047
+        </td>
+        <td>
+          7291
+          -
+          7311
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.startsWith
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          k.startsWith(prefix)
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          21026
+        </td>
+        <td>
+          7321
+          -
+          7353
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[(String, cats.data.Chain[String])](scala.Tuple2.apply[String, cats.data.Chain[String]](scala.Predef.augmentString(k).stripPrefix(prefix), v))
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          20202
+        </td>
+        <td>
+          7327
+          -
+          7348
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StringOps.stripPrefix
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(k).stripPrefix(prefix)
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          18303
+        </td>
+        <td>
+          7326
+          -
+          7352
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, cats.data.Chain[String]](scala.Predef.augmentString(k).stripPrefix(prefix), v)
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          14600
+        </td>
+        <td>
+          7321
+          -
+          7353
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[(String, cats.data.Chain[String])](scala.Tuple2.apply[String, cats.data.Chain[String]](scala.Predef.augmentString(k).stripPrefix(prefix), v))
+        </td>
+      </tr><tr>
+        <td>
+          224
+        </td>
+        <td>
+          17279
+        </td>
+        <td>
+          7365
+          -
+          7369
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          224
+        </td>
+        <td>
+          13108
+        </td>
+        <td>
+          7365
+          -
+          7369
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          21529
+        </td>
+        <td>
+          7376
+          -
+          7376
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[(String, cats.data.Chain[String])]
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          17546
+        </td>
+        <td>
+          7226
+          -
+          7381
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toMap
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorFilterOps[List, (String, cats.data.Chain[String])](FormDataDecoder.this.nonEmptyFields(data).toList)(cats.this.FunctorFilter.catsTraverseFilterForList).mapFilter[(String, cats.data.Chain[String])](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (v @ _)) =&gt; if (k.startsWith(prefix))
+    scala.Some.apply[(String, cats.data.Chain[String])](scala.Tuple2.apply[String, cats.data.Chain[String]](scala.Predef.augmentString(k).stripPrefix(prefix), v))
+  else
+    scala.None
+})).toMap[String, cats.data.Chain[String]](scala.this.&lt;:&lt;.refl[(String, cats.data.Chain[String])])
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          13924
+        </td>
+        <td>
+          7391
+          -
+          7408
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.isEmpty
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          extracted.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          20220
+        </td>
+        <td>
+          7416
+          -
+          7467
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[String, Nothing]((&quot;There are no keys that starts with &quot;.+(prefix): String))
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          18321
+        </td>
+        <td>
+          7416
+          -
+          7467
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[String, Nothing]((&quot;There are no keys that starts with &quot;.+(prefix): String))
+        </td>
+      </tr><tr>
+        <td>
+          229
+        </td>
+        <td>
+          14834
+        </td>
+        <td>
+          7477
+          -
+          7493
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, scala.collection.immutable.Map[String,cats.data.Chain[String]]](extracted)
+        </td>
+      </tr><tr>
+        <td>
+          229
+        </td>
+        <td>
+          20755
+        </td>
+        <td>
+          7477
+          -
+          7493
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, scala.collection.immutable.Map[String,cats.data.Chain[String]]](extracted)
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          21267
+        </td>
+        <td>
+          7575
+          -
+          7578
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          13128
+        </td>
+        <td>
+          7665
+          -
+          7685
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          FormDataDecoder.this.apply[A](((x$22: org.http4s.FormDataDecoder.FormData) =&gt; cats.data.Validated.Valid.apply[A](a)))
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          17145
+        </td>
+        <td>
+          7676
+          -
+          7684
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.Valid.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Validated.Valid.apply[A](a)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          18071
+        </td>
+        <td>
+          7781
+          -
+          7811
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.apply[B](((data: org.http4s.FormDataDecoder.FormData) =&gt; fa.apply(data).map[B](f)))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          21548
+        </td>
+        <td>
+          7795
+          -
+          7810
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Validated.map
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          fa.apply(data).map[B](f)
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          14197
+        </td>
+        <td>
+          7933
+          -
+          7990
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          FormDataDecoder.this.apply[B](((data: org.http4s.FormDataDecoder.FormData) =&gt; fa.apply(data).ap[cats.data.NonEmptyList[org.http4s.ParseFailure], B](ff.apply(data))(data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure])))
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          20239
+        </td>
+        <td>
+          7970
+          -
+          7970
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataSemigroupForNonEmptyList
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          13668
+        </td>
+        <td>
+          7971
+          -
+          7979
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.FormDataDecoder.apply
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          ff.apply(data)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          18207
+        </td>
+        <td>
+          7959
+          -
+          7980
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.Validated.ap
+        </td>
+        <td>
+          org.http4s.formdatadecoderspec,org.http4s.formdatadecoderdoctest
+        </td>
+        <td style="background: #AEF1AE">
+          fa.apply(data).ap[cats.data.NonEmptyList[org.http4s.ParseFailure], B](ff.apply(data))(data.this.NonEmptyList.catsDataSemigroupForNonEmptyList[org.http4s.ParseFailure])
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

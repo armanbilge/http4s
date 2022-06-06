@@ -1,0 +1,1038 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/oauth1/SignatureAlgorithm.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.client.oauth1
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.MonadThrow
+</span>20 <span style=''>import cats.effect.SyncIO
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.SignatureMethod
+</span>23 <span style=''>import org.http4s.client.oauth1.SignatureAlgorithm.Names._
+</span>24 <span style=''>import org.http4s.crypto.Hmac
+</span>25 <span style=''>import org.http4s.crypto.HmacAlgorithm
+</span>26 <span style=''>import org.http4s.crypto.SecretKeySpec
+</span>27 <span style=''>import scodec.bits.ByteVector
+</span>28 <span style=''>
+</span>29 <span style=''>import scala.annotation.nowarn
+</span>30 <span style=''>
+</span>31 <span style=''>object SignatureAlgorithm {
+</span>32 <span style=''>
+</span>33 <span style=''>  private[oauth1] object Names {
+</span>34 <span style=''>
+</span>35 <span style=''>    // algorithms implemented so far
+</span>36 <span style=''>    val `HMAC-SHA1` = </span><span style='background: #AEF1AE'>&quot;HMAC-SHA1&quot;</span><span style=''>
+</span>37 <span style=''>    val `HMAC-SHA256` = </span><span style='background: #AEF1AE'>&quot;HMAC-SHA256&quot;</span><span style=''>
+</span>38 <span style=''>    val `HMAC-SHA512` = </span><span style='background: #AEF1AE'>&quot;HMAC-SHA512&quot;</span><span style=''>
+</span>39 <span style=''>
+</span>40 <span style=''>    // other known algorithms (not yet implemented)
+</span>41 <span style=''>    val PLAINTEXT = </span><span style='background: #AEF1AE'>&quot;PLAINTEXT&quot;</span><span style=''>
+</span>42 <span style=''>    val `RSA-SHA1` = </span><span style='background: #AEF1AE'>&quot;RSA-SHA1&quot;</span><span style=''>
+</span>43 <span style=''>    val `RSA-SHA256` = </span><span style='background: #AEF1AE'>&quot;RSA-SHA256&quot;</span><span style=''>
+</span>44 <span style=''>    val `RSA-SHA512` = </span><span style='background: #AEF1AE'>&quot;RSA-SHA512&quot;</span><span style=''>
+</span>45 <span style=''>  }
+</span>46 <span style=''>
+</span>47 <span style=''>  private[this] val AllMethods = </span><span style='background: #AEF1AE'>List(HmacSha1, HmacSha256, HmacSha512)</span><span style=''>
+</span>48 <span style=''>
+</span>49 <span style=''>  /** Map a [[SignatureMethod]] protocol parameter to a [[SignatureAlgorithm]] implementation
+</span>50 <span style=''>    *
+</span>51 <span style=''>    * @param method The signature method protocol parameter
+</span>52 <span style=''>    * @return The implementation, or an [[IllegalArgumentException]] if none was found
+</span>53 <span style=''>    */
+</span>54 <span style=''>  private[oauth1] def unsafeFromMethod(method: SignatureMethod): SignatureAlgorithm =
+</span>55 <span style=''>    </span><span style='background: #AEF1AE'>AllMethods
+</span>56 <span style=''></span><span style='background: #AEF1AE'>      .find(_.name == method.headerValue)
+</span>57 <span style=''></span><span style='background: #AEF1AE'>      .getOrElse(
+</span>58 <span style=''></span><span style='background: #AEF1AE'>        throw new IllegalArgumentException(
+</span>59 <span style=''></span><span style='background: #AEF1AE'>          s&quot;Unrecognized headerValue '${method.headerValue}', Valid options are: ${AllMethods.map(_.name)}&quot;
+</span>60 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>61 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>62 <span style=''>
+</span>63 <span style=''>}
+</span>64 <span style=''>
+</span>65 <span style=''>/** Implementations for Oauth1 signatures.
+</span>66 <span style=''>  */
+</span>67 <span style=''>trait SignatureAlgorithm {
+</span>68 <span style=''>
+</span>69 <span style=''>  /** @return The signature method name per the oauth1.0 spec
+</span>70 <span style=''>    */
+</span>71 <span style=''>  def name: String
+</span>72 <span style=''>
+</span>73 <span style=''>  /** Apply the implementation's algorithm to the input
+</span>74 <span style=''>    *
+</span>75 <span style=''>    * @param input The input value
+</span>76 <span style=''>    * @param secretKey The secret key
+</span>77 <span style=''>    * @return The base64-encoded output
+</span>78 <span style=''>    */
+</span>79 <span style=''>  def generate[F[_]: MonadThrow](input: String, secretKey: String): F[String] =
+</span>80 <span style=''>    </span><span style='background: #F0ADAD'>MonadThrow[F].catchNonFatal(generate(input, secretKey): @nowarn(&quot;cat=deprecation&quot;))</span><span style=''>
+</span>81 <span style=''>
+</span>82 <span style=''>  @deprecated(&quot;Use generate[F[_]: MonadThrow] instead&quot;, &quot;0.22.5&quot;)
+</span>83 <span style=''>  def generate(input: String, secretKey: String): String =
+</span>84 <span style=''>    </span><span style='background: #F0ADAD'>generate[SyncIO](input, secretKey).unsafeRunSync()</span><span style=''>
+</span>85 <span style=''>
+</span>86 <span style=''>  private[oauth1] def generateHMAC[F[_]: MonadThrow: Hmac](
+</span>87 <span style=''>      input: String,
+</span>88 <span style=''>      algorithm: HmacAlgorithm,
+</span>89 <span style=''>      secretKey: String,
+</span>90 <span style=''>  ): F[String] =
+</span>91 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      keyData &lt;- ByteVector.encodeUtf8(secretKey).liftTo[F]
+</span>93 <span style=''></span><span style='background: #AEF1AE'>      sk = SecretKeySpec(keyData, algorithm)
+</span>94 <span style=''></span><span style='background: #AEF1AE'>      data &lt;- ByteVector.encodeUtf8(input).liftTo[F]
+</span>95 <span style=''></span><span style='background: #AEF1AE'>      digest &lt;- Hmac[F].digest(sk, data)
+</span>96 <span style=''></span><span style='background: #AEF1AE'>    } yield digest.toBase64</span><span style=''>
+</span>97 <span style=''>
+</span>98 <span style=''>}
+</span>99 <span style=''>
+</span>100 <span style=''>/** An implementation of the `HMAC-SHA1` oauth signature method.
+</span>101 <span style=''>  *
+</span>102 <span style=''>  * This uses the `HmacSHA1` implementation which every java platform is required to have.
+</span>103 <span style=''>  */
+</span>104 <span style=''>object HmacSha1 extends SignatureAlgorithm {
+</span>105 <span style=''>  override val name: String = </span><span style='background: #AEF1AE'>`HMAC-SHA1`</span><span style=''>
+</span>106 <span style=''>  override def generate[F[_]: MonadThrow](input: String, secretKey: String): F[String] =
+</span>107 <span style=''>    </span><span style='background: #AEF1AE'>generateHMAC(input, HmacAlgorithm.SHA1, secretKey)</span><span style=''>
+</span>108 <span style=''>}
+</span>109 <span style=''>
+</span>110 <span style=''>/** An implementation of the `HMAC-SHA256` oauth signature method.
+</span>111 <span style=''>  *
+</span>112 <span style=''>  * This uses the `HmacSHA256` implementation which every java platform is required to have.
+</span>113 <span style=''>  */
+</span>114 <span style=''>object HmacSha256 extends SignatureAlgorithm {
+</span>115 <span style=''>  override val name: String = </span><span style='background: #AEF1AE'>`HMAC-SHA256`</span><span style=''>
+</span>116 <span style=''>  override def generate[F[_]: MonadThrow](input: String, secretKey: String): F[String] =
+</span>117 <span style=''>    </span><span style='background: #AEF1AE'>generateHMAC(input, HmacAlgorithm.SHA256, secretKey)</span><span style=''>
+</span>118 <span style=''>}
+</span>119 <span style=''>
+</span>120 <span style=''>/** An implementation of the `HMAC-SHA512` oauth signature method.
+</span>121 <span style=''>  *
+</span>122 <span style=''>  * WARNING - This uses the `HmacSHA512` implementation which is *not* required to be present by the Java spec.
+</span>123 <span style=''>  * (However, most modern Java runtimes tend to have it)
+</span>124 <span style=''>  */
+</span>125 <span style=''>object HmacSha512 extends SignatureAlgorithm {
+</span>126 <span style=''>  override val name: String = </span><span style='background: #AEF1AE'>`HMAC-SHA512`</span><span style=''>
+</span>127 <span style=''>  override def generate[F[_]: MonadThrow](input: String, secretKey: String): F[String] =
+</span>128 <span style=''>    </span><span style='background: #AEF1AE'>generateHMAC(input, HmacAlgorithm.SHA512, secretKey)</span><span style=''>
+</span>129 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          12111
+        </td>
+        <td>
+          1121
+          -
+          1132
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;HMAC-SHA1&quot;
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          11678
+        </td>
+        <td>
+          1157
+          -
+          1170
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;HMAC-SHA256&quot;
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          11275
+        </td>
+        <td>
+          1195
+          -
+          1208
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;HMAC-SHA512&quot;
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          10996
+        </td>
+        <td>
+          1282
+          -
+          1293
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;PLAINTEXT&quot;
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          11759
+        </td>
+        <td>
+          1315
+          -
+          1325
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;RSA-SHA1&quot;
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          11315
+        </td>
+        <td>
+          1349
+          -
+          1361
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;RSA-SHA256&quot;
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          12040
+        </td>
+        <td>
+          1385
+          -
+          1397
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;RSA-SHA512&quot;
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          11646
+        </td>
+        <td>
+          1436
+          -
+          1474
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[org.http4s.client.oauth1.SignatureAlgorithm](HmacSha1, HmacSha256, HmacSha512)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          11365
+        </td>
+        <td>
+          1853
+          -
+          1871
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.ProtocolParameter.SignatureMethod.headerValue
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          method.headerValue
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          12115
+        </td>
+        <td>
+          1843
+          -
+          1871
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.name.==(method.headerValue)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          11255
+        </td>
+        <td>
+          1820
+          -
+          2060
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          SignatureAlgorithm.this.AllMethods.find(((x$1: org.http4s.client.oauth1.SignatureAlgorithm) =&gt; x$1.name.==(method.headerValue))).getOrElse[org.http4s.client.oauth1.SignatureAlgorithm](throw new scala.`package`.IllegalArgumentException((&quot;Unrecognized headerValue \'&quot;.+(method.headerValue).+(&quot;\', Valid options are: &quot;).+(SignatureAlgorithm.this.AllMethods.map[String](((x$2: org.http4s.client.oauth1.SignatureAlgorithm) =&gt; x$2.name))): String)))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          11709
+        </td>
+        <td>
+          1899
+          -
+          2052
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          throw new scala.`package`.IllegalArgumentException((&quot;Unrecognized headerValue \'&quot;.+(method.headerValue).+(&quot;\', Valid options are: &quot;).+(SignatureAlgorithm.this.AllMethods.map[String](((x$2: org.http4s.client.oauth1.SignatureAlgorithm) =&gt; x$2.name))): String))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11971
+        </td>
+        <td>
+          2524
+          -
+          2550
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.generate
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          SignatureAlgorithm.this.generate(input, secretKey)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11344
+        </td>
+        <td>
+          2496
+          -
+          2579
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.ApplicativeError.catchNonFatal
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.`package`.MonadThrow.apply[F](evidence$1).catchNonFatal[String]((SignatureAlgorithm.this.generate(input, secretKey): String @scala.annotation.nowarn(value = &quot;cat=deprecation&quot;)))(scala.this.&lt;:&lt;.refl[Throwable])
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          11732
+        </td>
+        <td>
+          2523
+          -
+          2523
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.this.&lt;:&lt;.refl[Throwable]
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          12021
+        </td>
+        <td>
+          2710
+          -
+          2760
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          SignatureAlgorithm.this.generate[cats.effect.SyncIO](input, secretKey)(effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          11348
+        </td>
+        <td>
+          2921
+          -
+          3153
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, scodec.bits.ByteVector](cats.syntax.`package`.all.catsSyntaxEither[java.nio.charset.CharacterCodingException, scodec.bits.ByteVector](scodec.bits.ByteVector.encodeUtf8(secretKey)).liftTo[F](evidence$2))(evidence$2).flatMap[String](((keyData: scodec.bits.ByteVector) =&gt; {
+  val sk: org.http4s.crypto.SecretKeySpec[org.http4s.crypto.HmacAlgorithm] = org.http4s.crypto.SecretKeySpec.apply[org.http4s.crypto.HmacAlgorithm](keyData, algorithm);
+  cats.syntax.`package`.all.toFlatMapOps[F, scodec.bits.ByteVector](cats.syntax.`package`.all.catsSyntaxEither[java.nio.charset.CharacterCodingException, scodec.bits.ByteVector](scodec.bits.ByteVector.encodeUtf8(input)).liftTo[F](evidence$2))(evidence$2).flatMap[String](((data: scodec.bits.ByteVector) =&gt; cats.syntax.`package`.all.toFunctorOps[F, scodec.bits.ByteVector](org.http4s.crypto.Hmac.apply[F](evidence$3).digest(sk, data))(evidence$2).map[String](((digest: scodec.bits.ByteVector) =&gt; digest.toBase64))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          11625
+        </td>
+        <td>
+          2944
+          -
+          2986
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.EitherOps.liftTo
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[java.nio.charset.CharacterCodingException, scodec.bits.ByteVector](scodec.bits.ByteVector.encodeUtf8(secretKey)).liftTo[F](evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          11368
+        </td>
+        <td>
+          2998
+          -
+          3031
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.crypto.SecretKeySpec.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.crypto.SecretKeySpec.apply[org.http4s.crypto.HmacAlgorithm](keyData, algorithm)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          12095
+        </td>
+        <td>
+          3046
+          -
+          3084
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.EitherOps.liftTo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[java.nio.charset.CharacterCodingException, scodec.bits.ByteVector](scodec.bits.ByteVector.encodeUtf8(input)).liftTo[F](evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          11738
+        </td>
+        <td>
+          3038
+          -
+          3153
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, scodec.bits.ByteVector](cats.syntax.`package`.all.catsSyntaxEither[java.nio.charset.CharacterCodingException, scodec.bits.ByteVector](scodec.bits.ByteVector.encodeUtf8(input)).liftTo[F](evidence$2))(evidence$2).flatMap[String](((data: scodec.bits.ByteVector) =&gt; cats.syntax.`package`.all.toFunctorOps[F, scodec.bits.ByteVector](org.http4s.crypto.Hmac.apply[F](evidence$3).digest(sk, data))(evidence$2).map[String](((digest: scodec.bits.ByteVector) =&gt; digest.toBase64))))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          11711
+        </td>
+        <td>
+          3101
+          -
+          3125
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.crypto.Hmac.digest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.crypto.Hmac.apply[F](evidence$3).digest(sk, data)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          11952
+        </td>
+        <td>
+          3091
+          -
+          3153
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, scodec.bits.ByteVector](org.http4s.crypto.Hmac.apply[F](evidence$3).digest(sk, data))(evidence$2).map[String](((digest: scodec.bits.ByteVector) =&gt; digest.toBase64))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          11224
+        </td>
+        <td>
+          3138
+          -
+          3153
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.toBase64
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          digest.toBase64
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          12075
+        </td>
+        <td>
+          3398
+          -
+          3409
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.Names.HMAC-SHA1
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.client.oauth1.SignatureAlgorithm.Names.HMAC-SHA1
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          11426
+        </td>
+        <td>
+          3515
+          -
+          3515
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.crypto.HmacCompanionPlatform.forApplicativeThrow
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          crypto.this.Hmac.forApplicativeThrow[[_]F[_]](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          12128
+        </td>
+        <td>
+          3503
+          -
+          3553
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.generateHMAC
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HmacSha1.this.generateHMAC[[_]F[_]](input, org.http4s.crypto.HmacAlgorithm.SHA1, secretKey)(evidence$4, crypto.this.Hmac.forApplicativeThrow[[_]F[_]](evidence$4))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          11643
+        </td>
+        <td>
+          3523
+          -
+          3541
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.crypto.HmacAlgorithm.SHA1
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.crypto.HmacAlgorithm.SHA1
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          11715
+        </td>
+        <td>
+          3803
+          -
+          3816
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.Names.HMAC-SHA256
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.client.oauth1.SignatureAlgorithm.Names.HMAC-SHA256
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          12006
+        </td>
+        <td>
+          3922
+          -
+          3922
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.crypto.HmacCompanionPlatform.forApplicativeThrow
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          crypto.this.Hmac.forApplicativeThrow[[_]F[_]](evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          11287
+        </td>
+        <td>
+          3930
+          -
+          3950
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.crypto.HmacAlgorithm.SHA256
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.crypto.HmacAlgorithm.SHA256
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          11789
+        </td>
+        <td>
+          3910
+          -
+          3962
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.generateHMAC
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HmacSha256.this.generateHMAC[[_]F[_]](input, org.http4s.crypto.HmacAlgorithm.SHA256, secretKey)(evidence$5, crypto.this.Hmac.forApplicativeThrow[[_]F[_]](evidence$5))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          11333
+        </td>
+        <td>
+          4288
+          -
+          4301
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.Names.HMAC-SHA512
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.client.oauth1.SignatureAlgorithm.Names.HMAC-SHA512
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          11202
+        </td>
+        <td>
+          4395
+          -
+          4447
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.generateHMAC
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HmacSha512.this.generateHMAC[[_]F[_]](input, org.http4s.crypto.HmacAlgorithm.SHA512, secretKey)(evidence$6, crypto.this.Hmac.forApplicativeThrow[[_]F[_]](evidence$6))
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          12077
+        </td>
+        <td>
+          4415
+          -
+          4435
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.crypto.HmacAlgorithm.SHA512
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.crypto.HmacAlgorithm.SHA512
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          11622
+        </td>
+        <td>
+          4407
+          -
+          4407
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.crypto.HmacCompanionPlatform.forApplicativeThrow
+        </td>
+        <td>
+          org.http4s.client.oauth1.signaturealgorithmsuite
+        </td>
+        <td style="background: #AEF1AE">
+          crypto.this.Hmac.forApplicativeThrow[[_]F[_]](evidence$6)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,1325 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/testkit/scaffold/NettyTestServer.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.client.testkit.scaffold
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.effect.Ref
+</span>20 <span style=''>import cats.effect.Resource
+</span>21 <span style=''>import cats.effect.kernel.Async
+</span>22 <span style=''>import cats.effect.std.Dispatcher
+</span>23 <span style=''>import cats.implicits._
+</span>24 <span style=''>import com.comcast.ip4s.IpAddress
+</span>25 <span style=''>import com.comcast.ip4s.Port
+</span>26 <span style=''>import com.comcast.ip4s.SocketAddress
+</span>27 <span style=''>import io.netty.bootstrap.ServerBootstrap
+</span>28 <span style=''>import io.netty.channel._
+</span>29 <span style=''>import io.netty.channel.nio.NioEventLoopGroup
+</span>30 <span style=''>import io.netty.channel.socket.nio.NioServerSocketChannel
+</span>31 <span style=''>import io.netty.channel.socket.nio.NioSocketChannel
+</span>32 <span style=''>import io.netty.handler.codec.http._
+</span>33 <span style=''>import io.netty.handler.logging.LogLevel
+</span>34 <span style=''>import io.netty.handler.logging.LoggingHandler
+</span>35 <span style=''>import io.netty.handler.ssl.SslHandler
+</span>36 <span style=''>import org.http4s.Uri
+</span>37 <span style=''>import org.log4s.getLogger
+</span>38 <span style=''>
+</span>39 <span style=''>import java.net.InetAddress
+</span>40 <span style=''>import java.net.InetSocketAddress
+</span>41 <span style=''>import java.util.concurrent.TimeUnit
+</span>42 <span style=''>import javax.net.ssl.SSLContext
+</span>43 <span style=''>
+</span>44 <span style=''>private[http4s] trait TestServer[F[_]] {
+</span>45 <span style=''>  def localAddress: SocketAddress[IpAddress]
+</span>46 <span style=''>  def establishedConnections: F[Long]
+</span>47 <span style=''>  def resetEstablishedConnections: F[Unit]
+</span>48 <span style=''>  def secure: Boolean
+</span>49 <span style=''>  def uri: Uri = </span><span style='background: #F0ADAD'>Uri.unsafeFromString(s&quot;${if (secure) &quot;https&quot; else &quot;http&quot;}://$localAddress&quot;)</span><span style=''>
+</span>50 <span style=''>}
+</span>51 <span style=''>
+</span>52 <span style=''>private[http4s] class NettyTestServer[F[_]](
+</span>53 <span style=''>    establishedConnectionsRef: Ref[F, Long],
+</span>54 <span style=''>    val localAddress: SocketAddress[IpAddress],
+</span>55 <span style=''>    val secure: Boolean,
+</span>56 <span style=''>) extends TestServer[F] {
+</span>57 <span style=''>  def establishedConnections: F[Long] = </span><span style='background: #F0ADAD'>establishedConnectionsRef.get</span><span style=''>
+</span>58 <span style=''>  def resetEstablishedConnections: F[Unit] = </span><span style='background: #F0ADAD'>establishedConnectionsRef.set(0L)</span><span style=''>
+</span>59 <span style=''>}
+</span>60 <span style=''>
+</span>61 <span style=''>private[http4s] object NettyTestServer {
+</span>62 <span style=''>  private val logger = </span><span style='background: #AEF1AE'>getLogger(this.getClass)</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>  def apply[F[_]: Async](
+</span>65 <span style=''>      port: Int,
+</span>66 <span style=''>      makeHandler: F[ChannelInboundHandler],
+</span>67 <span style=''>      sslContext: Option[SSLContext],
+</span>68 <span style=''>      dispatcher: Dispatcher[F],
+</span>69 <span style=''>  ): Resource[F, NettyTestServer[F]] = </span><span style='background: #AEF1AE'>for {
+</span>70 <span style=''></span><span style='background: #AEF1AE'>    bossGroup &lt;- nioEventLoopGroup[F]
+</span>71 <span style=''></span><span style='background: #AEF1AE'>    workerGroup &lt;- nioEventLoopGroup[F]
+</span>72 <span style=''></span><span style='background: #AEF1AE'>    establishedConnections &lt;- Resource.eval(Ref[F].of(0L))
+</span>73 <span style=''></span><span style='background: #AEF1AE'>    bootstrap = new ServerBootstrap()
+</span>74 <span style=''></span><span style='background: #AEF1AE'>      .group(bossGroup, workerGroup)
+</span>75 <span style=''></span><span style='background: #AEF1AE'>      .channelFactory(new ChannelFactory[NioServerSocketChannel] {
+</span>76 <span style=''></span><span style='background: #AEF1AE'>        override def newChannel(): NioServerSocketChannel = new NioServerSocketChannel()
+</span>77 <span style=''></span><span style='background: #AEF1AE'>      })
+</span>78 <span style=''></span><span style='background: #AEF1AE'>      .handler(new LoggingHandler(LogLevel.INFO))
+</span>79 <span style=''></span><span style='background: #AEF1AE'>      .childHandler(new ChannelInitializer[NioSocketChannel]() {
+</span>80 <span style=''></span><span style='background: #AEF1AE'>        def initChannel(ch: NioSocketChannel): Unit = {
+</span>81 <span style=''></span><span style='background: #AEF1AE'>          logger.trace(s&quot;Accepted new connection from [${ch.remoteAddress()}].&quot;)
+</span>82 <span style=''></span><span style='background: #AEF1AE'>          dispatcher.unsafeRunSync(establishedConnections.update(_ + 1))
+</span>83 <span style=''></span><span style='background: #AEF1AE'>          sslContext.foreach { sslContext =&gt;
+</span>84 <span style=''></span><span style='background: #AEF1AE'>            val engine = </span><span style='background: #F0ADAD'>sslContext.createSSLEngine()</span><span style='background: #AEF1AE'>
+</span>85 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>engine.setUseClientMode(false)</span><span style='background: #AEF1AE'>
+</span>86 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>ch.pipeline().addLast(new SslHandler(engine))</span><span style='background: #AEF1AE'>
+</span>87 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>88 <span style=''></span><span style='background: #AEF1AE'>          ch.pipeline()
+</span>89 <span style=''></span><span style='background: #AEF1AE'>            .addLast(new HttpRequestDecoder())
+</span>90 <span style=''></span><span style='background: #AEF1AE'>            .addLast(new HttpResponseEncoder())
+</span>91 <span style=''></span><span style='background: #AEF1AE'>            .addLast(dispatcher.unsafeRunSync(makeHandler))
+</span>92 <span style=''></span><span style='background: #AEF1AE'>          ()
+</span>93 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>94 <span style=''></span><span style='background: #AEF1AE'>      })
+</span>95 <span style=''></span><span style='background: #AEF1AE'>    channel &lt;- server[F](bootstrap, port)
+</span>96 <span style=''></span><span style='background: #AEF1AE'>    localInetSocketAddress = channel.localAddress().asInstanceOf[InetSocketAddress]
+</span>97 <span style=''></span><span style='background: #AEF1AE'>    localAddress &lt;- Resource.eval(toSocketAddress(localInetSocketAddress).liftTo[F])
+</span>98 <span style=''></span><span style='background: #AEF1AE'>  } yield new NettyTestServer(establishedConnections, localAddress, secure = sslContext.isDefined)</span><span style=''>
+</span>99 <span style=''>
+</span>100 <span style=''>  private def nioEventLoopGroup[F[_]](implicit F: Async[F]): Resource[F, NioEventLoopGroup] =
+</span>101 <span style=''>    </span><span style='background: #AEF1AE'>Resource.make(
+</span>102 <span style=''></span><span style='background: #AEF1AE'>      F.delay(new NioEventLoopGroup())
+</span>103 <span style=''></span><span style='background: #AEF1AE'>    )(el =&gt; F.delay(el.shutdownGracefully(0, 0, TimeUnit.MILLISECONDS)).liftToF)</span><span style=''>
+</span>104 <span style=''>
+</span>105 <span style=''>  private def server[F[_]](bootstrap: ServerBootstrap, port: Int)(implicit
+</span>106 <span style=''>      F: Async[F]
+</span>107 <span style=''>  ): Resource[F, Channel] =
+</span>108 <span style=''>    </span><span style='background: #AEF1AE'>Resource.make[F, Channel](
+</span>109 <span style=''></span><span style='background: #AEF1AE'>      F.delay(bootstrap.bind(InetAddress.getLoopbackAddress(), port)).liftToFWithChannel
+</span>110 <span style=''></span><span style='background: #AEF1AE'>    )(channel =&gt; F.delay(channel.close(new DefaultChannelPromise(channel))).liftToF)</span><span style=''>
+</span>111 <span style=''>
+</span>112 <span style=''>  private def toSocketAddress(
+</span>113 <span style=''>      addr: InetSocketAddress
+</span>114 <span style=''>  ): Either[Exception, SocketAddress[IpAddress]] =
+</span>115 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>116 <span style=''></span><span style='background: #AEF1AE'>      ip &lt;- IpAddress
+</span>117 <span style=''></span><span style='background: #AEF1AE'>        .fromString(addr.getAddress.getHostAddress)
+</span>118 <span style=''></span><span style='background: #AEF1AE'>        .toRight(</span><span style='background: #F0ADAD'>new Exception(s&quot;Invalid IP: [${addr.getAddress.toString}]&quot;)</span><span style='background: #AEF1AE'>)
+</span>119 <span style=''></span><span style='background: #AEF1AE'>      port &lt;- Port
+</span>120 <span style=''></span><span style='background: #AEF1AE'>        .fromInt(addr.getPort)
+</span>121 <span style=''></span><span style='background: #AEF1AE'>        .toRight(</span><span style='background: #F0ADAD'>new Exception(s&quot;Invalid port: [${addr.getPort}]&quot;)</span><span style='background: #AEF1AE'>)
+</span>122 <span style=''></span><span style='background: #AEF1AE'>    } yield SocketAddress(ip, port)</span><span style=''>
+</span>123 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          6224
+        </td>
+        <td>
+          1657
+          -
+          1732
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.unsafeFromString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Uri.unsafeFromString((&quot;&quot;.+(if (TestServer.this.secure)
+  &quot;https&quot;
+else
+  &quot;http&quot;).+(&quot;://&quot;).+(TestServer.this.localAddress): String))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          5980
+        </td>
+        <td>
+          1965
+          -
+          1994
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.RefSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NettyTestServer.this.establishedConnectionsRef.get
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          5821
+        </td>
+        <td>
+          2040
+          -
+          2073
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.RefSink.set
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          NettyTestServer.this.establishedConnectionsRef.set(0L)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          6026
+        </td>
+        <td>
+          2141
+          -
+          2165
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.log4s.getLogger
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.log4s.`package`.getLogger(this.getClass())
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          6280
+        </td>
+        <td>
+          2151
+          -
+          2164
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.getClass
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          this.getClass()
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          5728
+        </td>
+        <td>
+          2365
+          -
+          3805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          NettyTestServer.this.nioEventLoopGroup[F](evidence$1).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((bossGroup: io.netty.channel.nio.NioEventLoopGroup) =&gt; NettyTestServer.this.nioEventLoopGroup[F](evidence$1).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((workerGroup: io.netty.channel.nio.NioEventLoopGroup) =&gt; cats.effect.`package`.Resource.eval[F, cats.effect.kernel.Ref[F,Long]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](evidence$1)).of[Long](0L)).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((establishedConnections: cats.effect.kernel.Ref[F,Long]) =&gt; {
+  val bootstrap: io.netty.bootstrap.ServerBootstrap = new io.netty.bootstrap.ServerBootstrap().group(bossGroup, workerGroup).channelFactory({
+  final class $anon extends Object with io.netty.channel.ChannelFactory[io.netty.channel.socket.nio.NioServerSocketChannel] {
+    def &lt;init&gt;(): &lt;$anon: io.netty.channel.ChannelFactory[io.netty.channel.socket.nio.NioServerSocketChannel]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    override def newChannel(): io.netty.channel.socket.nio.NioServerSocketChannel = new io.netty.channel.socket.nio.NioServerSocketChannel()
+  };
+  new $anon()
+}).handler(new io.netty.handler.logging.LoggingHandler(INFO)).childHandler({
+    final class $anon extends io.netty.channel.ChannelInitializer[io.netty.channel.socket.nio.NioSocketChannel] {
+      def &lt;init&gt;(): &lt;$anon: io.netty.channel.ChannelInitializer[io.netty.channel.socket.nio.NioSocketChannel]&gt; = {
+        $anon.super.&lt;init&gt;();
+        ()
+      };
+      def initChannel(ch: io.netty.channel.socket.nio.NioSocketChannel): Unit = {
+        if (NettyTestServer.this.logger.logger.isTraceEnabled())
+          NettyTestServer.this.logger.logger.trace((&quot;Accepted new connection from [&quot;.+(ch.remoteAddress()).+(&quot;].&quot;): String))
+        else
+          ();
+        dispatcher.unsafeRunSync[Unit](establishedConnections.update(((x$1: Long) =&gt; x$1.+(1))));
+        sslContext.foreach[io.netty.channel.ChannelPipeline](((sslContext: javax.net.ssl.SSLContext) =&gt; {
+          val engine: javax.net.ssl.SSLEngine = sslContext.createSSLEngine();
+          engine.setUseClientMode(false);
+          ch.pipeline().addLast(new io.netty.handler.ssl.SslHandler(engine))
+        }));
+        ch.pipeline().addLast(new io.netty.handler.codec.http.HttpRequestDecoder()).addLast(new io.netty.handler.codec.http.HttpResponseEncoder()).addLast(dispatcher.unsafeRunSync[io.netty.channel.ChannelInboundHandler](makeHandler));
+        ()
+      }
+    };
+    new $anon()
+  });
+  NettyTestServer.this.server[F](bootstrap, port)(evidence$1).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((channel: io.netty.channel.Channel) =&gt; {
+    val localInetSocketAddress: java.net.InetSocketAddress = channel.localAddress().asInstanceOf[java.net.InetSocketAddress];
+    cats.effect.`package`.Resource.eval[F, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](cats.implicits.catsSyntaxEither[Exception, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](NettyTestServer.this.toSocketAddress(localInetSocketAddress)).liftTo[F](evidence$1)).map[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((localAddress: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]) =&gt; new org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]](establishedConnections, localAddress, sslContext.isDefined)))
+  }))
+}))))))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          6025
+        </td>
+        <td>
+          2413
+          -
+          3805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          NettyTestServer.this.nioEventLoopGroup[F](evidence$1).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((workerGroup: io.netty.channel.nio.NioEventLoopGroup) =&gt; cats.effect.`package`.Resource.eval[F, cats.effect.kernel.Ref[F,Long]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](evidence$1)).of[Long](0L)).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((establishedConnections: cats.effect.kernel.Ref[F,Long]) =&gt; {
+  val bootstrap: io.netty.bootstrap.ServerBootstrap = new io.netty.bootstrap.ServerBootstrap().group(bossGroup, workerGroup).channelFactory({
+  final class $anon extends Object with io.netty.channel.ChannelFactory[io.netty.channel.socket.nio.NioServerSocketChannel] {
+    def &lt;init&gt;(): &lt;$anon: io.netty.channel.ChannelFactory[io.netty.channel.socket.nio.NioServerSocketChannel]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    override def newChannel(): io.netty.channel.socket.nio.NioServerSocketChannel = new io.netty.channel.socket.nio.NioServerSocketChannel()
+  };
+  new $anon()
+}).handler(new io.netty.handler.logging.LoggingHandler(INFO)).childHandler({
+    final class $anon extends io.netty.channel.ChannelInitializer[io.netty.channel.socket.nio.NioSocketChannel] {
+      def &lt;init&gt;(): &lt;$anon: io.netty.channel.ChannelInitializer[io.netty.channel.socket.nio.NioSocketChannel]&gt; = {
+        $anon.super.&lt;init&gt;();
+        ()
+      };
+      def initChannel(ch: io.netty.channel.socket.nio.NioSocketChannel): Unit = {
+        if (NettyTestServer.this.logger.logger.isTraceEnabled())
+          NettyTestServer.this.logger.logger.trace((&quot;Accepted new connection from [&quot;.+(ch.remoteAddress()).+(&quot;].&quot;): String))
+        else
+          ();
+        dispatcher.unsafeRunSync[Unit](establishedConnections.update(((x$1: Long) =&gt; x$1.+(1))));
+        sslContext.foreach[io.netty.channel.ChannelPipeline](((sslContext: javax.net.ssl.SSLContext) =&gt; {
+          val engine: javax.net.ssl.SSLEngine = sslContext.createSSLEngine();
+          engine.setUseClientMode(false);
+          ch.pipeline().addLast(new io.netty.handler.ssl.SslHandler(engine))
+        }));
+        ch.pipeline().addLast(new io.netty.handler.codec.http.HttpRequestDecoder()).addLast(new io.netty.handler.codec.http.HttpResponseEncoder()).addLast(dispatcher.unsafeRunSync[io.netty.channel.ChannelInboundHandler](makeHandler));
+        ()
+      }
+    };
+    new $anon()
+  });
+  NettyTestServer.this.server[F](bootstrap, port)(evidence$1).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((channel: io.netty.channel.Channel) =&gt; {
+    val localInetSocketAddress: java.net.InetSocketAddress = channel.localAddress().asInstanceOf[java.net.InetSocketAddress];
+    cats.effect.`package`.Resource.eval[F, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](cats.implicits.catsSyntaxEither[Exception, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](NettyTestServer.this.toSocketAddress(localInetSocketAddress)).liftTo[F](evidence$1)).map[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((localAddress: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]) =&gt; new org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]](establishedConnections, localAddress, sslContext.isDefined)))
+  }))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          5741
+        </td>
+        <td>
+          2493
+          -
+          2506
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.ApplyBuilders.of
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](evidence$1)).of[Long](0L)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          6270
+        </td>
+        <td>
+          2453
+          -
+          3805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.eval[F, cats.effect.kernel.Ref[F,Long]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](evidence$1)).of[Long](0L)).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((establishedConnections: cats.effect.kernel.Ref[F,Long]) =&gt; {
+  val bootstrap: io.netty.bootstrap.ServerBootstrap = new io.netty.bootstrap.ServerBootstrap().group(bossGroup, workerGroup).channelFactory({
+  final class $anon extends Object with io.netty.channel.ChannelFactory[io.netty.channel.socket.nio.NioServerSocketChannel] {
+    def &lt;init&gt;(): &lt;$anon: io.netty.channel.ChannelFactory[io.netty.channel.socket.nio.NioServerSocketChannel]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    override def newChannel(): io.netty.channel.socket.nio.NioServerSocketChannel = new io.netty.channel.socket.nio.NioServerSocketChannel()
+  };
+  new $anon()
+}).handler(new io.netty.handler.logging.LoggingHandler(INFO)).childHandler({
+    final class $anon extends io.netty.channel.ChannelInitializer[io.netty.channel.socket.nio.NioSocketChannel] {
+      def &lt;init&gt;(): &lt;$anon: io.netty.channel.ChannelInitializer[io.netty.channel.socket.nio.NioSocketChannel]&gt; = {
+        $anon.super.&lt;init&gt;();
+        ()
+      };
+      def initChannel(ch: io.netty.channel.socket.nio.NioSocketChannel): Unit = {
+        if (NettyTestServer.this.logger.logger.isTraceEnabled())
+          NettyTestServer.this.logger.logger.trace((&quot;Accepted new connection from [&quot;.+(ch.remoteAddress()).+(&quot;].&quot;): String))
+        else
+          ();
+        dispatcher.unsafeRunSync[Unit](establishedConnections.update(((x$1: Long) =&gt; x$1.+(1))));
+        sslContext.foreach[io.netty.channel.ChannelPipeline](((sslContext: javax.net.ssl.SSLContext) =&gt; {
+          val engine: javax.net.ssl.SSLEngine = sslContext.createSSLEngine();
+          engine.setUseClientMode(false);
+          ch.pipeline().addLast(new io.netty.handler.ssl.SslHandler(engine))
+        }));
+        ch.pipeline().addLast(new io.netty.handler.codec.http.HttpRequestDecoder()).addLast(new io.netty.handler.codec.http.HttpResponseEncoder()).addLast(dispatcher.unsafeRunSync[io.netty.channel.ChannelInboundHandler](makeHandler));
+        ()
+      }
+    };
+    new $anon()
+  });
+  NettyTestServer.this.server[F](bootstrap, port)(evidence$1).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((channel: io.netty.channel.Channel) =&gt; {
+    val localInetSocketAddress: java.net.InetSocketAddress = channel.localAddress().asInstanceOf[java.net.InetSocketAddress];
+    cats.effect.`package`.Resource.eval[F, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](cats.implicits.catsSyntaxEither[Exception, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](NettyTestServer.this.toSocketAddress(localInetSocketAddress)).liftTo[F](evidence$1)).map[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((localAddress: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]) =&gt; new org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]](establishedConnections, localAddress, sslContext.isDefined)))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          6043
+        </td>
+        <td>
+          2605
+          -
+          2608
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyTestServer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          6202
+        </td>
+        <td>
+          2710
+          -
+          2738
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.channel.socket.nio.NioServerSocketChannel.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new io.netty.channel.socket.nio.NioServerSocketChannel()
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          5796
+        </td>
+        <td>
+          2763
+          -
+          2796
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.logging.LoggingHandler.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new io.netty.handler.logging.LoggingHandler(INFO)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          5726
+        </td>
+        <td>
+          2524
+          -
+          3495
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.bootstrap.ServerBootstrap.childHandler
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new io.netty.bootstrap.ServerBootstrap().group(bossGroup, workerGroup).channelFactory({
+  final class $anon extends Object with io.netty.channel.ChannelFactory[io.netty.channel.socket.nio.NioServerSocketChannel] {
+    def &lt;init&gt;(): &lt;$anon: io.netty.channel.ChannelFactory[io.netty.channel.socket.nio.NioServerSocketChannel]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    override def newChannel(): io.netty.channel.socket.nio.NioServerSocketChannel = new io.netty.channel.socket.nio.NioServerSocketChannel()
+  };
+  new $anon()
+}).handler(new io.netty.handler.logging.LoggingHandler(INFO)).childHandler({
+  final class $anon extends io.netty.channel.ChannelInitializer[io.netty.channel.socket.nio.NioSocketChannel] {
+    def &lt;init&gt;(): &lt;$anon: io.netty.channel.ChannelInitializer[io.netty.channel.socket.nio.NioSocketChannel]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def initChannel(ch: io.netty.channel.socket.nio.NioSocketChannel): Unit = {
+      if (NettyTestServer.this.logger.logger.isTraceEnabled())
+        NettyTestServer.this.logger.logger.trace((&quot;Accepted new connection from [&quot;.+(ch.remoteAddress()).+(&quot;].&quot;): String))
+      else
+        ();
+      dispatcher.unsafeRunSync[Unit](establishedConnections.update(((x$1: Long) =&gt; x$1.+(1))));
+      sslContext.foreach[io.netty.channel.ChannelPipeline](((sslContext: javax.net.ssl.SSLContext) =&gt; {
+        val engine: javax.net.ssl.SSLEngine = sslContext.createSSLEngine();
+        engine.setUseClientMode(false);
+        ch.pipeline().addLast(new io.netty.handler.ssl.SslHandler(engine))
+      }));
+      ch.pipeline().addLast(new io.netty.handler.codec.http.HttpRequestDecoder()).addLast(new io.netty.handler.codec.http.HttpResponseEncoder()).addLast(dispatcher.unsafeRunSync[io.netty.channel.ChannelInboundHandler](makeHandler));
+      ()
+    }
+  };
+  new $anon()
+})
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          5992
+        </td>
+        <td>
+          2818
+          -
+          2821
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyTestServer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          5968
+        </td>
+        <td>
+          3035
+          -
+          3071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          establishedConnections.update(((x$1: Long) =&gt; x$1.+(1)))
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          6227
+        </td>
+        <td>
+          3065
+          -
+          3070
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          5703
+        </td>
+        <td>
+          3010
+          -
+          3072
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.DispatcherPlatform.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          dispatcher.unsafeRunSync[Unit](establishedConnections.update(((x$1: Long) =&gt; x$1.+(1))))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          6045
+        </td>
+        <td>
+          3083
+          -
+          3284
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sslContext.foreach[io.netty.channel.ChannelPipeline](((sslContext: javax.net.ssl.SSLContext) =&gt; {
+  val engine: javax.net.ssl.SSLEngine = sslContext.createSSLEngine();
+  engine.setUseClientMode(false);
+  ch.pipeline().addLast(new io.netty.handler.ssl.SslHandler(engine))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          6267
+        </td>
+        <td>
+          3143
+          -
+          3171
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          javax.net.ssl.SSLContext.createSSLEngine
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          sslContext.createSSLEngine()
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          5988
+        </td>
+        <td>
+          3184
+          -
+          3214
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          javax.net.ssl.SSLEngine.setUseClientMode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          engine.setUseClientMode(false)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          6169
+        </td>
+        <td>
+          3227
+          -
+          3272
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.channel.ChannelPipeline.addLast
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ch.pipeline().addLast(new io.netty.handler.ssl.SslHandler(engine))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          5743
+        </td>
+        <td>
+          3249
+          -
+          3271
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.ssl.SslHandler.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new io.netty.handler.ssl.SslHandler(engine)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          5797
+        </td>
+        <td>
+          3330
+          -
+          3354
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpRequestDecoder.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new io.netty.handler.codec.http.HttpRequestDecoder()
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          6209
+        </td>
+        <td>
+          3377
+          -
+          3402
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.handler.codec.http.HttpResponseEncoder.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new io.netty.handler.codec.http.HttpResponseEncoder()
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          5971
+        </td>
+        <td>
+          3425
+          -
+          3462
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.DispatcherPlatform.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          dispatcher.unsafeRunSync[io.netty.channel.ChannelInboundHandler](makeHandler)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          5691
+        </td>
+        <td>
+          3295
+          -
+          3463
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          io.netty.channel.ChannelPipeline.addLast
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ch.pipeline().addLast(new io.netty.handler.codec.http.HttpRequestDecoder()).addLast(new io.netty.handler.codec.http.HttpResponseEncoder()).addLast(dispatcher.unsafeRunSync[io.netty.channel.ChannelInboundHandler](makeHandler))
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          6269
+        </td>
+        <td>
+          3474
+          -
+          3476
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          5693
+        </td>
+        <td>
+          3500
+          -
+          3805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          NettyTestServer.this.server[F](bootstrap, port)(evidence$1).flatMap[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((channel: io.netty.channel.Channel) =&gt; {
+  val localInetSocketAddress: java.net.InetSocketAddress = channel.localAddress().asInstanceOf[java.net.InetSocketAddress];
+  cats.effect.`package`.Resource.eval[F, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](cats.implicits.catsSyntaxEither[Exception, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](NettyTestServer.this.toSocketAddress(localInetSocketAddress)).liftTo[F](evidence$1)).map[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((localAddress: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]) =&gt; new org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]](establishedConnections, localAddress, sslContext.isDefined)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          6171
+        </td>
+        <td>
+          3567
+          -
+          3621
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          channel.localAddress().asInstanceOf[java.net.InetSocketAddress]
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          6036
+        </td>
+        <td>
+          3656
+          -
+          3705
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.EitherOps.liftTo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.catsSyntaxEither[Exception, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](NettyTestServer.this.toSocketAddress(localInetSocketAddress)).liftTo[F](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          5964
+        </td>
+        <td>
+          3626
+          -
+          3805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.eval[F, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](cats.implicits.catsSyntaxEither[Exception, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](NettyTestServer.this.toSocketAddress(localInetSocketAddress)).liftTo[F](evidence$1)).map[org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]]](((localAddress: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]) =&gt; new org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]](establishedConnections, localAddress, sslContext.isDefined)))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          6211
+        </td>
+        <td>
+          3717
+          -
+          3805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.testkit.scaffold.NettyTestServer.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.client.testkit.scaffold.NettyTestServer[[_]F[_]](establishedConnections, localAddress, sslContext.isDefined)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          5808
+        </td>
+        <td>
+          3784
+          -
+          3804
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.isDefined
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sslContext.isDefined
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6190
+        </td>
+        <td>
+          3905
+          -
+          4039
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Resource.make
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.make[F, io.netty.channel.nio.NioEventLoopGroup](F.delay[io.netty.channel.nio.NioEventLoopGroup](new io.netty.channel.nio.NioEventLoopGroup()))(((el: io.netty.channel.nio.NioEventLoopGroup) =&gt; scaffold.this.`package`.NettyFutureSyntax[F, io.netty.util.concurrent.Future[?0]](F.delay[io.netty.util.concurrent.Future[?0]](el.shutdownGracefully(0L, 0L, MILLISECONDS))).liftToF(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          5921
+        </td>
+        <td>
+          4166
+          -
+          4366
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Resource.make
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.make[F, io.netty.channel.Channel](scaffold.this.`package`.NettyChannelFutureSyntax[F](F.delay[io.netty.channel.ChannelFuture](bootstrap.bind(java.net.InetAddress.getLoopbackAddress(), port))).liftToFWithChannel(F))(((channel: io.netty.channel.Channel) =&gt; scaffold.this.`package`.NettyFutureSyntax[F, io.netty.channel.ChannelFuture](F.delay[io.netty.channel.ChannelFuture](channel.close(new io.netty.channel.DefaultChannelPromise(channel)))).liftToF(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          5760
+        </td>
+        <td>
+          4484
+          -
+          4795
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.IpAddress.fromString(addr.getAddress().getHostAddress()).toRight[Exception](new scala.`package`.Exception((&quot;Invalid IP: [&quot;.+(addr.getAddress().toString()).+(&quot;]&quot;): String))).flatMap[Exception, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](((ip: com.comcast.ip4s.IpAddress) =&gt; com.comcast.ip4s.Port.fromInt(addr.getPort()).toRight[Exception](new scala.`package`.Exception((&quot;Invalid port: [&quot;.+(addr.getPort()).+(&quot;]&quot;): String))).map[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](((port: com.comcast.ip4s.Port) =&gt; com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.IpAddress](ip, port)))))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          5810
+        </td>
+        <td>
+          4532
+          -
+          4562
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.InetAddress.getHostAddress
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          addr.getAddress().getHostAddress()
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          6242
+        </td>
+        <td>
+          4581
+          -
+          4640
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Exception.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new scala.`package`.Exception((&quot;Invalid IP: [&quot;.+(addr.getAddress().toString()).+(&quot;]&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          6027
+        </td>
+        <td>
+          4648
+          -
+          4795
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.Port.fromInt(addr.getPort()).toRight[Exception](new scala.`package`.Exception((&quot;Invalid port: [&quot;.+(addr.getPort()).+(&quot;]&quot;): String))).map[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.IpAddress]](((port: com.comcast.ip4s.Port) =&gt; com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.IpAddress](ip, port)))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          5967
+        </td>
+        <td>
+          4678
+          -
+          4690
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.InetSocketAddress.getPort
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          addr.getPort()
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          5713
+        </td>
+        <td>
+          4709
+          -
+          4758
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Exception.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new scala.`package`.Exception((&quot;Invalid port: [&quot;.+(addr.getPort()).+(&quot;]&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          6290
+        </td>
+        <td>
+          4772
+          -
+          4795
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.comcast.ip4s.SocketAddress.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.IpAddress](ip, port)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

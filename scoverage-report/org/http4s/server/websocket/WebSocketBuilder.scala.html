@@ -1,0 +1,239 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/websocket/WebSocketBuilder.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server.websocket
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.Applicative
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import fs2.Pipe
+</span>23 <span style=''>import fs2.Stream
+</span>24 <span style=''>import org.http4s.websocket.WebSocketFrame
+</span>25 <span style=''>
+</span>26 <span style=''>/** Build a response which will accept an HTTP websocket upgrade request and initiate a websocket connection using the
+</span>27 <span style=''>  * supplied exchange to process and respond to websocket messages.
+</span>28 <span style=''>  * @param headers Handshake response headers, such as such as:Sec-WebSocket-Protocol.
+</span>29 <span style=''>  * @param onNonWebSocketRequest The status code to return to a client making a non-websocket HTTP request to this route.
+</span>30 <span style=''>  *                              default: NotImplemented
+</span>31 <span style=''>  * @param onHandshakeFailure The status code to return when failing to handle a websocket HTTP request to this route.
+</span>32 <span style=''>  *                           default: BadRequest
+</span>33 <span style=''>  */
+</span>34 <span style=''>@deprecated(
+</span>35 <span style=''>  &quot;Relies on an unsafe cast; instead obtain a WebSocketBuilder2 via .withHttpWebSocketApp on your server builder&quot;,
+</span>36 <span style=''>  &quot;0.23.5&quot;,
+</span>37 <span style=''>)
+</span>38 <span style=''>final case class WebSocketBuilder[F[_]: Applicative](
+</span>39 <span style=''>    headers: Headers,
+</span>40 <span style=''>    onNonWebSocketRequest: F[Response[F]],
+</span>41 <span style=''>    onHandshakeFailure: F[Response[F]],
+</span>42 <span style=''>    onClose: F[Unit],
+</span>43 <span style=''>    filterPingPongs: Boolean,
+</span>44 <span style=''>) {
+</span>45 <span style=''>
+</span>46 <span style=''>  private lazy val delegate: WebSocketBuilder2[F] =
+</span>47 <span style=''>    WebSocketBuilder2(websocketKey[F])
+</span>48 <span style=''>      .withHeaders(headers)
+</span>49 <span style=''>      .withOnNonWebSocketRequest(onNonWebSocketRequest)
+</span>50 <span style=''>      .withOnHandshakeFailure(onHandshakeFailure)
+</span>51 <span style=''>      .withOnClose(onClose)
+</span>52 <span style=''>      .withFilterPingPongs(filterPingPongs)
+</span>53 <span style=''>
+</span>54 <span style=''>  /** @param sendReceive The send-receive stream represents transforming of incoming messages to outgoing for a single websocket
+</span>55 <span style=''>    *                    Once the stream have terminated, the server will initiate a close of the websocket connection.
+</span>56 <span style=''>    *                    As defined in the websocket specification, this means the server
+</span>57 <span style=''>    *                    will send a CloseFrame to the client and wait for a CloseFrame in response before closing the
+</span>58 <span style=''>    *                    connection, this ensures that no messages are lost in flight. The server will shutdown the
+</span>59 <span style=''>    *                    connection when it receives the `CloseFrame` message back from the client. The connection will also
+</span>60 <span style=''>    *                    be closed if the client does not respond with a `CloseFrame` after some reasonable amount of
+</span>61 <span style=''>    *                    time.
+</span>62 <span style=''>    *                    Another way of closing the connection is by emitting a `CloseFrame` in the stream of messages
+</span>63 <span style=''>    *                    heading to the client. This method allows one to attach a message to the `CloseFrame` as defined
+</span>64 <span style=''>    *                    by the websocket protocol.
+</span>65 <span style=''>    *                    Unfortunately the current implementation does not quite respect the description above, it violates
+</span>66 <span style=''>    *                    the websocket protocol by terminating the connection immediately upon reception
+</span>67 <span style=''>    *                    of a `CloseFrame`. This bug will be addressed soon in an upcoming release and this message will be
+</span>68 <span style=''>    *                    removed.
+</span>69 <span style=''>    *                    Currently, there is no way for the server to be notified when the connection is closed, neither in
+</span>70 <span style=''>    *                    the case of a normal disconnection such as a Close handshake or due to a connection error. There
+</span>71 <span style=''>    *                    are plans to address this limitation in the future.
+</span>72 <span style=''>    * @return
+</span>73 <span style=''>    */
+</span>74 <span style=''>  def build(sendReceive: Pipe[F, WebSocketFrame, WebSocketFrame]): F[Response[F]] =
+</span>75 <span style=''>    </span><span style='background: #F0ADAD'>delegate.build(sendReceive)</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>  /** @param send     The send side of the Exchange represents the outgoing stream of messages that should be sent to the client
+</span>78 <span style=''>    * @param receive  The receive side of the Exchange is a sink to which the framework will push the incoming websocket messages
+</span>79 <span style=''>    *                 Once both streams have terminated, the server will initiate a close of the websocket connection.
+</span>80 <span style=''>    *                 As defined in the websocket specification, this means the server
+</span>81 <span style=''>    *                 will send a CloseFrame to the client and wait for a CloseFrame in response before closing the
+</span>82 <span style=''>    *                 connection, this ensures that no messages are lost in flight. The server will shutdown the
+</span>83 <span style=''>    *                 connection when it receives the `CloseFrame` message back from the client. The connection will also
+</span>84 <span style=''>    *                 be closed if the client does not respond with a `CloseFrame` after some reasonable amount of
+</span>85 <span style=''>    *                 time.
+</span>86 <span style=''>    *                 Another way of closing the connection is by emitting a `CloseFrame` in the stream of messages
+</span>87 <span style=''>    *                 heading to the client. This method allows one to attach a message to the `CloseFrame` as defined
+</span>88 <span style=''>    *                 by the websocket protocol.
+</span>89 <span style=''>    *                 Unfortunately the current implementation does not quite respect the description above, it violates
+</span>90 <span style=''>    *                 the websocket protocol by terminating the connection immediately upon reception
+</span>91 <span style=''>    *                 of a `CloseFrame`. This bug will be addressed soon in an upcoming release and this message will be
+</span>92 <span style=''>    *                 removed.
+</span>93 <span style=''>    *                 Currently, there is no way for the server to be notified when the connection is closed, neither in
+</span>94 <span style=''>    *                 the case of a normal disconnection such as a Close handshake or due to a connection error. There
+</span>95 <span style=''>    *                 are plans to address this limitation in the future.
+</span>96 <span style=''>    * @return
+</span>97 <span style=''>    */
+</span>98 <span style=''>  def build(
+</span>99 <span style=''>      send: Stream[F, WebSocketFrame],
+</span>100 <span style=''>      receive: Pipe[F, WebSocketFrame, Unit],
+</span>101 <span style=''>  ): F[Response[F]] =
+</span>102 <span style=''>    </span><span style='background: #F0ADAD'>delegate.build(send, receive)</span><span style=''>
+</span>103 <span style=''>
+</span>104 <span style=''>}
+</span>105 <span style=''>
+</span>106 <span style=''>@deprecated(
+</span>107 <span style=''>  &quot;Relies on an unsafe cast; instead obtain a WebSocketBuilder2 via .withHttpWebSocketApp on your server builder&quot;,
+</span>108 <span style=''>  &quot;0.23.5&quot;,
+</span>109 <span style=''>)
+</span>110 <span style=''>object WebSocketBuilder {
+</span>111 <span style=''>  @deprecated(
+</span>112 <span style=''>    &quot;Relies on an unsafe cast; instead obtain a WebSocketBuilder2 via .withHttpWebSocketApp on your server builder&quot;,
+</span>113 <span style=''>    &quot;0.23.5&quot;,
+</span>114 <span style=''>  )
+</span>115 <span style=''>  def apply[F[_]: Applicative]: WebSocketBuilder[F] =
+</span>116 <span style=''>    </span><span style='background: #F0ADAD'>new WebSocketBuilder[F](
+</span>117 <span style=''></span><span style='background: #F0ADAD'>      headers = Headers.empty,
+</span>118 <span style=''></span><span style='background: #F0ADAD'>      onNonWebSocketRequest =
+</span>119 <span style=''></span><span style='background: #F0ADAD'>        Response[F](Status.NotImplemented).withEntity(&quot;This is a WebSocket route.&quot;).pure[F],
+</span>120 <span style=''></span><span style='background: #F0ADAD'>      onHandshakeFailure =
+</span>121 <span style=''></span><span style='background: #F0ADAD'>        Response[F](Status.BadRequest).withEntity(&quot;WebSocket handshake failed.&quot;).pure[F],
+</span>122 <span style=''></span><span style='background: #F0ADAD'>      onClose = Applicative[F].unit,
+</span>123 <span style=''></span><span style='background: #F0ADAD'>      filterPingPongs = true,
+</span>124 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>125 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9704
+        </td>
+        <td>
+          4010
+          -
+          4037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.build
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder.this.delegate.build(sendReceive)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          9102
+        </td>
+        <td>
+          6116
+          -
+          6145
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.build
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder.this.delegate.build(send, receive)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          8037
+        </td>
+        <td>
+          6526
+          -
+          6894
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new org.http4s.server.websocket.WebSocketBuilder[F](Headers.empty, cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](Response.apply[F](Status.NotImplemented, Response.apply$default$2[F], Response.apply$default$3[F], Response.apply$default$4[F], Response.apply$default$5[F]).withEntity[String](&quot;This is a WebSocket route.&quot;)(http4s.this.EntityEncoder.stringEncoder[[_]F[_]](http4s.this.EntityEncoder.stringEncoder$default$1[[_]F[_]]))).pure[F](evidence$2), cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](Response.apply[F](Status.BadRequest, Response.apply$default$2[F], Response.apply$default$3[F], Response.apply$default$4[F], Response.apply$default$5[F]).withEntity[String](&quot;WebSocket handshake failed.&quot;)(http4s.this.EntityEncoder.stringEncoder[[_]F[_]](http4s.this.EntityEncoder.stringEncoder$default$1[[_]F[_]]))).pure[F](evidence$2), cats.Applicative.apply[F](evidence$2).unit, true)(evidence$2)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

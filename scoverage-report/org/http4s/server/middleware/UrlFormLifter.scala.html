@@ -1,0 +1,910 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/UrlFormLifter.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.data.Kleisli
+</span>22 <span style=''>import cats.effect._
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import cats.~&gt;
+</span>25 <span style=''>
+</span>26 <span style=''>/** [[Middleware]] for lifting application/x-www-form-urlencoded bodies into the
+</span>27 <span style=''>  * request query params.
+</span>28 <span style=''>  *
+</span>29 <span style=''>  * The params are merged into the existing paras _after_ the existing query params. This
+</span>30 <span style=''>  * means that if the query already contains the pair &quot;foo&quot; -&gt; Some(&quot;bar&quot;), parameters on
+</span>31 <span style=''>  * the body must be acessed through `multiParams`.
+</span>32 <span style=''>  */
+</span>33 <span style=''>object UrlFormLifter {
+</span>34 <span style=''>  def apply[F[_]: Sync, G[_]: Concurrent](f: G ~&gt; F)(
+</span>35 <span style=''>      http: Kleisli[F, Request[G], Response[G]],
+</span>36 <span style=''>      strictDecode: Boolean = false,
+</span>37 <span style=''>  ): Kleisli[F, Request[G], Response[G]] =
+</span>38 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>39 <span style=''></span><span style='background: #AEF1AE'>      def addUrlForm(form: UrlForm): F[Response[G]] = {
+</span>40 <span style=''></span><span style='background: #AEF1AE'>        val flatForm = form.values.toVector.flatMap { case (k, vs) =&gt;
+</span>41 <span style=''></span><span style='background: #AEF1AE'>          vs.toVector.map(v =&gt; (k, Some(v)))
+</span>42 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>43 <span style=''></span><span style='background: #AEF1AE'>        val params = req.uri.query.toVector ++ flatForm: Vector[(String, Option[String])]
+</span>44 <span style=''></span><span style='background: #AEF1AE'>        val newQuery = Query(params: _*)
+</span>45 <span style=''></span><span style='background: #AEF1AE'>
+</span>46 <span style=''></span><span style='background: #AEF1AE'>        val newRequest = req
+</span>47 <span style=''></span><span style='background: #AEF1AE'>          .withUri(req.uri.copy(query = newQuery))
+</span>48 <span style=''></span><span style='background: #AEF1AE'>          .withAttributes(req.attributes)
+</span>49 <span style=''></span><span style='background: #AEF1AE'>          .withEmptyBody
+</span>50 <span style=''></span><span style='background: #AEF1AE'>        http(newRequest)
+</span>51 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>52 <span style=''></span><span style='background: #AEF1AE'>
+</span>53 <span style=''></span><span style='background: #AEF1AE'>      req.headers.get[headers.`Content-Type`] match {
+</span>54 <span style=''></span><span style='background: #AEF1AE'>        case Some(headers.`Content-Type`(MediaType.application.`x-www-form-urlencoded`, _))
+</span>55 <span style=''></span><span style='background: #AEF1AE'>            if checkRequest(req) =&gt;
+</span>56 <span style=''></span><span style='background: #AEF1AE'>          for {
+</span>57 <span style=''></span><span style='background: #AEF1AE'>            decoded &lt;- f(UrlForm.entityDecoder[G].decode(req, strictDecode).value)
+</span>58 <span style=''></span><span style='background: #AEF1AE'>            resp &lt;- decoded.fold(
+</span>59 <span style=''></span><span style='background: #AEF1AE'>              mf =&gt; </span><span style='background: #F0ADAD'>f(mf.toHttpResponse[G](req.httpVersion).pure[G])</span><span style='background: #AEF1AE'>,
+</span>60 <span style=''></span><span style='background: #AEF1AE'>              addUrlForm,
+</span>61 <span style=''></span><span style='background: #AEF1AE'>            )
+</span>62 <span style=''></span><span style='background: #AEF1AE'>          } yield resp
+</span>63 <span style=''></span><span style='background: #AEF1AE'>
+</span>64 <span style=''></span><span style='background: #AEF1AE'>        case _ =&gt; http(req)
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>66 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>  private def checkRequest[F[_]](req: Request[F]): Boolean =
+</span>69 <span style=''>    </span><span style='background: #AEF1AE'>req.method == Method.POST || </span><span style='background: #F0ADAD'>req.method == Method.PUT</span><span style=''>
+</span>70 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          9525
+        </td>
+        <td>
+          1294
+          -
+          2295
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; {
+  def addUrlForm(form: org.http4s.UrlForm): F[org.http4s.Response[G]] = {
+    val flatForm: scala.collection.immutable.Vector[(String, Some[String])] = form.values.toVector.flatMap[(String, Some[String])](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+      case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (vs @ _)) =&gt; vs.toVector.map[(String, Some[String])](((v: String) =&gt; scala.Tuple2.apply[String, Some[String]](k, scala.Some.apply[String](v))))
+    }));
+    val params: Vector[(String, Option[String])] = (req.uri.query.toVector.++[(String, Option[String])](flatForm): Vector[(String, Option[String])]);
+    val newQuery: org.http4s.Query = Query.apply((params: _*));
+    val newRequest: org.http4s.Request[G] = req.withUri({
+  &lt;artifact&gt; val x$1: org.http4s.Query = newQuery;
+  &lt;artifact&gt; val x$2: Option[org.http4s.Uri.Scheme] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.copy$default$1;
+  &lt;artifact&gt; val x$3: Option[org.http4s.Uri.Authority] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.copy$default$2;
+  &lt;artifact&gt; val x$4: org.http4s.Uri.Path = req.uri.copy$default$3;
+  &lt;artifact&gt; val x$5: Option[org.http4s.Uri.Fragment] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.copy$default$5;
+  req.uri.copy(x$2, x$3, x$4, x$1, x$5)
+}).withAttributes(req.attributes).withEmptyBody;
+    http.apply(newRequest)
+  };
+  req.headers.get[org.http4s.headers.Content-Type](Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance)) match {
+    case (value: org.http4s.headers.Content-Type): Some[org.http4s.headers.Content-Type]((mediaType: org.http4s.MediaType, charset: Option[org.http4s.Charset]): org.http4s.headers.Content-Type(MediaType.application.x-www-form-urlencoded, _)) if UrlFormLifter.this.checkRequest[[_]G[_]](req) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Either[org.http4s.DecodeFailure,org.http4s.UrlForm]](f.apply[Either[org.http4s.DecodeFailure,org.http4s.UrlForm]](UrlForm.entityDecoder[G](evidence$2, UrlForm.entityDecoder$default$2[G]).decode(req, strictDecode).value))(evidence$1).flatMap[org.http4s.Response[G]](((decoded: Either[org.http4s.DecodeFailure,org.http4s.UrlForm]) =&gt; decoded.fold[F[org.http4s.Response[G]]](((mf: org.http4s.DecodeFailure) =&gt; f.apply[org.http4s.Response[G]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[G]](mf.toHttpResponse[G](req.httpVersion)).pure[G](evidence$2))), ((form: org.http4s.UrlForm) =&gt; addUrlForm(form)))))
+    case _ =&gt; http.apply(req)
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          9641
+        </td>
+        <td>
+          1390
+          -
+          1491
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          form.values.toVector.flatMap[(String, Some[String])](((x0$1: (String, cats.data.Chain[String])) =&gt; x0$1 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (vs @ _)) =&gt; vs.toVector.map[(String, Some[String])](((v: String) =&gt; scala.Tuple2.apply[String, Some[String]](k, scala.Some.apply[String](v))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          7849
+        </td>
+        <td>
+          1447
+          -
+          1481
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          vs.toVector.map[(String, Some[String])](((v: String) =&gt; scala.Tuple2.apply[String, Some[String]](k, scala.Some.apply[String](v))))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          9481
+        </td>
+        <td>
+          1472
+          -
+          1479
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[String](v)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          8916
+        </td>
+        <td>
+          1468
+          -
+          1480
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, Some[String]](k, scala.Some.apply[String](v))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          8569
+        </td>
+        <td>
+          1513
+          -
+          1547
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.query.toVector.++[(String, Option[String])](flatForm)
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          7423
+        </td>
+        <td>
+          1605
+          -
+          1622
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Query.apply((params: _*))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          9387
+        </td>
+        <td>
+          1680
+          -
+          1680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          8675
+        </td>
+        <td>
+          1680
+          -
+          1680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          9844
+        </td>
+        <td>
+          1680
+          -
+          1680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          7663
+        </td>
+        <td>
+          1680
+          -
+          1680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          8318
+        </td>
+        <td>
+          1672
+          -
+          1702
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy(x$2, x$3, x$4, x$1, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          7858
+        </td>
+        <td>
+          1730
+          -
+          1744
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.attributes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.attributes
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          9599
+        </td>
+        <td>
+          1649
+          -
+          1770
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Message.withEmptyBody
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.withUri({
+  &lt;artifact&gt; val x$1: org.http4s.Query = newQuery;
+  &lt;artifact&gt; val x$2: Option[org.http4s.Uri.Scheme] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.copy$default$1;
+  &lt;artifact&gt; val x$3: Option[org.http4s.Uri.Authority] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.copy$default$2;
+  &lt;artifact&gt; val x$4: org.http4s.Uri.Path = req.uri.copy$default$3;
+  &lt;artifact&gt; val x$5: Option[org.http4s.Uri.Fragment] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.copy$default$5;
+  req.uri.copy(x$2, x$3, x$4, x$1, x$5)
+}).withAttributes(req.attributes).withEmptyBody
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          8574
+        </td>
+        <td>
+          1779
+          -
+          1795
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(newRequest)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8677
+        </td>
+        <td>
+          1811
+          -
+          1850
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Content-Type](Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7385
+        </td>
+        <td>
+          1826
+          -
+          1826
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9752
+        </td>
+        <td>
+          1826
+          -
+          1826
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          7619
+        </td>
+        <td>
+          1966
+          -
+          1983
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.UrlFormLifter.checkRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          UrlFormLifter.this.checkRequest[[_]G[_]](req)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          8768
+        </td>
+        <td>
+          1997
+          -
+          2252
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Either[org.http4s.DecodeFailure,org.http4s.UrlForm]](f.apply[Either[org.http4s.DecodeFailure,org.http4s.UrlForm]](UrlForm.entityDecoder[G](evidence$2, UrlForm.entityDecoder$default$2[G]).decode(req, strictDecode).value))(evidence$1).flatMap[org.http4s.Response[G]](((decoded: Either[org.http4s.DecodeFailure,org.http4s.UrlForm]) =&gt; decoded.fold[F[org.http4s.Response[G]]](((mf: org.http4s.DecodeFailure) =&gt; f.apply[org.http4s.Response[G]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[G]](mf.toHttpResponse[G](req.httpVersion)).pure[G](evidence$2))), ((form: org.http4s.UrlForm) =&gt; addUrlForm(form)))))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          8319
+        </td>
+        <td>
+          2028
+          -
+          2084
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.EitherT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.entityDecoder[G](evidence$2, UrlForm.entityDecoder$default$2[G]).decode(req, strictDecode).value
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          7839
+        </td>
+        <td>
+          2026
+          -
+          2085
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply[Either[org.http4s.DecodeFailure,org.http4s.UrlForm]](UrlForm.entityDecoder[G](evidence$2, UrlForm.entityDecoder$default$2[G]).decode(req, strictDecode).value)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          9393
+        </td>
+        <td>
+          2049
+          -
+          2049
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.UrlForm.entityDecoder$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.entityDecoder$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          9224
+        </td>
+        <td>
+          2098
+          -
+          2252
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          decoded.fold[F[org.http4s.Response[G]]](((mf: org.http4s.DecodeFailure) =&gt; f.apply[org.http4s.Response[G]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[G]](mf.toHttpResponse[G](req.httpVersion)).pure[G](evidence$2))), ((form: org.http4s.UrlForm) =&gt; addUrlForm(form)))
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          9605
+        </td>
+        <td>
+          2142
+          -
+          2187
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[G]](mf.toHttpResponse[G](req.httpVersion)).pure[G](evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          8624
+        </td>
+        <td>
+          2140
+          -
+          2188
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.apply[org.http4s.Response[G]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[G]](mf.toHttpResponse[G](req.httpVersion)).pure[G](evidence$2))
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          7392
+        </td>
+        <td>
+          2204
+          -
+          2214
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.UrlFormLifter.addUrlForm
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          addUrlForm(form)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          7622
+        </td>
+        <td>
+          2272
+          -
+          2281
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          8627
+        </td>
+        <td>
+          2362
+          -
+          2415
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.method.==(Method.POST).||(req.method.==(Method.PUT))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          9691
+        </td>
+        <td>
+          2391
+          -
+          2415
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          req.method.==(Method.PUT)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          8297
+        </td>
+        <td>
+          2376
+          -
+          2387
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.POST
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Method.POST
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          7848
+        </td>
+        <td>
+          2405
+          -
+          2415
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.PUT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Method.PUT
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

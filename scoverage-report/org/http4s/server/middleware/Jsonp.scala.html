@@ -1,0 +1,1274 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/Jsonp.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.Applicative
+</span>22 <span style=''>import cats.data.Kleisli
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import fs2.Chunk
+</span>25 <span style=''>import fs2.Stream._
+</span>26 <span style=''>import org.http4s.headers._
+</span>27 <span style=''>import org.log4s.getLogger
+</span>28 <span style=''>
+</span>29 <span style=''>import java.nio.charset.StandardCharsets
+</span>30 <span style=''>
+</span>31 <span style=''>/** Middleware to support wrapping json responses in jsonp.
+</span>32 <span style=''>  *
+</span>33 <span style=''>  * Jsonp wrapping occurs when the request contains a parameter with the given name and
+</span>34 <span style=''>  * the request Content-Type is `application/json`.
+</span>35 <span style=''>  *
+</span>36 <span style=''>  * If the wrapping is done, the response Content-Type is changed into
+</span>37 <span style=''>  * `application/javascript` and the appropriate jsonp callback is
+</span>38 <span style=''>  * applied.
+</span>39 <span style=''>  */
+</span>40 <span style=''>object Jsonp {
+</span>41 <span style=''>  private val logger = getLogger
+</span>42 <span style=''>
+</span>43 <span style=''>  // A regex to match a valid javascript function name to shield the client from some jsonp related attacks
+</span>44 <span style=''>  private val ValidCallback =
+</span>45 <span style=''>    </span><span style='background: #F0ADAD'>&quot;&quot;&quot;^((?!(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$)[$A-Z_a-zªµºÀ-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶͷͺ-ͽΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԧԱ-Ֆՙա-ևא-תװ-ײؠ-يٮٯٱ-ۓەۥۦۮۯۺ-ۼۿܐܒ-ܯݍ-ޥޱߊ-ߪߴߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࢠࢢ-ࢬऄ-हऽॐक़-ॡॱ-ॷॹ-ॿঅ-ঌএঐও-নপ-রলশ-হঽৎড়ঢ়য়-ৡৰৱਅ-ਊਏਐਓ-ਨਪ-ਰਲਲ਼ਵਸ਼ਸਹਖ਼-ੜਫ਼ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલળવ-હઽૐૠૡଅ-ଌଏଐଓ-ନପ-ରଲଳଵ-ହଽଡ଼ଢ଼ୟ-ୡୱஃஅ-ஊஎ-ஐஒ-கஙசஜஞடணதந-பம-ஹௐఅ-ఌఎ-ఐఒ-నప-ళవ-హఽౘౙౠౡಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೞೠೡೱೲഅ-ഌഎ-ഐഒ-ഺഽൎൠൡൺ-ൿඅ-ඖක-නඳ-රලව-ෆก-ะาำเ-ๆກຂຄງຈຊຍດ-ທນ-ຟມ-ຣລວສຫອ-ະາຳຽເ-ໄໆໜ-ໟༀཀ-ཇཉ-ཬྈ-ྌက-ဪဿၐ-ၕၚ-ၝၡၥၦၮ-ၰၵ-ႁႎႠ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚᎀ-ᎏᎠ-Ᏼᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛰᜀ-ᜌᜎ-ᜑᜠ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜᠠ-ᡷᢀ-ᢨᢪᢰ-ᣵᤀ-ᤜᥐ-ᥭᥰ-ᥴᦀ-ᦫᧁ-ᧇᨀ-ᨖᨠ-ᩔᪧᬅ-ᬳᭅ-ᭋᮃ-ᮠᮮᮯᮺ-ᯥᰀ-ᰣᱍ-ᱏᱚ-ᱽᳩ-ᳬᳮ-ᳱᳵᳶᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼⁱⁿₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎⅠ-ↈⰀ-Ⱞⰰ-ⱞⱠ-ⳤⳫ-ⳮⳲⳳⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄭㄱ-ㆎㆠ-ㆺㇰ-ㇿ㐀-䶵一-鿌ꀀ-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘟꘪꘫꙀ-ꙮꙿ-ꚗꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꞎꞐ-ꞓꞠ-Ɦꟸ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢꡀ-ꡳꢂ-ꢳꣲ-ꣷꣻꤊ-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏꨀ-ꨨꩀ-ꩂꩄ-ꩋꩠ-ꩶꩺꪀ-ꪯꪱꪵꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꯀ-ꯢ가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּסּףּפּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼＡ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ][$A-Z_a-zªµºÀ-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶͷͺ-ͽΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԧԱ-Ֆՙա-ևא-תװ-ײؠ-يٮٯٱ-ۓەۥۦۮۯۺ-ۼۿܐܒ-ܯݍ-ޥޱߊ-ߪߴߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࢠࢢ-ࢬऄ-हऽॐक़-ॡॱ-ॷॹ-ॿঅ-ঌএঐও-নপ-রলশ-হঽৎড়ঢ়য়-ৡৰৱਅ-ਊਏਐਓ-ਨਪ-ਰਲਲ਼ਵਸ਼ਸਹਖ਼-ੜਫ਼ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલળવ-હઽૐૠૡଅ-ଌଏଐଓ-ନପ-ରଲଳଵ-ହଽଡ଼ଢ଼ୟ-ୡୱஃஅ-ஊஎ-ஐஒ-கஙசஜஞடணதந-பம-ஹௐఅ-ఌఎ-ఐఒ-నప-ళవ-హఽౘౙౠౡಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೞೠೡೱೲഅ-ഌഎ-ഐഒ-ഺഽൎൠൡൺ-ൿඅ-ඖක-නඳ-රලව-ෆก-ะาำเ-ๆກຂຄງຈຊຍດ-ທນ-ຟມ-ຣລວສຫອ-ະາຳຽເ-ໄໆໜ-ໟༀཀ-ཇཉ-ཬྈ-ྌက-ဪဿၐ-ၕၚ-ၝၡၥၦၮ-ၰၵ-ႁႎႠ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚᎀ-ᎏᎠ-Ᏼᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛰᜀ-ᜌᜎ-ᜑᜠ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜᠠ-ᡷᢀ-ᢨᢪᢰ-ᣵᤀ-ᤜᥐ-ᥭᥰ-ᥴᦀ-ᦫᧁ-ᧇᨀ-ᨖᨠ-ᩔᪧᬅ-ᬳᭅ-ᭋᮃ-ᮠᮮᮯᮺ-ᯥᰀ-ᰣᱍ-ᱏᱚ-ᱽᳩ-ᳬᳮ-ᳱᳵᳶᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼⁱⁿₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎⅠ-ↈⰀ-Ⱞⰰ-ⱞⱠ-ⳤⳫ-ⳮⳲⳳⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄭㄱ-ㆎㆠ-ㆺㇰ-ㇿ㐀-䶵一-鿌ꀀ-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘟꘪꘫꙀ-ꙮꙿ-ꚗꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꞎꞐ-ꞓꞠ-Ɦꟸ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢꡀ-ꡳꢂ-ꢳꣲ-ꣷꣻꤊ-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏꨀ-ꨨꩀ-ꩂꩄ-ꩋꩠ-ꩶꩺꪀ-ꪯꪱꪵꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꯀ-ꯢ가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּסּףּפּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼＡ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ0-9̀-ͯ҃-֑҇-ׇֽֿׁׂׅׄؐ-ًؚ-٩ٰۖ-ۜ۟-۪ۤۧۨ-ۭ۰-۹ܑܰ-݊ަ-ް߀-߉߫-߳ࠖ-࠙ࠛ-ࠣࠥ-ࠧࠩ-࡙࠭-࡛ࣤ-ࣾऀ-ःऺ-़ा-ॏ॑-ॗॢॣ०-९ঁ-ঃ়া-ৄেৈো-্ৗৢৣ০-৯ਁ-ਃ਼ਾ-ੂੇੈੋ-੍ੑ੦-ੱੵઁ-ઃ઼ા-ૅે-ૉો-્ૢૣ૦-૯ଁ-ଃ଼ା-ୄେୈୋ-୍ୖୗୢୣ୦-୯ஂா-ூெ-ைொ-்ௗ௦-௯ఁ-ఃా-ౄె-ైొ-్ౕౖౢౣ౦-౯ಂಃ಼ಾ-ೄೆ-ೈೊ-್ೕೖೢೣ೦-೯ംഃാ-ൄെ-ൈൊ-്ൗൢൣ൦-൯ංඃ්ා-ුූෘ-ෟෲෳัิ-ฺ็-๎๐-๙ັິ-ູົຼ່-ໍ໐-໙༘༙༠-༩༹༵༷༾༿ཱ-྄྆྇ྍ-ྗྙ-ྼ࿆ါ-ှ၀-၉ၖ-ၙၞ-ၠၢ-ၤၧ-ၭၱ-ၴႂ-ႍႏ-ႝ፝-፟ᜒ-᜔ᜲ-᜴ᝒᝓᝲᝳ឴-៓៝០-៩᠋-᠍᠐-᠙ᢩᤠ-ᤫᤰ-᤻᥆-᥏ᦰ-ᧀᧈᧉ᧐-᧙ᨗ-ᨛᩕ-ᩞ᩠-᩿᩼-᪉᪐-᪙ᬀ-ᬄ᬴-᭄᭐-᭙᭫-᭳ᮀ-ᮂᮡ-ᮭ᮰-᮹᯦-᯳ᰤ-᰷᱀-᱉᱐-᱙᳐-᳔᳒-᳨᳭ᳲ-᳴᷀-ᷦ᷼-᷿‌‍‿⁀⁔⃐-⃥⃜⃡-⃰⳯-⵿⳱ⷠ-〪ⷿ-゙゚〯꘠-꘩꙯ꙴ-꙽ꚟ꛰꛱ꠂ꠆ꠋꠣ-ꠧꢀꢁꢴ-꣄꣐-꣙꣠-꣱꤀-꤉ꤦ-꤭ꥇ-꥓ꦀ-ꦃ꦳-꧀꧐-꧙ꨩ-ꨶꩃꩌꩍ꩐-꩙ꩻꪰꪲ-ꪴꪷꪸꪾ꪿꫁ꫫ-ꫯꫵ꫶ꯣ-ꯪ꯬꯭꯰-꯹ﬞ︀-️︠-︦︳︴﹍-﹏０-９＿]*)$&quot;&quot;&quot;.r</span><span style=''>
+</span>46 <span style=''>  def apply[F[_]: Applicative, G[_]](callbackParam: String)(http: Http[F, G]): Http[F, G] =
+</span>47 <span style=''>    </span><span style='background: #F0ADAD'>Kleisli { req =&gt;
+</span>48 <span style=''></span><span style='background: #F0ADAD'>      req.params.get(callbackParam) match {
+</span>49 <span style=''></span><span style='background: #F0ADAD'>        case Some(ValidCallback(callback)) =&gt;
+</span>50 <span style=''></span><span style='background: #F0ADAD'>          http(req).map { response =&gt;
+</span>51 <span style=''></span><span style='background: #F0ADAD'>            if (hasJsonContent(response)) jsonp(response, callback) else response
+</span>52 <span style=''></span><span style='background: #F0ADAD'>          }
+</span>53 <span style=''></span><span style='background: #F0ADAD'>        case Some(invalidCallback) =&gt;
+</span>54 <span style=''></span><span style='background: #F0ADAD'>          logger.warn(s&quot;Jsonp requested with invalid callback function name $invalidCallback&quot;)
+</span>55 <span style=''></span><span style='background: #F0ADAD'>          Response[G](Status.BadRequest).withEntity(s&quot;Not a valid callback name.&quot;).pure[F]
+</span>56 <span style=''></span><span style='background: #F0ADAD'>        case None =&gt; http(req)
+</span>57 <span style=''></span><span style='background: #F0ADAD'>      }
+</span>58 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>59 <span style=''>
+</span>60 <span style=''>  private def hasJsonContent[F[_]](resp: Response[F]): Boolean =
+</span>61 <span style=''>    </span><span style='background: #F0ADAD'>resp.contentType.map(_.mediaType).contains(MediaType.application.json)</span><span style=''>
+</span>62 <span style=''>
+</span>63 <span style=''>  private def jsonp[F[_]](resp: Response[F], callback: String) = {
+</span>64 <span style=''>    val begin = </span><span style='background: #F0ADAD'>beginJsonp(callback)</span><span style=''>
+</span>65 <span style=''>    val end = </span><span style='background: #F0ADAD'>EndJsonp</span><span style=''>
+</span>66 <span style=''>    val jsonpBody = </span><span style='background: #F0ADAD'>chunk(begin) ++ resp.body ++ chunk(end)</span><span style=''>
+</span>67 <span style=''>    val newLengthHeaderOption = </span><span style='background: #F0ADAD'>resp.headers.get[`Content-Length`].flatMap { old =&gt;
+</span>68 <span style=''></span><span style='background: #F0ADAD'>      old.modify(_ + begin.size + end.size)
+</span>69 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>70 <span style=''>    </span><span style='background: #F0ADAD'>resp
+</span>71 <span style=''></span><span style='background: #F0ADAD'>      .copy(body = jsonpBody)
+</span>72 <span style=''></span><span style='background: #F0ADAD'>      .transformHeaders(_ ++ Headers(newLengthHeaderOption))
+</span>73 <span style=''></span><span style='background: #F0ADAD'>      .withContentType(`Content-Type`(MediaType.application.javascript))</span><span style=''>
+</span>74 <span style=''>  }
+</span>75 <span style=''>
+</span>76 <span style=''>  private def beginJsonp(callback: String) =
+</span>77 <span style=''>    </span><span style='background: #F0ADAD'>Chunk.array((callback + &quot;(&quot;).getBytes(StandardCharsets.UTF_8))</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>  private val EndJsonp =
+</span>80 <span style=''>    </span><span style='background: #F0ADAD'>Chunk.array(&quot;);&quot;.getBytes(StandardCharsets.UTF_8))</span><span style=''>
+</span>81 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          9927
+        </td>
+        <td>
+          1413
+          -
+          4159
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;^((?!(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$)[$A-Z_a-zªµºÀ-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶͷͺ-ͽΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԧԱ-Ֆՙա-ևא-תװ-ײؠ-يٮٯٱ-ۓەۥۦۮۯۺ-ۼۿܐܒ-ܯݍ-ޥޱߊ-ߪߴߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࢠࢢ-ࢬऄ-हऽॐक़-ॡॱ-ॷॹ-ॿঅ-ঌএঐও-নপ-রলশ-হঽৎড়ঢ়য়-ৡৰৱਅ-ਊਏਐਓ-ਨਪ-ਰਲਲ਼ਵਸ਼ਸਹਖ਼-ੜਫ਼ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલળવ-હઽૐૠૡଅ-ଌଏଐଓ-ନପ-ରଲଳଵ-ହଽଡ଼ଢ଼ୟ-ୡୱஃஅ-ஊஎ-ஐஒ-கஙசஜஞடணதந-பம-ஹௐఅ-ఌఎ-ఐఒ-నప-ళవ-హఽౘౙౠౡಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೞೠೡೱೲഅ-ഌഎ-ഐഒ-ഺഽൎൠൡൺ-ൿඅ-ඖක-නඳ-රලව-ෆก-ะาำเ-ๆກຂຄງຈຊຍດ-ທນ-ຟມ-ຣລວສຫອ-ະາຳຽເ-ໄໆໜ-ໟༀཀ-ཇཉ-ཬྈ-ྌက-ဪဿၐ-ၕၚ-ၝၡၥၦၮ-ၰၵ-ႁႎႠ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚᎀ-ᎏᎠ-Ᏼᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛰᜀ-ᜌᜎ-ᜑᜠ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜᠠ-ᡷᢀ-ᢨᢪᢰ-ᣵᤀ-ᤜᥐ-ᥭᥰ-ᥴᦀ-ᦫᧁ-ᧇᨀ-ᨖᨠ-ᩔᪧᬅ-ᬳᭅ-ᭋᮃ-ᮠᮮᮯᮺ-ᯥᰀ-ᰣᱍ-ᱏᱚ-ᱽᳩ-ᳬᳮ-ᳱᳵᳶᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼⁱⁿₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎⅠ-ↈⰀ-Ⱞⰰ-ⱞⱠ-ⳤⳫ-ⳮⳲⳳⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄭㄱ-ㆎㆠ-ㆺㇰ-ㇿ㐀-䶵一-鿌ꀀ-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘟꘪꘫꙀ-ꙮꙿ-ꚗꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꞎꞐ-ꞓꞠ-Ɦꟸ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢꡀ-ꡳꢂ-ꢳꣲ-ꣷꣻꤊ-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏꨀ-ꨨꩀ-ꩂꩄ-ꩋꩠ-ꩶꩺꪀ-ꪯꪱꪵꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꯀ-ꯢ가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּסּףּפּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼＡ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ][$A-Z_a-zªµºÀ-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶͷͺ-ͽΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԧԱ-Ֆՙա-ևא-תװ-ײؠ-يٮٯٱ-ۓەۥۦۮۯۺ-ۼۿܐܒ-ܯݍ-ޥޱߊ-ߪߴߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࢠࢢ-ࢬऄ-हऽॐक़-ॡॱ-ॷॹ-ॿঅ-ঌএঐও-নপ-রলশ-হঽৎড়ঢ়য়-ৡৰৱਅ-ਊਏਐਓ-ਨਪ-ਰਲਲ਼ਵਸ਼ਸਹਖ਼-ੜਫ਼ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલળવ-હઽૐૠૡଅ-ଌଏଐଓ-ନପ-ରଲଳଵ-ହଽଡ଼ଢ଼ୟ-ୡୱஃஅ-ஊஎ-ஐஒ-கஙசஜஞடணதந-பம-ஹௐఅ-ఌఎ-ఐఒ-నప-ళవ-హఽౘౙౠౡಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೞೠೡೱೲഅ-ഌഎ-ഐഒ-ഺഽൎൠൡൺ-ൿඅ-ඖක-නඳ-රලව-ෆก-ะาำเ-ๆກຂຄງຈຊຍດ-ທນ-ຟມ-ຣລວສຫອ-ະາຳຽເ-ໄໆໜ-ໟༀཀ-ཇཉ-ཬྈ-ྌက-ဪဿၐ-ၕၚ-ၝၡၥၦၮ-ၰၵ-ႁႎႠ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚᎀ-ᎏᎠ-Ᏼᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛰᜀ-ᜌᜎ-ᜑᜠ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜᠠ-ᡷᢀ-ᢨᢪᢰ-ᣵᤀ-ᤜᥐ-ᥭᥰ-ᥴᦀ-ᦫᧁ-ᧇᨀ-ᨖᨠ-ᩔᪧᬅ-ᬳᭅ-ᭋᮃ-ᮠᮮᮯᮺ-ᯥᰀ-ᰣᱍ-ᱏᱚ-ᱽᳩ-ᳬᳮ-ᳱᳵᳶᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼⁱⁿₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎⅠ-ↈⰀ-Ⱞⰰ-ⱞⱠ-ⳤⳫ-ⳮⳲⳳⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄭㄱ-ㆎㆠ-ㆺㇰ-ㇿ㐀-䶵一-鿌ꀀ-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘟꘪꘫꙀ-ꙮꙿ-ꚗꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꞎꞐ-ꞓꞠ-Ɦꟸ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢꡀ-ꡳꢂ-ꢳꣲ-ꣷꣻꤊ-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏꨀ-ꨨꩀ-ꩂꩄ-ꩋꩠ-ꩶꩺꪀ-ꪯꪱꪵꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꯀ-ꯢ가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּסּףּפּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼＡ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ0-9̀-ͯ҃-֑҇-ׇֽֿׁׂׅׄؐ-ًؚ-٩ٰۖ-ۜ۟-۪ۤۧۨ-ۭ۰-۹ܑܰ-݊ަ-ް߀-߉߫-߳ࠖ-࠙ࠛ-ࠣࠥ-ࠧࠩ-࡙࠭-࡛ࣤ-ࣾऀ-ःऺ-़ा-ॏ॑-ॗॢॣ०-९ঁ-ঃ়া-ৄেৈো-্ৗৢৣ০-৯ਁ-ਃ਼ਾ-ੂੇੈੋ-੍ੑ੦-ੱੵઁ-ઃ઼ા-ૅે-ૉો-્ૢૣ૦-૯ଁ-ଃ଼ା-ୄେୈୋ-୍ୖୗୢୣ୦-୯ஂா-ூெ-ைொ-்ௗ௦-௯ఁ-ఃా-ౄె-ైొ-్ౕౖౢౣ౦-౯ಂಃ಼ಾ-ೄೆ-ೈೊ-್ೕೖೢೣ೦-೯ംഃാ-ൄെ-ൈൊ-്ൗൢൣ൦-൯ංඃ්ා-ුූෘ-ෟෲෳัิ-ฺ็-๎๐-๙ັິ-ູົຼ່-ໍ໐-໙༘༙༠-༩༹༵༷༾༿ཱ-྄྆྇ྍ-ྗྙ-ྼ࿆ါ-ှ၀-၉ၖ-ၙၞ-ၠၢ-ၤၧ-ၭၱ-ၴႂ-ႍႏ-ႝ፝-፟ᜒ-᜔ᜲ-᜴ᝒᝓᝲᝳ឴-៓៝០-៩᠋-᠍᠐-᠙ᢩᤠ-ᤫᤰ-᤻᥆-᥏ᦰ-ᧀᧈᧉ᧐-᧙ᨗ-ᨛᩕ-ᩞ᩠-᩿᩼-᪉᪐-᪙ᬀ-ᬄ᬴-᭄᭐-᭙᭫-᭳ᮀ-ᮂᮡ-ᮭ᮰-᮹᯦-᯳ᰤ-᰷᱀-᱉᱐-᱙᳐-᳔᳒-᳨᳭ᳲ-᳴᷀-ᷦ᷼-᷿‌‍‿⁀⁔⃐-⃥⃜⃡-⃰⳯-⵿⳱ⷠ-〪ⷿ-゙゚〯꘠-꘩꙯ꙴ-꙽ꚟ꛰꛱ꠂ꠆ꠋꠣ-ꠧꢀꢁꢴ-꣄꣐-꣙꣠-꣱꤀-꤉ꤦ-꤭ꥇ-꥓ꦀ-ꦃ꦳-꧀꧐-꧙ꨩ-ꨶꩃꩌꩍ꩐-꩙ꩻꪰꪲ-ꪴꪷꪸꪾ꪿꫁ꫫ-ꫯꫵ꫶ꯣ-ꯪ꯬꯭꯰-꯹ﬞ︀-️︠-︦︳︴﹍-﹏０-９＿]*)$&quot;
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          8843
+        </td>
+        <td>
+          1413
+          -
+          4161
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.r
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.augmentString(&quot;^((?!(?:do|if|in|for|let|new|try|var|case|else|enum|eval|false|null|this|true|void|with|break|catch|class|const|super|throw|while|yield|delete|export|import|public|return|static|switch|typeof|default|extends|finally|package|private|continue|debugger|function|arguments|interface|protected|implements|instanceof)$)[$A-Z_a-zªµºÀ-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶͷͺ-ͽΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԧԱ-Ֆՙա-ևא-תװ-ײؠ-يٮٯٱ-ۓەۥۦۮۯۺ-ۼۿܐܒ-ܯݍ-ޥޱߊ-ߪߴߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࢠࢢ-ࢬऄ-हऽॐक़-ॡॱ-ॷॹ-ॿঅ-ঌএঐও-নপ-রলশ-হঽৎড়ঢ়য়-ৡৰৱਅ-ਊਏਐਓ-ਨਪ-ਰਲਲ਼ਵਸ਼ਸਹਖ਼-ੜਫ਼ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલળવ-હઽૐૠૡଅ-ଌଏଐଓ-ନପ-ରଲଳଵ-ହଽଡ଼ଢ଼ୟ-ୡୱஃஅ-ஊஎ-ஐஒ-கஙசஜஞடணதந-பம-ஹௐఅ-ఌఎ-ఐఒ-నప-ళవ-హఽౘౙౠౡಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೞೠೡೱೲഅ-ഌഎ-ഐഒ-ഺഽൎൠൡൺ-ൿඅ-ඖක-නඳ-රලව-ෆก-ะาำเ-ๆກຂຄງຈຊຍດ-ທນ-ຟມ-ຣລວສຫອ-ະາຳຽເ-ໄໆໜ-ໟༀཀ-ཇཉ-ཬྈ-ྌက-ဪဿၐ-ၕၚ-ၝၡၥၦၮ-ၰၵ-ႁႎႠ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚᎀ-ᎏᎠ-Ᏼᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛰᜀ-ᜌᜎ-ᜑᜠ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜᠠ-ᡷᢀ-ᢨᢪᢰ-ᣵᤀ-ᤜᥐ-ᥭᥰ-ᥴᦀ-ᦫᧁ-ᧇᨀ-ᨖᨠ-ᩔᪧᬅ-ᬳᭅ-ᭋᮃ-ᮠᮮᮯᮺ-ᯥᰀ-ᰣᱍ-ᱏᱚ-ᱽᳩ-ᳬᳮ-ᳱᳵᳶᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼⁱⁿₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎⅠ-ↈⰀ-Ⱞⰰ-ⱞⱠ-ⳤⳫ-ⳮⳲⳳⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄭㄱ-ㆎㆠ-ㆺㇰ-ㇿ㐀-䶵一-鿌ꀀ-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘟꘪꘫꙀ-ꙮꙿ-ꚗꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꞎꞐ-ꞓꞠ-Ɦꟸ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢꡀ-ꡳꢂ-ꢳꣲ-ꣷꣻꤊ-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏꨀ-ꨨꩀ-ꩂꩄ-ꩋꩠ-ꩶꩺꪀ-ꪯꪱꪵꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꯀ-ꯢ가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּסּףּפּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼＡ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ][$A-Z_a-zªµºÀ-ÖØ-öø-ˁˆ-ˑˠ-ˤˬˮͰ-ʹͶͷͺ-ͽΆΈ-ΊΌΎ-ΡΣ-ϵϷ-ҁҊ-ԧԱ-Ֆՙա-ևא-תװ-ײؠ-يٮٯٱ-ۓەۥۦۮۯۺ-ۼۿܐܒ-ܯݍ-ޥޱߊ-ߪߴߵߺࠀ-ࠕࠚࠤࠨࡀ-ࡘࢠࢢ-ࢬऄ-हऽॐक़-ॡॱ-ॷॹ-ॿঅ-ঌএঐও-নপ-রলশ-হঽৎড়ঢ়য়-ৡৰৱਅ-ਊਏਐਓ-ਨਪ-ਰਲਲ਼ਵਸ਼ਸਹਖ਼-ੜਫ਼ੲ-ੴઅ-ઍએ-ઑઓ-નપ-રલળવ-હઽૐૠૡଅ-ଌଏଐଓ-ନପ-ରଲଳଵ-ହଽଡ଼ଢ଼ୟ-ୡୱஃஅ-ஊஎ-ஐஒ-கஙசஜஞடணதந-பம-ஹௐఅ-ఌఎ-ఐఒ-నప-ళవ-హఽౘౙౠౡಅ-ಌಎ-ಐಒ-ನಪ-ಳವ-ಹಽೞೠೡೱೲഅ-ഌഎ-ഐഒ-ഺഽൎൠൡൺ-ൿඅ-ඖක-නඳ-රලව-ෆก-ะาำเ-ๆກຂຄງຈຊຍດ-ທນ-ຟມ-ຣລວສຫອ-ະາຳຽເ-ໄໆໜ-ໟༀཀ-ཇཉ-ཬྈ-ྌက-ဪဿၐ-ၕၚ-ၝၡၥၦၮ-ၰၵ-ႁႎႠ-ჅჇჍა-ჺჼ-ቈቊ-ቍቐ-ቖቘቚ-ቝበ-ኈኊ-ኍነ-ኰኲ-ኵኸ-ኾዀዂ-ዅወ-ዖዘ-ጐጒ-ጕጘ-ፚᎀ-ᎏᎠ-Ᏼᐁ-ᙬᙯ-ᙿᚁ-ᚚᚠ-ᛪᛮ-ᛰᜀ-ᜌᜎ-ᜑᜠ-ᜱᝀ-ᝑᝠ-ᝬᝮ-ᝰក-ឳៗៜᠠ-ᡷᢀ-ᢨᢪᢰ-ᣵᤀ-ᤜᥐ-ᥭᥰ-ᥴᦀ-ᦫᧁ-ᧇᨀ-ᨖᨠ-ᩔᪧᬅ-ᬳᭅ-ᭋᮃ-ᮠᮮᮯᮺ-ᯥᰀ-ᰣᱍ-ᱏᱚ-ᱽᳩ-ᳬᳮ-ᳱᳵᳶᴀ-ᶿḀ-ἕἘ-Ἕἠ-ὅὈ-Ὅὐ-ὗὙὛὝὟ-ώᾀ-ᾴᾶ-ᾼιῂ-ῄῆ-ῌῐ-ΐῖ-Ίῠ-Ῥῲ-ῴῶ-ῼⁱⁿₐ-ₜℂℇℊ-ℓℕℙ-ℝℤΩℨK-ℭℯ-ℹℼ-ℿⅅ-ⅉⅎⅠ-ↈⰀ-Ⱞⰰ-ⱞⱠ-ⳤⳫ-ⳮⳲⳳⴀ-ⴥⴧⴭⴰ-ⵧⵯⶀ-ⶖⶠ-ⶦⶨ-ⶮⶰ-ⶶⶸ-ⶾⷀ-ⷆⷈ-ⷎⷐ-ⷖⷘ-ⷞⸯ々-〇〡-〩〱-〵〸-〼ぁ-ゖゝ-ゟァ-ヺー-ヿㄅ-ㄭㄱ-ㆎㆠ-ㆺㇰ-ㇿ㐀-䶵一-鿌ꀀ-ꒌꓐ-ꓽꔀ-ꘌꘐ-ꘟꘪꘫꙀ-ꙮꙿ-ꚗꚠ-ꛯꜗ-ꜟꜢ-ꞈꞋ-ꞎꞐ-ꞓꞠ-Ɦꟸ-ꠁꠃ-ꠅꠇ-ꠊꠌ-ꠢꡀ-ꡳꢂ-ꢳꣲ-ꣷꣻꤊ-ꤥꤰ-ꥆꥠ-ꥼꦄ-ꦲꧏꨀ-ꨨꩀ-ꩂꩄ-ꩋꩠ-ꩶꩺꪀ-ꪯꪱꪵꪶꪹ-ꪽꫀꫂꫛ-ꫝꫠ-ꫪꫲ-ꫴꬁ-ꬆꬉ-ꬎꬑ-ꬖꬠ-ꬦꬨ-ꬮꯀ-ꯢ가-힣ힰ-ퟆퟋ-ퟻ豈-舘並-龎ﬀ-ﬆﬓ-ﬗיִײַ-ﬨשׁ-זּטּ-לּמּנּסּףּפּצּ-ﮱﯓ-ﴽﵐ-ﶏﶒ-ﷇﷰ-ﷻﹰ-ﹴﹶ-ﻼＡ-Ｚａ-ｚｦ-ﾾￂ-ￇￊ-ￏￒ-ￗￚ-ￜ0-9̀-ͯ҃-֑҇-ׇֽֿׁׂׅׄؐ-ًؚ-٩ٰۖ-ۜ۟-۪ۤۧۨ-ۭ۰-۹ܑܰ-݊ަ-ް߀-߉߫-߳ࠖ-࠙ࠛ-ࠣࠥ-ࠧࠩ-࡙࠭-࡛ࣤ-ࣾऀ-ःऺ-़ा-ॏ॑-ॗॢॣ०-९ঁ-ঃ়া-ৄেৈো-্ৗৢৣ০-৯ਁ-ਃ਼ਾ-ੂੇੈੋ-੍ੑ੦-ੱੵઁ-ઃ઼ા-ૅે-ૉો-્ૢૣ૦-૯ଁ-ଃ଼ା-ୄେୈୋ-୍ୖୗୢୣ୦-୯ஂா-ூெ-ைொ-்ௗ௦-௯ఁ-ఃా-ౄె-ైొ-్ౕౖౢౣ౦-౯ಂಃ಼ಾ-ೄೆ-ೈೊ-್ೕೖೢೣ೦-೯ംഃാ-ൄെ-ൈൊ-്ൗൢൣ൦-൯ංඃ්ා-ුූෘ-ෟෲෳัิ-ฺ็-๎๐-๙ັິ-ູົຼ່-ໍ໐-໙༘༙༠-༩༹༵༷༾༿ཱ-྄྆྇ྍ-ྗྙ-ྼ࿆ါ-ှ၀-၉ၖ-ၙၞ-ၠၢ-ၤၧ-ၭၱ-ၴႂ-ႍႏ-ႝ፝-፟ᜒ-᜔ᜲ-᜴ᝒᝓᝲᝳ឴-៓៝០-៩᠋-᠍᠐-᠙ᢩᤠ-ᤫᤰ-᤻᥆-᥏ᦰ-ᧀᧈᧉ᧐-᧙ᨗ-ᨛᩕ-ᩞ᩠-᩿᩼-᪉᪐-᪙ᬀ-ᬄ᬴-᭄᭐-᭙᭫-᭳ᮀ-ᮂᮡ-ᮭ᮰-᮹᯦-᯳ᰤ-᰷᱀-᱉᱐-᱙᳐-᳔᳒-᳨᳭ᳲ-᳴᷀-ᷦ᷼-᷿‌‍‿⁀⁔⃐-⃥⃜⃡-⃰⳯-⵿⳱ⷠ-〪ⷿ-゙゚〯꘠-꘩꙯ꙴ-꙽ꚟ꛰꛱ꠂ꠆ꠋꠣ-ꠧꢀꢁꢴ-꣄꣐-꣙꣠-꣱꤀-꤉ꤦ-꤭ꥇ-꥓ꦀ-ꦃ꦳-꧀꧐-꧙ꨩ-ꨶꩃꩌꩍ꩐-꩙ꩻꪰꪲ-ꪴꪷꪸꪾ꪿꫁ꫫ-ꫯꫵ꫶ꯣ-ꯪ꯬꯭꯰-꯹ﬞ︀-️︠-︦︳︴﹍-﹏０-９＿]*)$&quot;).r
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          7887
+        </td>
+        <td>
+          4258
+          -
+          4765
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; req.params.get(callbackParam) match {
+  case (value: String): Some[String](Jsonp.this.ValidCallback.unapplySeq(&lt;unapply-selector&gt;) &lt;unapply&gt; ((callback @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[G]](http.apply(req))(evidence$1).map[org.http4s.Response[G]](((response: org.http4s.Response[G]) =&gt; if (Jsonp.this.hasJsonContent[[_]G[_]](response))
+    Jsonp.this.jsonp[[_]G[_]](response, callback)
+  else
+    response))
+  case (value: String): Some[String]((invalidCallback @ _)) =&gt; {
+    if (Jsonp.this.logger.logger.isWarnEnabled())
+      Jsonp.this.logger.logger.warn((&quot;Jsonp requested with invalid callback function name &quot;.+(invalidCallback): String))
+    else
+      ();
+    cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[G]](Response.apply[G](Status.BadRequest, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String]((&quot;Not a valid callback name.&quot;: String))(http4s.this.EntityEncoder.stringEncoder[[_]G[_]](http4s.this.EntityEncoder.stringEncoder$default$1[[_]G[_]]))).pure[F](evidence$1)
+  }
+  case scala.None =&gt; http.apply(req)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          7879
+        </td>
+        <td>
+          4281
+          -
+          4310
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          req.params.get(callbackParam)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          8187
+        </td>
+        <td>
+          4375
+          -
+          4496
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[G]](http.apply(req))(evidence$1).map[org.http4s.Response[G]](((response: org.http4s.Response[G]) =&gt; if (Jsonp.this.hasJsonContent[[_]G[_]](response))
+  Jsonp.this.jsonp[[_]G[_]](response, callback)
+else
+  response))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          7352
+        </td>
+        <td>
+          4375
+          -
+          4384
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8806
+        </td>
+        <td>
+          4476
+          -
+          4484
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.server.middleware.Jsonp.response
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          response
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9876
+        </td>
+        <td>
+          4445
+          -
+          4470
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.middleware.Jsonp.jsonp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Jsonp.this.jsonp[[_]G[_]](response, callback)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9185
+        </td>
+        <td>
+          4419
+          -
+          4443
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Jsonp.hasJsonContent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Jsonp.this.hasJsonContent[[_]G[_]](response)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7937
+        </td>
+        <td>
+          4445
+          -
+          4470
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Jsonp.jsonp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Jsonp.this.jsonp[[_]G[_]](response, callback)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10076
+        </td>
+        <td>
+          4640
+          -
+          4720
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[G]](Response.apply[G](Status.BadRequest, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String]((&quot;Not a valid callback name.&quot;: String))(http4s.this.EntityEncoder.stringEncoder[[_]G[_]](http4s.this.EntityEncoder.stringEncoder$default$1[[_]G[_]]))).pure[F](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          8933
+        </td>
+        <td>
+          4742
+          -
+          4751
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          7316
+        </td>
+        <td>
+          4857
+          -
+          4868
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.mediaType
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$1.mediaType
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          9125
+        </td>
+        <td>
+          4836
+          -
+          4906
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.contains
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.contentType.map[org.http4s.MediaType](((x$1: org.http4s.headers.Content-Type) =&gt; x$1.mediaType)).contains[org.http4s.MediaType](MediaType.application.json)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          7945
+        </td>
+        <td>
+          4991
+          -
+          5011
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Jsonp.beginJsonp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Jsonp.this.beginJsonp(callback)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          9824
+        </td>
+        <td>
+          5026
+          -
+          5034
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.Jsonp.EndJsonp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Jsonp.this.EndJsonp
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          10029
+        </td>
+        <td>
+          5055
+          -
+          5094
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](begin).++[[_]F[_], Byte](resp.body).++[[x]F[x], Byte](fs2.Stream.chunk[[x]fs2.Pure[x], Byte](end))
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          8812
+        </td>
+        <td>
+          5071
+          -
+          5080
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.body
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.body
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          8138
+        </td>
+        <td>
+          5084
+          -
+          5094
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.chunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](end)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          7835
+        </td>
+        <td>
+          5143
+          -
+          5143
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          8937
+        </td>
+        <td>
+          5143
+          -
+          5143
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          8765
+        </td>
+        <td>
+          5127
+          -
+          5228
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.headers.get[org.http4s.headers.Content-Length](Header.this.Select.singleHeaders[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance)).flatMap[org.http4s.headers.Content-Length](((old: org.http4s.headers.Content-Length) =&gt; old.modify(((x$2: Long) =&gt; x$2.+(begin.size).+(end.size)))))
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          7929
+        </td>
+        <td>
+          5196
+          -
+          5221
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$2.+(begin.size).+(end.size)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          9831
+        </td>
+        <td>
+          5185
+          -
+          5222
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.modify
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          old.modify(((x$2: Long) =&gt; x$2.+(begin.size).+(end.size)))
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          9071
+        </td>
+        <td>
+          5213
+          -
+          5221
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Chunk.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          end.size
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          7219
+        </td>
+        <td>
+          5200
+          -
+          5210
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Chunk.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          begin.size
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          10033
+        </td>
+        <td>
+          5245
+          -
+          5245
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          8840
+        </td>
+        <td>
+          5245
+          -
+          5245
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          9590
+        </td>
+        <td>
+          5233
+          -
+          5267
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy(x$2, x$3, x$4, x$1, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          7759
+        </td>
+        <td>
+          5245
+          -
+          5245
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          8144
+        </td>
+        <td>
+          5245
+          -
+          5245
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          10074
+        </td>
+        <td>
+          5292
+          -
+          5327
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$3.++(Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](newLengthHeaderOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)))))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          9745
+        </td>
+        <td>
+          5305
+          -
+          5305
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          8803
+        </td>
+        <td>
+          5305
+          -
+          5326
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.foldablesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](newLengthHeaderOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          8153
+        </td>
+        <td>
+          5297
+          -
+          5327
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](newLengthHeaderOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          9079
+        </td>
+        <td>
+          5305
+          -
+          5305
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.this.UnorderedFoldable.catsTraverseForOption
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          7931
+        </td>
+        <td>
+          5305
+          -
+          5305
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          7742
+        </td>
+        <td>
+          5233
+          -
+          5401
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withContentType
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  &lt;artifact&gt; val x$1: fs2.Stream[[x]F[x],Byte] @scala.reflect.internal.annotations.uncheckedBounds = jsonpBody;
+  &lt;artifact&gt; val x$2: org.http4s.Status = resp.copy$default$1;
+  &lt;artifact&gt; val x$3: org.http4s.HttpVersion = resp.copy$default$2;
+  &lt;artifact&gt; val x$4: org.http4s.Headers = resp.copy$default$3;
+  &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = resp.copy$default$5;
+  resp.copy(x$2, x$3, x$4, x$1, x$5)
+}.transformHeaders(((x$3: org.http4s.Headers) =&gt; x$3.++(Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](newLengthHeaderOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))))))).withContentType(org.http4s.headers.Content-Type.apply(MediaType.application.javascript))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          8847
+        </td>
+        <td>
+          5352
+          -
+          5400
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Content-Type.apply(MediaType.application.javascript)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          8074
+        </td>
+        <td>
+          5468
+          -
+          5517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.getBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          callback.+(&quot;(&quot;).getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          9748
+        </td>
+        <td>
+          5456
+          -
+          5518
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Chunk.array[Byte](callback.+(&quot;(&quot;).getBytes(java.nio.charset.StandardCharsets.UTF_8))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          9087
+        </td>
+        <td>
+          5494
+          -
+          5516
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          9715
+        </td>
+        <td>
+          5480
+          -
+          5483
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;(&quot;
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          8983
+        </td>
+        <td>
+          5549
+          -
+          5599
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Chunk.array[Byte](&quot;);&quot;.getBytes(java.nio.charset.StandardCharsets.UTF_8))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          10077
+        </td>
+        <td>
+          5561
+          -
+          5598
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.getBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;);&quot;.getBytes(java.nio.charset.StandardCharsets.UTF_8)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          8754
+        </td>
+        <td>
+          5561
+          -
+          5565
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;);&quot;
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          8242
+        </td>
+        <td>
+          5575
+          -
+          5597
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

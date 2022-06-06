@@ -1,0 +1,859 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/ServerBuilder.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.effect._
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import fs2._
+</span>23 <span style=''>import fs2.concurrent.Signal
+</span>24 <span style=''>import fs2.concurrent.SignallingRef
+</span>25 <span style=''>import org.http4s.internal.BackendBuilder
+</span>26 <span style=''>
+</span>27 <span style=''>import java.net.InetSocketAddress
+</span>28 <span style=''>import scala.collection.immutable
+</span>29 <span style=''>
+</span>30 <span style=''>trait ServerBuilder[F[_]] extends BackendBuilder[F, Server] {
+</span>31 <span style=''>  type Self &lt;: ServerBuilder[F]
+</span>32 <span style=''>
+</span>33 <span style=''>  implicit protected def F: Concurrent[F]
+</span>34 <span style=''>
+</span>35 <span style=''>  def bindSocketAddress(socketAddress: InetSocketAddress): Self
+</span>36 <span style=''>
+</span>37 <span style=''>  final def bindHttp(port: Int = defaults.HttpPort, host: String = defaults.IPv4Host): Self =
+</span>38 <span style=''>    </span><span style='background: #F0ADAD'>bindSocketAddress(InetSocketAddress.createUnresolved(host, port))</span><span style=''>
+</span>39 <span style=''>
+</span>40 <span style=''>  final def bindLocal(port: Int): Self = </span><span style='background: #F0ADAD'>bindHttp(port, defaults.IPv4Host)</span><span style=''>
+</span>41 <span style=''>
+</span>42 <span style=''>  final def bindAny(host: String = defaults.IPv4Host): Self = </span><span style='background: #F0ADAD'>bindHttp(0, host)</span><span style=''>
+</span>43 <span style=''>
+</span>44 <span style=''>  /** Sets the handler for errors thrown invoking the service.  Is not
+</span>45 <span style=''>    * guaranteed to be invoked on errors on the server backend, such as
+</span>46 <span style=''>    * parsing a request or handling a context timeout.
+</span>47 <span style=''>    */
+</span>48 <span style=''>  def withServiceErrorHandler(
+</span>49 <span style=''>      serviceErrorHandler: Request[F] =&gt; PartialFunction[Throwable, F[Response[F]]]
+</span>50 <span style=''>  ): Self
+</span>51 <span style=''>
+</span>52 <span style=''>  /** Returns a Server resource.  The resource is not acquired until the
+</span>53 <span style=''>    * server is started and ready to accept requests.
+</span>54 <span style=''>    */
+</span>55 <span style=''>  def resource: Resource[F, Server]
+</span>56 <span style=''>
+</span>57 <span style=''>  /** Runs the server as a process that never emits.  Useful for a server
+</span>58 <span style=''>    * that runs for the rest of the JVM's life.
+</span>59 <span style=''>    */
+</span>60 <span style=''>  final def serve: Stream[F, ExitCode] =
+</span>61 <span style=''>    </span><span style='background: #F0ADAD'>for {
+</span>62 <span style=''></span><span style='background: #F0ADAD'>      signal &lt;- Stream.eval(SignallingRef[F, Boolean](false))
+</span>63 <span style=''></span><span style='background: #F0ADAD'>      exitCode &lt;- Stream.eval(F.ref(ExitCode.Success))
+</span>64 <span style=''></span><span style='background: #F0ADAD'>      serve &lt;- serveWhile(signal, exitCode)
+</span>65 <span style=''></span><span style='background: #F0ADAD'>    } yield serve</span><span style=''>
+</span>66 <span style=''>
+</span>67 <span style=''>  /** Runs the server as a Stream that emits only when the terminated signal becomes true.
+</span>68 <span style=''>    * Useful for servers with associated lifetime behaviors.
+</span>69 <span style=''>    */
+</span>70 <span style=''>  final def serveWhile(
+</span>71 <span style=''>      terminateWhenTrue: Signal[F, Boolean],
+</span>72 <span style=''>      exitWith: Ref[F, ExitCode],
+</span>73 <span style=''>  ): Stream[F, ExitCode] =
+</span>74 <span style=''>    </span><span style='background: #F0ADAD'>Stream.resource(resource) *&gt; (terminateWhenTrue.discrete
+</span>75 <span style=''></span><span style='background: #F0ADAD'>      .takeWhile(_ === false)
+</span>76 <span style=''></span><span style='background: #F0ADAD'>      .drain ++ Stream.eval(exitWith.get))</span><span style=''>
+</span>77 <span style=''>
+</span>78 <span style=''>  /** Set the banner to display when the server starts up */
+</span>79 <span style=''>  def withBanner(banner: immutable.Seq[String]): Self
+</span>80 <span style=''>
+</span>81 <span style=''>  /** Disable the banner when the server starts up */
+</span>82 <span style=''>  final def withoutBanner: Self = </span><span style='background: #F0ADAD'>withBanner(immutable.Seq.empty)</span><span style=''>
+</span>83 <span style=''>}
+</span>84 <span style=''>
+</span>85 <span style=''>object SSLKeyStoreSupport {
+</span>86 <span style=''>  final case class StoreInfo(path: String, password: String)
+</span>87 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          7777
+        </td>
+        <td>
+          1185
+          -
+          1231
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.InetSocketAddress.createUnresolved
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.net.InetSocketAddress.createUnresolved(host, port)
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          9675
+        </td>
+        <td>
+          1167
+          -
+          1232
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.bindSocketAddress
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.bindSocketAddress(java.net.InetSocketAddress.createUnresolved(host, port))
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          8618
+        </td>
+        <td>
+          1290
+          -
+          1307
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.defaults.IPv4Host
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          server.this.`package`.defaults.IPv4Host
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          7505
+        </td>
+        <td>
+          1275
+          -
+          1308
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.bindHttp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.bindHttp(port, server.this.`package`.defaults.IPv4Host)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          9790
+        </td>
+        <td>
+          1372
+          -
+          1389
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.bindHttp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.bindHttp(0, host)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          8704
+        </td>
+        <td>
+          2067
+          -
+          2251
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.eval[F, fs2.concurrent.SignallingRef[F,Boolean]](fs2.concurrent.SignallingRef.apply[F, Boolean](false)(ServerBuilder.this.F)).flatMap[[x]F[x], cats.effect.ExitCode](((signal: fs2.concurrent.SignallingRef[F,Boolean]) =&gt; fs2.Stream.eval[F, cats.effect.kernel.Ref[F,cats.effect.ExitCode]](ServerBuilder.this.F.ref[cats.effect.ExitCode](cats.effect.ExitCode.Success)).flatMap[[x]F[x], cats.effect.ExitCode](((exitCode: cats.effect.kernel.Ref[F,cats.effect.ExitCode]) =&gt; ServerBuilder.this.serveWhile(signal, exitCode)))(compat.this.NotGiven.default[Nothing])))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7588
+        </td>
+        <td>
+          2126
+          -
+          2126
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          9517
+        </td>
+        <td>
+          2101
+          -
+          2133
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.concurrent.SignallingRef.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.concurrent.SignallingRef.apply[F, Boolean](false)(ServerBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          9774
+        </td>
+        <td>
+          2086
+          -
+          2086
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          8756
+        </td>
+        <td>
+          2127
+          -
+          2132
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          7512
+        </td>
+        <td>
+          2141
+          -
+          2251
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.eval[F, cats.effect.kernel.Ref[F,cats.effect.ExitCode]](ServerBuilder.this.F.ref[cats.effect.ExitCode](cats.effect.ExitCode.Success)).flatMap[[x]F[x], cats.effect.ExitCode](((exitCode: cats.effect.kernel.Ref[F,cats.effect.ExitCode]) =&gt; ServerBuilder.this.serveWhile(signal, exitCode)))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          8890
+        </td>
+        <td>
+          2171
+          -
+          2187
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.ExitCode.Success
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.ExitCode.Success
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          7782
+        </td>
+        <td>
+          2165
+          -
+          2188
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.GenConcurrent.ref
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.F.ref[cats.effect.ExitCode](cats.effect.ExitCode.Success)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          8512
+        </td>
+        <td>
+          2150
+          -
+          2150
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          9683
+        </td>
+        <td>
+          2196
+          -
+          2251
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.serveWhile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.serveWhile(signal, exitCode)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          7763
+        </td>
+        <td>
+          2546
+          -
+          2675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApply[[+O]fs2.Stream[[_]F[_],O], org.http4s.server.Server](fs2.Stream.resource[[_]F[_], org.http4s.server.Server](ServerBuilder.this.resource)(ServerBuilder.this.F))(fs2.this.Stream.monadErrorInstance[[_]F[_]](ServerBuilder.this.F)).*&gt;[cats.effect.ExitCode]({
+  &lt;artifact&gt; val qual$1: fs2.Stream[F,Boolean] @scala.reflect.internal.annotations.uncheckedBounds = terminateWhenTrue.discrete;
+  &lt;artifact&gt; val x$1: Boolean =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = ((x$1: Boolean) =&gt; cats.syntax.`package`.all.catsSyntaxEq[Boolean](x$1)(kernel.this.Eq.catsKernelInstancesForBoolean).===(false));
+  &lt;artifact&gt; val x$2: Boolean = qual$1.takeWhile$default$2;
+  qual$1.takeWhile(x$1, x$2)
+}.drain.++[[x]F[x], cats.effect.ExitCode](fs2.Stream.eval[F, cats.effect.ExitCode](exitWith.get)))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          8337
+        </td>
+        <td>
+          2546
+          -
+          2571
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.resource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.resource[[_]F[_], org.http4s.server.Server](ServerBuilder.this.resource)(ServerBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          9560
+        </td>
+        <td>
+          2561
+          -
+          2561
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.monadErrorInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.this.Stream.monadErrorInstance[[_]F[_]](ServerBuilder.this.F)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          9428
+        </td>
+        <td>
+          2561
+          -
+          2561
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          7787
+        </td>
+        <td>
+          2561
+          -
+          2561
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.F
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.F
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          7599
+        </td>
+        <td>
+          2562
+          -
+          2570
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.resource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.resource
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          8523
+        </td>
+        <td>
+          2576
+          -
+          2602
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.concurrent.Signal.discrete
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          terminateWhenTrue.discrete
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9775
+        </td>
+        <td>
+          2610
+          -
+          2610
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.takeWhile$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          qual$1.takeWhile$default$2
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          7493
+        </td>
+        <td>
+          2620
+          -
+          2631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EqOps.===
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxEq[Boolean](x$1)(kernel.this.Eq.catsKernelInstancesForBoolean).===(false)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          8707
+        </td>
+        <td>
+          2576
+          -
+          2632
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.takeWhile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          qual$1.takeWhile(x$1, x$2)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          9433
+        </td>
+        <td>
+          2649
+          -
+          2674
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.eval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.eval[F, cats.effect.ExitCode](exitWith.get)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8410
+        </td>
+        <td>
+          2576
+          -
+          2674
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  &lt;artifact&gt; val qual$1: fs2.Stream[F,Boolean] @scala.reflect.internal.annotations.uncheckedBounds = terminateWhenTrue.discrete;
+  &lt;artifact&gt; val x$1: Boolean =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = ((x$1: Boolean) =&gt; cats.syntax.`package`.all.catsSyntaxEq[Boolean](x$1)(kernel.this.Eq.catsKernelInstancesForBoolean).===(false));
+  &lt;artifact&gt; val x$2: Boolean = qual$1.takeWhile$default$2;
+  qual$1.takeWhile(x$1, x$2)
+}.drain.++[[x]F[x], cats.effect.ExitCode](fs2.Stream.eval[F, cats.effect.ExitCode](exitWith.get))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7560
+        </td>
+        <td>
+          2661
+          -
+          2673
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.RefSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          exitWith.get
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          8472
+        </td>
+        <td>
+          2881
+          -
+          2912
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ServerBuilder.withBanner
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ServerBuilder.this.withBanner(scala.collection.immutable.Seq.empty[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          9563
+        </td>
+        <td>
+          2892
+          -
+          2911
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.SeqFactory.Delegate.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.collection.immutable.Seq.empty[Nothing]
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

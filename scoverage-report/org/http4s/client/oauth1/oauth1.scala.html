@@ -1,0 +1,3741 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/oauth1/oauth1.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package client
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.Monad
+</span>21 <span style=''>import cats.MonadThrow
+</span>22 <span style=''>import cats.Show
+</span>23 <span style=''>import cats.data.NonEmptyList
+</span>24 <span style=''>import cats.effect.SyncIO
+</span>25 <span style=''>import cats.instances.order._
+</span>26 <span style=''>import cats.syntax.all._
+</span>27 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.Callback
+</span>28 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.Custom
+</span>29 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.Nonce
+</span>30 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.Realm
+</span>31 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.SignatureMethod
+</span>32 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.Timestamp
+</span>33 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.Verifier
+</span>34 <span style=''>import org.http4s.client.oauth1.ProtocolParameter.Version
+</span>35 <span style=''>import org.http4s.headers.Authorization
+</span>36 <span style=''>import org.typelevel.ci._
+</span>37 <span style=''>
+</span>38 <span style=''>import scala.collection.immutable
+</span>39 <span style=''>import scala.collection.mutable.ListBuffer
+</span>40 <span style=''>
+</span>41 <span style=''>/** Basic OAuth1 message signing support
+</span>42 <span style=''>  *
+</span>43 <span style=''>  * This feature is not considered stable.
+</span>44 <span style=''>  */
+</span>45 <span style=''>package object oauth1 {
+</span>46 <span style=''>
+</span>47 <span style=''>  private val OutOfBand = </span><span style='background: #AEF1AE'>&quot;oob&quot;</span><span style=''>
+</span>48 <span style=''>
+</span>49 <span style=''>  /** Sign the request with an OAuth Authorization header
+</span>50 <span style=''>    *
+</span>51 <span style=''>    * __WARNING:__ POST requests with application/x-www-form-urlencoded bodies
+</span>52 <span style=''>    *            will be entirely buffered due to signing requirements.
+</span>53 <span style=''>    */
+</span>54 <span style=''>  @deprecated(
+</span>55 <span style=''>    &quot;Preserved for binary compatibility - use the other `signRequest` function which passes a signature method&quot;,
+</span>56 <span style=''>    &quot;0.22.3&quot;,
+</span>57 <span style=''>  )
+</span>58 <span style=''>  def signRequest[F[_]](
+</span>59 <span style=''>      req: Request[F],
+</span>60 <span style=''>      consumer: Consumer,
+</span>61 <span style=''>      callback: Option[Uri],
+</span>62 <span style=''>      verifier: Option[String],
+</span>63 <span style=''>      token: Option[Token],
+</span>64 <span style=''>  )(implicit F: MonadThrow[F], W: EntityDecoder[F, UrlForm]): F[Request[F]] =
+</span>65 <span style=''>    </span><span style='background: #F0ADAD'>getUserParams(req).flatMap { case (req, params) =&gt;
+</span>66 <span style=''></span><span style='background: #F0ADAD'>      genAuthHeader(req.method, req.uri, params, consumer, callback, verifier, token, HmacSha1)
+</span>67 <span style=''></span><span style='background: #F0ADAD'>        .map(auth =&gt; req.putHeaders(auth))
+</span>68 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>69 <span style=''>
+</span>70 <span style=''>  def signRequest[F[_]](
+</span>71 <span style=''>      req: Request[F],
+</span>72 <span style=''>      consumer: ProtocolParameter.Consumer,
+</span>73 <span style=''>      token: Option[ProtocolParameter.Token],
+</span>74 <span style=''>      realm: Option[Realm],
+</span>75 <span style=''>      signatureMethod: SignatureMethod = ProtocolParameter.SignatureMethod(),
+</span>76 <span style=''>      timestampGenerator: F[Timestamp],
+</span>77 <span style=''>      version: ProtocolParameter.Version = Version(),
+</span>78 <span style=''>      nonceGenerator: F[Nonce],
+</span>79 <span style=''>      callback: Option[Callback] = None,
+</span>80 <span style=''>      verifier: Option[Verifier] = None,
+</span>81 <span style=''>  )(implicit F: MonadThrow[F], W: EntityDecoder[F, UrlForm]): F[Request[F]] =
+</span>82 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>83 <span style=''></span><span style='background: #AEF1AE'>      reqParams &lt;- getUserParams(req)
+</span>84 <span style=''></span><span style='background: #AEF1AE'>      // Working around lack of withFilter
+</span>85 <span style=''></span><span style='background: #AEF1AE'>      (req, params) = reqParams
+</span>86 <span style=''></span><span style='background: #AEF1AE'>      auth &lt;- genAuthHeader(
+</span>87 <span style=''></span><span style='background: #AEF1AE'>        req.method,
+</span>88 <span style=''></span><span style='background: #AEF1AE'>        req.uri,
+</span>89 <span style=''></span><span style='background: #AEF1AE'>        consumer,
+</span>90 <span style=''></span><span style='background: #AEF1AE'>        token,
+</span>91 <span style=''></span><span style='background: #AEF1AE'>        realm,
+</span>92 <span style=''></span><span style='background: #AEF1AE'>        signatureMethod,
+</span>93 <span style=''></span><span style='background: #AEF1AE'>        timestampGenerator,
+</span>94 <span style=''></span><span style='background: #AEF1AE'>        version,
+</span>95 <span style=''></span><span style='background: #AEF1AE'>        nonceGenerator,
+</span>96 <span style=''></span><span style='background: #AEF1AE'>        callback,
+</span>97 <span style=''></span><span style='background: #AEF1AE'>        verifier,
+</span>98 <span style=''></span><span style='background: #AEF1AE'>        params.map { case (k, v) =&gt;
+</span>99 <span style=''></span><span style='background: #AEF1AE'>          Custom(k, v)
+</span>100 <span style=''></span><span style='background: #AEF1AE'>        },
+</span>101 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>102 <span style=''></span><span style='background: #AEF1AE'>    } yield req.putHeaders(auth)</span><span style=''>
+</span>103 <span style=''>
+</span>104 <span style=''>  def takeSigHeaders[F[_]: Monad](
+</span>105 <span style=''>      consumer: ProtocolParameter.Consumer,
+</span>106 <span style=''>      token: Option[ProtocolParameter.Token],
+</span>107 <span style=''>      signatureMethod: SignatureMethod,
+</span>108 <span style=''>      timestampGenerator: F[Timestamp],
+</span>109 <span style=''>      version: ProtocolParameter.Version,
+</span>110 <span style=''>      nonceGenerator: F[Nonce],
+</span>111 <span style=''>      callback: Option[Callback],
+</span>112 <span style=''>      verifier: Option[Verifier],
+</span>113 <span style=''>  ): F[immutable.Seq[ProtocolParameter]] =
+</span>114 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>115 <span style=''></span><span style='background: #AEF1AE'>      timestamp &lt;- timestampGenerator
+</span>116 <span style=''></span><span style='background: #AEF1AE'>      nonce &lt;- nonceGenerator
+</span>117 <span style=''></span><span style='background: #AEF1AE'>    } yield {
+</span>118 <span style=''></span><span style='background: #AEF1AE'>      val headers =
+</span>119 <span style=''></span><span style='background: #AEF1AE'>        List(consumer, signatureMethod, timestamp, nonce, version)
+</span>120 <span style=''></span><span style='background: #AEF1AE'>      headers ++ List(token, callback, verifier).flatten
+</span>121 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>122 <span style=''>
+</span>123 <span style=''>  private[oauth1] def genAuthHeader[F[_]: MonadThrow](
+</span>124 <span style=''>      method: Method,
+</span>125 <span style=''>      uri: Uri,
+</span>126 <span style=''>      consumer: ProtocolParameter.Consumer,
+</span>127 <span style=''>      token: Option[ProtocolParameter.Token],
+</span>128 <span style=''>      realm: Option[Realm],
+</span>129 <span style=''>      signatureMethod: SignatureMethod,
+</span>130 <span style=''>      timestampGenerator: F[Timestamp],
+</span>131 <span style=''>      version: ProtocolParameter.Version,
+</span>132 <span style=''>      nonceGenerator: F[Nonce],
+</span>133 <span style=''>      callback: Option[Callback],
+</span>134 <span style=''>      verifier: Option[Verifier],
+</span>135 <span style=''>      queryParams: Seq[ProtocolParameter],
+</span>136 <span style=''>  ): F[Authorization] =
+</span>137 <span style=''>    </span><span style='background: #AEF1AE'>takeSigHeaders(
+</span>138 <span style=''></span><span style='background: #AEF1AE'>      consumer,
+</span>139 <span style=''></span><span style='background: #AEF1AE'>      token,
+</span>140 <span style=''></span><span style='background: #AEF1AE'>      signatureMethod,
+</span>141 <span style=''></span><span style='background: #AEF1AE'>      timestampGenerator,
+</span>142 <span style=''></span><span style='background: #AEF1AE'>      version,
+</span>143 <span style=''></span><span style='background: #AEF1AE'>      nonceGenerator,
+</span>144 <span style=''></span><span style='background: #AEF1AE'>      callback,
+</span>145 <span style=''></span><span style='background: #AEF1AE'>      verifier,
+</span>146 <span style=''></span><span style='background: #AEF1AE'>    ).flatMap { headers =&gt;
+</span>147 <span style=''></span><span style='background: #AEF1AE'>      val baseStr = mkBaseString(
+</span>148 <span style=''></span><span style='background: #AEF1AE'>        method,
+</span>149 <span style=''></span><span style='background: #AEF1AE'>        uri,
+</span>150 <span style=''></span><span style='background: #AEF1AE'>        (headers ++ queryParams).sorted.map(Show[ProtocolParameter].show).mkString(&quot;&amp;&quot;),
+</span>151 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>152 <span style=''></span><span style='background: #AEF1AE'>      val alg = SignatureAlgorithm.unsafeFromMethod(signatureMethod)
+</span>153 <span style=''></span><span style='background: #AEF1AE'>      makeSHASig(baseStr, consumer.secret, token.map(_.secret), alg).map { sig =&gt;
+</span>154 <span style=''></span><span style='background: #AEF1AE'>        val creds = Credentials.AuthParams(
+</span>155 <span style=''></span><span style='background: #AEF1AE'>          ci&quot;OAuth&quot;,
+</span>156 <span style=''></span><span style='background: #AEF1AE'>          NonEmptyList(
+</span>157 <span style=''></span><span style='background: #AEF1AE'>            &quot;oauth_signature&quot; -&gt; encode(sig),
+</span>158 <span style=''></span><span style='background: #AEF1AE'>            realm.fold(headers.map(_.toTuple))(_.toTuple +: headers.map(_.toTuple)).toList,
+</span>159 <span style=''></span><span style='background: #AEF1AE'>          ),
+</span>160 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>161 <span style=''></span><span style='background: #AEF1AE'>
+</span>162 <span style=''></span><span style='background: #AEF1AE'>        Authorization(creds)
+</span>163 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>164 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>165 <span style=''>
+</span>166 <span style=''>  // Generate an authorization header with the provided user params and OAuth requirements.
+</span>167 <span style=''>  // Warning: Fixed to HMAC-SHA1
+</span>168 <span style=''>  @deprecated(&quot;Preserved for binary compatibility&quot;, &quot;0.22.3&quot;)
+</span>169 <span style=''>  private[oauth1] def genAuthHeader(
+</span>170 <span style=''>      method: Method,
+</span>171 <span style=''>      uri: Uri,
+</span>172 <span style=''>      userParams: immutable.Seq[(String, String)],
+</span>173 <span style=''>      consumer: Consumer,
+</span>174 <span style=''>      callback: Option[Uri],
+</span>175 <span style=''>      verifier: Option[String],
+</span>176 <span style=''>      token: Option[Token],
+</span>177 <span style=''>  ): Authorization =
+</span>178 <span style=''>    </span><span style='background: #F0ADAD'>genAuthHeader[SyncIO](method, uri, userParams, consumer, callback, verifier, token, HmacSha1)
+</span>179 <span style=''></span><span style='background: #F0ADAD'>      .unsafeRunSync()</span><span style=''>
+</span>180 <span style=''>
+</span>181 <span style=''>  private[oauth1] def genAuthHeader[F[_]: MonadThrow](
+</span>182 <span style=''>      method: Method,
+</span>183 <span style=''>      uri: Uri,
+</span>184 <span style=''>      userParams: immutable.Seq[(String, String)],
+</span>185 <span style=''>      consumer: Consumer,
+</span>186 <span style=''>      callback: Option[Uri],
+</span>187 <span style=''>      verifier: Option[String],
+</span>188 <span style=''>      token: Option[Token],
+</span>189 <span style=''>      algorithm: SignatureAlgorithm,
+</span>190 <span style=''>  ): F[Authorization] = {
+</span>191 <span style=''>    val params = {
+</span>192 <span style=''>      val params = </span><span style='background: #F0ADAD'>new ListBuffer[(String, String)]</span><span style=''>
+</span>193 <span style=''>      </span><span style='background: #F0ADAD'>params += &quot;oauth_consumer_key&quot; -&gt; encode(consumer.key)</span><span style=''>
+</span>194 <span style=''>      </span><span style='background: #F0ADAD'>params += &quot;oauth_signature_method&quot; -&gt; algorithm.name</span><span style=''>
+</span>195 <span style=''>      </span><span style='background: #F0ADAD'>params += &quot;oauth_timestamp&quot; -&gt; (System.currentTimeMillis / 1000).toString</span><span style=''>
+</span>196 <span style=''>      </span><span style='background: #F0ADAD'>params += &quot;oauth_nonce&quot; -&gt; System.nanoTime.toString</span><span style=''>
+</span>197 <span style=''>      </span><span style='background: #F0ADAD'>params += &quot;oauth_version&quot; -&gt; &quot;1.0&quot;</span><span style=''>
+</span>198 <span style=''>      </span><span style='background: #F0ADAD'>params += &quot;oauth_callback&quot; -&gt; callback.map(c =&gt; encode(c.renderString)).getOrElse(OutOfBand)</span><span style=''>
+</span>199 <span style=''>      </span><span style='background: #F0ADAD'>token.foreach { t =&gt;
+</span>200 <span style=''></span><span style='background: #F0ADAD'>        params += &quot;oauth_token&quot; -&gt; encode(t.value)
+</span>201 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>202 <span style=''>      </span><span style='background: #F0ADAD'>verifier.foreach { v =&gt;
+</span>203 <span style=''></span><span style='background: #F0ADAD'>        params += &quot;oauth_verifier&quot; -&gt; encode(v)
+</span>204 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>205 <span style=''>      </span><span style='background: #F0ADAD'>params.result()</span><span style=''>
+</span>206 <span style=''>    }
+</span>207 <span style=''>
+</span>208 <span style=''>    val baseString = </span><span style='background: #F0ADAD'>genBaseString(
+</span>209 <span style=''></span><span style='background: #F0ADAD'>      method,
+</span>210 <span style=''></span><span style='background: #F0ADAD'>      uri,
+</span>211 <span style=''></span><span style='background: #F0ADAD'>      params ++ userParams.map { case (k, v) =&gt;
+</span>212 <span style=''></span><span style='background: #F0ADAD'>        (encode(k), encode(v))
+</span>213 <span style=''></span><span style='background: #F0ADAD'>      },
+</span>214 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>215 <span style=''>    </span><span style='background: #F0ADAD'>makeSHASig(baseString, consumer.secret, token.map(_.secret), algorithm).map { sig =&gt;
+</span>216 <span style=''></span><span style='background: #F0ADAD'>      val creds =
+</span>217 <span style=''></span><span style='background: #F0ADAD'>        Credentials.AuthParams(ci&quot;OAuth&quot;, NonEmptyList(&quot;oauth_signature&quot; -&gt; encode(sig), params))
+</span>218 <span style=''></span><span style='background: #F0ADAD'>
+</span>219 <span style=''></span><span style='background: #F0ADAD'>      Authorization(creds)
+</span>220 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>221 <span style=''>  }
+</span>222 <span style=''>
+</span>223 <span style=''>  // baseString must already be encoded, consumer and token must not be
+</span>224 <span style=''>  // Warning: Defaults to HMAC-SHA1
+</span>225 <span style=''>  @deprecated(&quot;Preserved for binary compatibility&quot;, &quot;0.22.3&quot;)
+</span>226 <span style=''>  private[oauth1] def makeSHASig(
+</span>227 <span style=''>      baseString: String,
+</span>228 <span style=''>      consumer: Consumer,
+</span>229 <span style=''>      token: Option[Token],
+</span>230 <span style=''>  ): String =
+</span>231 <span style=''>    </span><span style='background: #F0ADAD'>makeSHASig(baseString, consumer.secret, token.map(_.secret))</span><span style=''>
+</span>232 <span style=''>
+</span>233 <span style=''>  // Warning: Defaults to HMAC-SHA1
+</span>234 <span style=''>  @deprecated(&quot;Preserved for binary compatibility&quot;, &quot;0.22.3&quot;)
+</span>235 <span style=''>  private[oauth1] def makeSHASig(
+</span>236 <span style=''>      baseString: String,
+</span>237 <span style=''>      consumerSecret: String,
+</span>238 <span style=''>      tokenSecret: Option[String],
+</span>239 <span style=''>  ): String =
+</span>240 <span style=''>    </span><span style='background: #F0ADAD'>makeSHASig[SyncIO](baseString, consumerSecret, tokenSecret, HmacSha1).unsafeRunSync()</span><span style=''>
+</span>241 <span style=''>
+</span>242 <span style=''>  private[oauth1] def makeSHASig[F[_]: MonadThrow](
+</span>243 <span style=''>      baseString: String,
+</span>244 <span style=''>      consumerSecret: String,
+</span>245 <span style=''>      tokenSecret: Option[String],
+</span>246 <span style=''>      algorithm: SignatureAlgorithm,
+</span>247 <span style=''>  ): F[String] = {
+</span>248 <span style=''>
+</span>249 <span style=''>    val key = </span><span style='background: #AEF1AE'>encode(consumerSecret) + &quot;&amp;&quot; + tokenSecret.map(t =&gt; encode(t)).getOrElse(&quot;&quot;)</span><span style=''>
+</span>250 <span style=''>    </span><span style='background: #AEF1AE'>algorithm.generate(baseString, key)</span><span style=''>
+</span>251 <span style=''>  }
+</span>252 <span style=''>
+</span>253 <span style=''>  // Needs to have all params already encoded
+</span>254 <span style=''>  private[oauth1] def genBaseString(
+</span>255 <span style=''>      method: Method,
+</span>256 <span style=''>      uri: Uri,
+</span>257 <span style=''>      params: immutable.Seq[(String, String)],
+</span>258 <span style=''>  ): String = {
+</span>259 <span style=''>    val paramsStr = </span><span style='background: #AEF1AE'>params.map { case (k, v) =&gt; k + &quot;=&quot; + v }.sorted.mkString(&quot;&amp;&quot;)</span><span style=''>
+</span>260 <span style=''>    </span><span style='background: #AEF1AE'>mkBaseString(method, uri, paramsStr)</span><span style=''>
+</span>261 <span style=''>  }
+</span>262 <span style=''>
+</span>263 <span style=''>  def mkBaseString(method: Method, uri: Uri, paramsStr: String): String =
+</span>264 <span style=''>    </span><span style='background: #AEF1AE'>immutable
+</span>265 <span style=''></span><span style='background: #AEF1AE'>      .Seq(
+</span>266 <span style=''></span><span style='background: #AEF1AE'>        method.name,
+</span>267 <span style=''></span><span style='background: #AEF1AE'>        encode(uri.copy(query = Query.empty, fragment = None).renderString),
+</span>268 <span style=''></span><span style='background: #AEF1AE'>        encode(paramsStr),
+</span>269 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>270 <span style=''></span><span style='background: #AEF1AE'>      .mkString(&quot;&amp;&quot;)</span><span style=''>
+</span>271 <span style=''>
+</span>272 <span style=''>  private[oauth1] def encode(str: String): String =
+</span>273 <span style=''>    </span><span style='background: #AEF1AE'>Uri.encode(str, spaceIsPlus = false, toSkip = Uri.Unreserved)</span><span style=''>
+</span>274 <span style=''>
+</span>275 <span style=''>  private[oauth1] def getUserParams[F[_]](req: Request[F])(implicit
+</span>276 <span style=''>      F: MonadThrow[F],
+</span>277 <span style=''>      W: EntityDecoder[F, UrlForm],
+</span>278 <span style=''>  ): F[(Request[F], immutable.Seq[(String, String)])] = {
+</span>279 <span style=''>    val qparams = </span><span style='background: #AEF1AE'>req.uri.query.pairs.map { case (k, ov) =&gt; (k, ov.getOrElse(&quot;&quot;)) }</span><span style=''>
+</span>280 <span style=''>
+</span>281 <span style=''>    </span><span style='background: #AEF1AE'>req.contentType</span><span style=''> match {
+</span>282 <span style=''>      case Some(t)
+</span>283 <span style=''>          if </span><span style='background: #AEF1AE'>(req.method == Method.POST || </span><span style='background: #F0ADAD'>req.method == Method.PUT</span><span style='background: #AEF1AE'>) &amp;&amp;
+</span>284 <span style=''></span><span style='background: #AEF1AE'>            t.mediaType == MediaType.application.`x-www-form-urlencoded`</span><span style=''> =&gt;
+</span>285 <span style=''>        </span><span style='background: #AEF1AE'>req.as[UrlForm].map { urlform =&gt;
+</span>286 <span style=''></span><span style='background: #AEF1AE'>          val bodyparams = urlform.values.toSeq
+</span>287 <span style=''></span><span style='background: #AEF1AE'>            .flatMap { case (k, vs) =&gt; if (vs.isEmpty) Seq(k -&gt; &quot;&quot;) else vs.toList.map((k, _)) }
+</span>288 <span style=''></span><span style='background: #AEF1AE'>
+</span>289 <span style=''></span><span style='background: #AEF1AE'>          implicit val charset: Charset = req.charset.getOrElse(</span><span style='background: #F0ADAD'>Charset.`UTF-8`</span><span style='background: #AEF1AE'>)
+</span>290 <span style=''></span><span style='background: #AEF1AE'>          req.withEntity(urlform) -&gt; (qparams ++ bodyparams)
+</span>291 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>292 <span style=''>
+</span>293 <span style=''>      case _ =&gt; </span><span style='background: #AEF1AE'>F.pure(req -&gt; qparams)</span><span style=''>
+</span>294 <span style=''>    }
+</span>295 <span style=''>  }
+</span>296 <span style=''>
+</span>297 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          12130
+        </td>
+        <td>
+          1559
+          -
+          1564
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;oob&quot;
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          11623
+        </td>
+        <td>
+          2179
+          -
+          2374
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, (org.http4s.Request[[_]F[_]], Seq[(String, String)])](`package`.this.getUserParams[[_]F[_]](req)(F, W))(F).flatMap[org.http4s.Request[F]](((x0$1: (org.http4s.Request[[_]F[_]], Seq[(String, String)])) =&gt; x0$1 match {
+  case (_1: org.http4s.Request[[_]F[_]], _2: Seq[(String, String)]): (org.http4s.Request[[_]F[_]], Seq[(String, String)])((req @ _), (params @ _)) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.headers.Authorization](`package`.this.genAuthHeader[[_]F[_]](req.method, req.uri, params, consumer, callback, verifier, token, HmacSha1)(F))(F).map[req.Self](((auth: org.http4s.headers.Authorization) =&gt; req.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Authorization](auth)(headers.this.Authorization.headerInstance))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          11696
+        </td>
+        <td>
+          2179
+          -
+          2197
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.getUserParams
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.getUserParams[[_]F[_]](req)(F, W)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          11253
+        </td>
+        <td>
+          2236
+          -
+          2325
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.genAuthHeader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.genAuthHeader[[_]F[_]](req.method, req.uri, params, consumer, callback, verifier, token, HmacSha1)(F)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          11731
+        </td>
+        <td>
+          2362
+          -
+          2366
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Authorization](auth)(headers.this.Authorization.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          12063
+        </td>
+        <td>
+          2236
+          -
+          2368
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.headers.Authorization](`package`.this.genAuthHeader[[_]F[_]](req.method, req.uri, params, consumer, callback, verifier, token, HmacSha1)(F))(F).map[req.Self](((auth: org.http4s.headers.Authorization) =&gt; req.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Authorization](auth)(headers.this.Authorization.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          11335
+        </td>
+        <td>
+          2347
+          -
+          2367
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          req.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Authorization](auth)(headers.this.Authorization.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          11990
+        </td>
+        <td>
+          2362
+          -
+          2362
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Authorization.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Authorization.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11602
+        </td>
+        <td>
+          2910
+          -
+          3383
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, (org.http4s.Request[[_]F[_]], Seq[(String, String)])](`package`.this.getUserParams[[_]F[_]](req)(F, W))(F).flatMap[org.http4s.Request[[_]F[_]]](((reqParams: (org.http4s.Request[[_]F[_]], Seq[(String, String)])) =&gt; {
+  &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$2: ((org.http4s.Request[[_]F[_]], Seq[(String, String)]), org.http4s.Request[[_]F[_]], Seq[(String, String)]) = (reqParams: (org.http4s.Request[[_]F[_]], Seq[(String, String)]) @unchecked) match {
+    case (x$1 @ (_1: org.http4s.Request[[_]F[_]], _2: Seq[(String, String)]): (org.http4s.Request[[_]F[_]], Seq[(String, String)])((req @ _), (params @ _))) =&gt; scala.Tuple3.apply[(org.http4s.Request[[_]F[_]], Seq[(String, String)]), org.http4s.Request[[_]F[_]], Seq[(String, String)]](x$1, req, params)
+  };
+  &lt;synthetic&gt; val $suppressedUnused$1: (org.http4s.Request[[_]F[_]], Seq[(String, String)]) = x$2._1;
+  val req: org.http4s.Request[[_]F[_]] = x$2._2;
+  val params: Seq[(String, String)] = x$2._3;
+  cats.syntax.`package`.all.toFunctorOps[F, org.http4s.headers.Authorization](`package`.this.genAuthHeader[F](req.method, req.uri, consumer, token, realm, signatureMethod, timestampGenerator, version, nonceGenerator, callback, verifier, params.map[org.http4s.client.oauth1.ProtocolParameter](((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; org.http4s.client.oauth1.ProtocolParameter.Custom.apply(k, v)
+})))(F))(F).map[req.Self](((auth: org.http4s.headers.Authorization) =&gt; req.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Authorization](auth)(headers.this.Authorization.headerInstance))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11204
+        </td>
+        <td>
+          2935
+          -
+          2953
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.getUserParams
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.getUserParams[[_]F[_]](req)(F, W)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          12094
+        </td>
+        <td>
+          3004
+          -
+          3004
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple3._2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2._2
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          11699
+        </td>
+        <td>
+          3009
+          -
+          3009
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple3._3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2._3
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          12027
+        </td>
+        <td>
+          3035
+          -
+          3383
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.headers.Authorization](`package`.this.genAuthHeader[F](req.method, req.uri, consumer, token, realm, signatureMethod, timestampGenerator, version, nonceGenerator, callback, verifier, params.map[org.http4s.client.oauth1.ProtocolParameter](((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; org.http4s.client.oauth1.ProtocolParameter.Custom.apply(k, v)
+})))(F))(F).map[req.Self](((auth: org.http4s.headers.Authorization) =&gt; req.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Authorization](auth)(headers.this.Authorization.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          11234
+        </td>
+        <td>
+          3043
+          -
+          3350
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.genAuthHeader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.genAuthHeader[F](req.method, req.uri, consumer, token, realm, signatureMethod, timestampGenerator, version, nonceGenerator, callback, verifier, params.map[org.http4s.client.oauth1.ProtocolParameter](((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; org.http4s.client.oauth1.ProtocolParameter.Custom.apply(k, v)
+})))(F)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          11301
+        </td>
+        <td>
+          3363
+          -
+          3383
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Authorization](auth)(headers.this.Authorization.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          11537
+        </td>
+        <td>
+          3378
+          -
+          3382
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Authorization](auth)(headers.this.Authorization.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          11993
+        </td>
+        <td>
+          3378
+          -
+          3378
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Authorization.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Authorization.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          11518
+        </td>
+        <td>
+          3779
+          -
+          4016
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.client.oauth1.ProtocolParameter.Timestamp](timestampGenerator)(evidence$1).flatMap[Seq[org.http4s.client.oauth1.ProtocolParameter]](((timestamp: org.http4s.client.oauth1.ProtocolParameter.Timestamp) =&gt; cats.syntax.`package`.all.toFunctorOps[F, org.http4s.client.oauth1.ProtocolParameter.Nonce](nonceGenerator)(evidence$1).map[Seq[org.http4s.client.oauth1.ProtocolParameter]](((nonce: org.http4s.client.oauth1.ProtocolParameter.Nonce) =&gt; {
+  val headers: List[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable] = scala.`package`.List.apply[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable](consumer, signatureMethod, timestamp, nonce, version);
+  headers.++[org.http4s.client.oauth1.ProtocolParameter](scala.`package`.List.apply[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]](token, callback, verifier).flatten[org.http4s.client.oauth1.ProtocolParameter](scala.Predef.$conforms[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]]))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11997
+        </td>
+        <td>
+          3829
+          -
+          4016
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.client.oauth1.ProtocolParameter.Nonce](nonceGenerator)(evidence$1).map[Seq[org.http4s.client.oauth1.ProtocolParameter]](((nonce: org.http4s.client.oauth1.ProtocolParameter.Nonce) =&gt; {
+  val headers: List[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable] = scala.`package`.List.apply[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable](consumer, signatureMethod, timestamp, nonce, version);
+  headers.++[org.http4s.client.oauth1.ProtocolParameter](scala.`package`.List.apply[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]](token, callback, verifier).flatten[org.http4s.client.oauth1.ProtocolParameter](scala.Predef.$conforms[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]]))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          11157
+        </td>
+        <td>
+          3895
+          -
+          3953
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable](consumer, signatureMethod, timestamp, nonce, version)
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11235
+        </td>
+        <td>
+          3960
+          -
+          4010
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.++[org.http4s.client.oauth1.ProtocolParameter](scala.`package`.List.apply[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]](token, callback, verifier).flatten[org.http4s.client.oauth1.ProtocolParameter](scala.Predef.$conforms[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]]))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          12099
+        </td>
+        <td>
+          4003
+          -
+          4003
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Predef.$conforms
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.$conforms[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]]
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11664
+        </td>
+        <td>
+          3971
+          -
+          4010
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.flatten
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]](token, callback, verifier).flatten[org.http4s.client.oauth1.ProtocolParameter](scala.Predef.$conforms[Option[Product with org.http4s.client.oauth1.ProtocolParameter with java.io.Serializable]])
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          11305
+        </td>
+        <td>
+          4522
+          -
+          4690
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.takeSigHeaders
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.takeSigHeaders[F](consumer, token, signatureMethod, timestampGenerator, version, nonceGenerator, callback, verifier)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          11575
+        </td>
+        <td>
+          4522
+          -
+          5316
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Seq[org.http4s.client.oauth1.ProtocolParameter]](`package`.this.takeSigHeaders[F](consumer, token, signatureMethod, timestampGenerator, version, nonceGenerator, callback, verifier)(evidence$2))(evidence$2).flatMap[org.http4s.headers.Authorization](((headers: Seq[org.http4s.client.oauth1.ProtocolParameter]) =&gt; {
+  val baseStr: String = `package`.this.mkBaseString(method, uri, headers.++[org.http4s.client.oauth1.ProtocolParameter](queryParams).sorted[org.http4s.client.oauth1.ProtocolParameter](cats.instances.`package`.order.catsKernelOrderingForOrder[org.http4s.client.oauth1.ProtocolParameter](oauth1.this.ProtocolParameter.http4sClientOauth1SortForProtocolParameters)).map[String]({
+  &lt;synthetic&gt; val eta$0$1: cats.Show[org.http4s.client.oauth1.ProtocolParameter] = cats.Show.apply[org.http4s.client.oauth1.ProtocolParameter](oauth1.this.ProtocolParameter.oauth1HeaderShow);
+  ((t: org.http4s.client.oauth1.ProtocolParameter) =&gt; eta$0$1.show(t))
+}).mkString(&quot;&amp;&quot;));
+  val alg: org.http4s.client.oauth1.SignatureAlgorithm = SignatureAlgorithm.unsafeFromMethod(signatureMethod);
+  cats.syntax.`package`.all.toFunctorOps[F, String](`package`.this.makeSHASig[[_]F[_]](baseStr, consumer.secret, token.map[String](((x$4: org.http4s.client.oauth1.ProtocolParameter.Token) =&gt; x$4.secret)), alg)(evidence$2))(evidence$2).map[org.http4s.headers.Authorization](((sig: String) =&gt; {
+    val creds: org.http4s.Credentials.AuthParams = Credentials.AuthParams.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;OAuth&quot;)).ci(), cats.data.NonEmptyList.apply[(String, String)](scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig)), realm.fold[Seq[(String, String)]](headers.map[(String, String)](((x$5: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$5.toTuple)))(((x$6: org.http4s.client.oauth1.ProtocolParameter.Realm) =&gt; {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: (String, String) = x$6.toTuple;
+  headers.map[(String, String)](((x$7: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$7.toTuple)).+:[(String, String)](rassoc$1)
+})).toList));
+    org.http4s.headers.Authorization.apply(creds)
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          11605
+        </td>
+        <td>
+          4732
+          -
+          4871
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.mkBaseString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.mkBaseString(method, uri, headers.++[org.http4s.client.oauth1.ProtocolParameter](queryParams).sorted[org.http4s.client.oauth1.ProtocolParameter](cats.instances.`package`.order.catsKernelOrderingForOrder[org.http4s.client.oauth1.ProtocolParameter](oauth1.this.ProtocolParameter.http4sClientOauth1SortForProtocolParameters)).map[String]({
+  &lt;synthetic&gt; val eta$0$1: cats.Show[org.http4s.client.oauth1.ProtocolParameter] = cats.Show.apply[org.http4s.client.oauth1.ProtocolParameter](oauth1.this.ProtocolParameter.oauth1HeaderShow);
+  ((t: org.http4s.client.oauth1.ProtocolParameter) =&gt; eta$0$1.show(t))
+}).mkString(&quot;&amp;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          12059
+        </td>
+        <td>
+          4783
+          -
+          4862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.++[org.http4s.client.oauth1.ProtocolParameter](queryParams).sorted[org.http4s.client.oauth1.ProtocolParameter](cats.instances.`package`.order.catsKernelOrderingForOrder[org.http4s.client.oauth1.ProtocolParameter](oauth1.this.ProtocolParameter.http4sClientOauth1SortForProtocolParameters)).map[String]({
+  &lt;synthetic&gt; val eta$0$1: cats.Show[org.http4s.client.oauth1.ProtocolParameter] = cats.Show.apply[org.http4s.client.oauth1.ProtocolParameter](oauth1.this.ProtocolParameter.oauth1HeaderShow);
+  ((t: org.http4s.client.oauth1.ProtocolParameter) =&gt; eta$0$1.show(t))
+}).mkString(&quot;&amp;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          11159
+        </td>
+        <td>
+          4888
+          -
+          4940
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.unsafeFromMethod
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          SignatureAlgorithm.unsafeFromMethod(signatureMethod)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          12141
+        </td>
+        <td>
+          4947
+          -
+          5009
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.makeSHASig
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.makeSHASig[[_]F[_]](baseStr, consumer.secret, token.map[String](((x$4: org.http4s.client.oauth1.ProtocolParameter.Token) =&gt; x$4.secret)), alg)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          11991
+        </td>
+        <td>
+          4947
+          -
+          5310
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, String](`package`.this.makeSHASig[[_]F[_]](baseStr, consumer.secret, token.map[String](((x$4: org.http4s.client.oauth1.ProtocolParameter.Token) =&gt; x$4.secret)), alg)(evidence$2))(evidence$2).map[org.http4s.headers.Authorization](((sig: String) =&gt; {
+  val creds: org.http4s.Credentials.AuthParams = Credentials.AuthParams.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;OAuth&quot;)).ci(), cats.data.NonEmptyList.apply[(String, String)](scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig)), realm.fold[Seq[(String, String)]](headers.map[(String, String)](((x$5: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$5.toTuple)))(((x$6: org.http4s.client.oauth1.ProtocolParameter.Realm) =&gt; {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: (String, String) = x$6.toTuple;
+  headers.map[(String, String)](((x$7: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$7.toTuple)).+:[(String, String)](rassoc$1)
+})).toList));
+  org.http4s.headers.Authorization.apply(creds)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          11681
+        </td>
+        <td>
+          5043
+          -
+          5272
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Credentials.AuthParams.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Credentials.AuthParams.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;OAuth&quot;)).ci(), cats.data.NonEmptyList.apply[(String, String)](scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig)), realm.fold[Seq[(String, String)]](headers.map[(String, String)](((x$5: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$5.toTuple)))(((x$6: org.http4s.client.oauth1.ProtocolParameter.Realm) =&gt; {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: (String, String) = x$6.toTuple;
+  headers.map[(String, String)](((x$7: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$7.toTuple)).+:[(String, String)](rassoc$1)
+})).toList))
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          11694
+        </td>
+        <td>
+          5077
+          -
+          5086
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;OAuth&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          11878
+        </td>
+        <td>
+          5098
+          -
+          5261
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.apply[(String, String)](scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig)), realm.fold[Seq[(String, String)]](headers.map[(String, String)](((x$5: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$5.toTuple)))(((x$6: org.http4s.client.oauth1.ProtocolParameter.Realm) =&gt; {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: (String, String) = x$6.toTuple;
+  headers.map[(String, String)](((x$7: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$7.toTuple)).+:[(String, String)](rassoc$1)
+})).toList)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          11274
+        </td>
+        <td>
+          5124
+          -
+          5141
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;oauth_signature&quot;
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          11519
+        </td>
+        <td>
+          5124
+          -
+          5156
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig))
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          11976
+        </td>
+        <td>
+          5145
+          -
+          5156
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.encode(sig)
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          11216
+        </td>
+        <td>
+          5170
+          -
+          5248
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          realm.fold[Seq[(String, String)]](headers.map[(String, String)](((x$5: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$5.toTuple)))(((x$6: org.http4s.client.oauth1.ProtocolParameter.Realm) =&gt; {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: (String, String) = x$6.toTuple;
+  headers.map[(String, String)](((x$7: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$7.toTuple)).+:[(String, String)](rassoc$1)
+})).toList
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          12062
+        </td>
+        <td>
+          5181
+          -
+          5203
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.map[(String, String)](((x$5: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$5.toTuple))
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          11355
+        </td>
+        <td>
+          5193
+          -
+          5202
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.ProtocolParameter.toTuple
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$5.toTuple
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          11654
+        </td>
+        <td>
+          5215
+          -
+          5240
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.+:
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.map[(String, String)](((x$7: org.http4s.client.oauth1.ProtocolParameter) =&gt; x$7.toTuple)).+:[(String, String)](rassoc$1)
+        </td>
+      </tr><tr>
+        <td>
+          162
+        </td>
+        <td>
+          11278
+        </td>
+        <td>
+          5282
+          -
+          5302
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Authorization.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Authorization.apply(creds)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          11324
+        </td>
+        <td>
+          5771
+          -
+          5887
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.genAuthHeader[cats.effect.SyncIO](method, uri, userParams, consumer, callback, verifier, token, HmacSha1)(effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          12067
+        </td>
+        <td>
+          6249
+          -
+          6281
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.ListBuffer.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new scala.collection.mutable.ListBuffer[(String, String)]()
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          11935
+        </td>
+        <td>
+          6322
+          -
+          6342
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.encode(consumer.key)
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          11280
+        </td>
+        <td>
+          6288
+          -
+          6342
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_consumer_key&quot;).-&gt;[String](`package`.this.encode(consumer.key)))
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          11683
+        </td>
+        <td>
+          6298
+          -
+          6342
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_consumer_key&quot;).-&gt;[String](`package`.this.encode(consumer.key))
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          11195
+        </td>
+        <td>
+          6329
+          -
+          6341
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.Consumer.key
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          consumer.key
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          11649
+        </td>
+        <td>
+          6298
+          -
+          6318
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;oauth_consumer_key&quot;
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          11973
+        </td>
+        <td>
+          6359
+          -
+          6383
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;oauth_signature_method&quot;
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          11318
+        </td>
+        <td>
+          6359
+          -
+          6401
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_signature_method&quot;).-&gt;[String](algorithm.name)
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          12047
+        </td>
+        <td>
+          6349
+          -
+          6401
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_signature_method&quot;).-&gt;[String](algorithm.name))
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          11547
+        </td>
+        <td>
+          6387
+          -
+          6401
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          algorithm.name
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          11686
+        </td>
+        <td>
+          6408
+          -
+          6481
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_timestamp&quot;).-&gt;[String](java.lang.System.currentTimeMillis()./(1000).toString()))
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          11877
+        </td>
+        <td>
+          6418
+          -
+          6481
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_timestamp&quot;).-&gt;[String](java.lang.System.currentTimeMillis()./(1000).toString())
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          11180
+        </td>
+        <td>
+          6439
+          -
+          6481
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.System.currentTimeMillis()./(1000).toString()
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          11604
+        </td>
+        <td>
+          6418
+          -
+          6435
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;oauth_timestamp&quot;
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          11975
+        </td>
+        <td>
+          6515
+          -
+          6539
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.System.nanoTime().toString()
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          11538
+        </td>
+        <td>
+          6498
+          -
+          6539
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_nonce&quot;).-&gt;[String](java.lang.System.nanoTime().toString())
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          11263
+        </td>
+        <td>
+          6498
+          -
+          6511
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;oauth_nonce&quot;
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          11077
+        </td>
+        <td>
+          6488
+          -
+          6539
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_nonce&quot;).-&gt;[String](java.lang.System.nanoTime().toString()))
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          11591
+        </td>
+        <td>
+          6546
+          -
+          6580
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_version&quot;).-&gt;[String](&quot;1.0&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          12052
+        </td>
+        <td>
+          6556
+          -
+          6580
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_version&quot;).-&gt;[String](&quot;1.0&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11719
+        </td>
+        <td>
+          6669
+          -
+          6678
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.OutOfBand
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.OutOfBand
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11955
+        </td>
+        <td>
+          6597
+          -
+          6679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_callback&quot;).-&gt;[String](callback.map[String](((c: org.http4s.Uri) =&gt; `package`.this.encode(c.renderString))).getOrElse[String](`package`.this.OutOfBand))
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11933
+        </td>
+        <td>
+          6635
+          -
+          6657
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.encode(c.renderString)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11574
+        </td>
+        <td>
+          6587
+          -
+          6679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_callback&quot;).-&gt;[String](callback.map[String](((c: org.http4s.Uri) =&gt; `package`.this.encode(c.renderString))).getOrElse[String](`package`.this.OutOfBand)))
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11227
+        </td>
+        <td>
+          6617
+          -
+          6679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          callback.map[String](((c: org.http4s.Uri) =&gt; `package`.this.encode(c.renderString))).getOrElse[String](`package`.this.OutOfBand)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11182
+        </td>
+        <td>
+          6597
+          -
+          6613
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;oauth_callback&quot;
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          11434
+        </td>
+        <td>
+          6686
+          -
+          6765
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          token.foreach[scala.collection.mutable.ListBuffer[(String, String)]](((t: org.http4s.client.oauth1.Token) =&gt; params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_token&quot;).-&gt;[String](`package`.this.encode(t.value)))))
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          11934
+        </td>
+        <td>
+          6715
+          -
+          6757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_token&quot;).-&gt;[String](`package`.this.encode(t.value)))
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          11078
+        </td>
+        <td>
+          6725
+          -
+          6738
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;oauth_token&quot;
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          11162
+        </td>
+        <td>
+          6725
+          -
+          6757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_token&quot;).-&gt;[String](`package`.this.encode(t.value))
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          11592
+        </td>
+        <td>
+          6742
+          -
+          6757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.encode(t.value)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          12082
+        </td>
+        <td>
+          6749
+          -
+          6756
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.Token.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          t.value
+        </td>
+      </tr><tr>
+        <td>
+          202
+        </td>
+        <td>
+          12046
+        </td>
+        <td>
+          6772
+          -
+          6851
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          verifier.foreach[scala.collection.mutable.ListBuffer[(String, String)]](((v: String) =&gt; params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_verifier&quot;).-&gt;[String](`package`.this.encode(v)))))
+        </td>
+      </tr><tr>
+        <td>
+          203
+        </td>
+        <td>
+          11579
+        </td>
+        <td>
+          6814
+          -
+          6843
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_verifier&quot;).-&gt;[String](`package`.this.encode(v))
+        </td>
+      </tr><tr>
+        <td>
+          203
+        </td>
+        <td>
+          11258
+        </td>
+        <td>
+          6814
+          -
+          6830
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;oauth_verifier&quot;
+        </td>
+      </tr><tr>
+        <td>
+          203
+        </td>
+        <td>
+          11958
+        </td>
+        <td>
+          6834
+          -
+          6843
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.encode(v)
+        </td>
+      </tr><tr>
+        <td>
+          203
+        </td>
+        <td>
+          11137
+        </td>
+        <td>
+          6804
+          -
+          6843
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.+=(scala.Predef.ArrowAssoc[String](&quot;oauth_verifier&quot;).-&gt;[String](`package`.this.encode(v)))
+        </td>
+      </tr><tr>
+        <td>
+          205
+        </td>
+        <td>
+          11628
+        </td>
+        <td>
+          6858
+          -
+          6873
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.ListBuffer.result
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.result()
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          11558
+        </td>
+        <td>
+          6902
+          -
+          7035
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.genBaseString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.genBaseString(method, uri, params.++[(String, String)](userParams.map[(String, String)](((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; scala.Tuple2.apply[String, String](`package`.this.encode(k), `package`.this.encode(v))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          11262
+        </td>
+        <td>
+          6958
+          -
+          7028
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          userParams.map[(String, String)](((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; scala.Tuple2.apply[String, String](`package`.this.encode(k), `package`.this.encode(v))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          11996
+        </td>
+        <td>
+          6948
+          -
+          7028
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          params.++[(String, String)](userParams.map[(String, String)](((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; scala.Tuple2.apply[String, String](`package`.this.encode(k), `package`.this.encode(v))
+})))
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          11937
+        </td>
+        <td>
+          7010
+          -
+          7019
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.encode(v)
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          11168
+        </td>
+        <td>
+          6999
+          -
+          7008
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.encode(k)
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          11502
+        </td>
+        <td>
+          6998
+          -
+          7020
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Tuple2.apply[String, String](`package`.this.encode(k), `package`.this.encode(v))
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          11142
+        </td>
+        <td>
+          7040
+          -
+          7111
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.makeSHASig
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.makeSHASig[[_]F[_]](baseString, consumer.secret, token.map[String](((x$8: org.http4s.client.oauth1.Token) =&gt; x$8.secret)), algorithm)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          11539
+        </td>
+        <td>
+          7040
+          -
+          7274
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, String](`package`.this.makeSHASig[[_]F[_]](baseString, consumer.secret, token.map[String](((x$8: org.http4s.client.oauth1.Token) =&gt; x$8.secret)), algorithm)(evidence$3))(evidence$3).map[org.http4s.headers.Authorization](((sig: String) =&gt; {
+  val creds: org.http4s.Credentials.AuthParams = Credentials.AuthParams.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;OAuth&quot;)).ci(), cats.data.NonEmptyList.apply[(String, String)](scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig)), params));
+  org.http4s.headers.Authorization.apply(creds)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          11633
+        </td>
+        <td>
+          7198
+          -
+          7215
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;oauth_signature&quot;
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          11238
+        </td>
+        <td>
+          7151
+          -
+          7240
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Credentials.AuthParams.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Credentials.AuthParams.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;OAuth&quot;)).ci(), cats.data.NonEmptyList.apply[(String, String)](scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig)), params))
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          11181
+        </td>
+        <td>
+          7219
+          -
+          7230
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.encode(sig)
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          12030
+        </td>
+        <td>
+          7174
+          -
+          7183
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;OAuth&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          11912
+        </td>
+        <td>
+          7198
+          -
+          7230
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig))
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          11457
+        </td>
+        <td>
+          7185
+          -
+          7239
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.NonEmptyList.apply[(String, String)](scala.Predef.ArrowAssoc[String](&quot;oauth_signature&quot;).-&gt;[String](`package`.this.encode(sig)), params)
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          12001
+        </td>
+        <td>
+          7248
+          -
+          7268
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Authorization.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Authorization.apply(creds)
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          11827
+        </td>
+        <td>
+          7632
+          -
+          7640
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.Token.secret
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$9.secret
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          11112
+        </td>
+        <td>
+          7605
+          -
+          7620
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.oauth1.Consumer.secret
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          consumer.secret
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          11637
+        </td>
+        <td>
+          7622
+          -
+          7641
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          token.map[String](((x$9: org.http4s.client.oauth1.Token) =&gt; x$9.secret))
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          11161
+        </td>
+        <td>
+          7582
+          -
+          7642
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.makeSHASig
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.makeSHASig(baseString, consumer.secret, token.map[String](((x$9: org.http4s.client.oauth1.Token) =&gt; x$9.secret)))
+        </td>
+      </tr><tr>
+        <td>
+          240
+        </td>
+        <td>
+          11889
+        </td>
+        <td>
+          7885
+          -
+          7970
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          `package`.this.makeSHASig[cats.effect.SyncIO](baseString, consumerSecret, tokenSecret, HmacSha1)(effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          11241
+        </td>
+        <td>
+          8217
+          -
+          8262
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          tokenSecret.map[String](((t: String) =&gt; `package`.this.encode(t))).getOrElse[String](&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          11500
+        </td>
+        <td>
+          8211
+          -
+          8214
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;&amp;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          11957
+        </td>
+        <td>
+          8186
+          -
+          8262
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.+
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.encode(consumerSecret).+(&quot;&amp;&quot;).+(tokenSecret.map[String](((t: String) =&gt; `package`.this.encode(t))).getOrElse[String](&quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          11522
+        </td>
+        <td>
+          8267
+          -
+          8302
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.oauth1.SignatureAlgorithm.generate
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          algorithm.generate[[_]F[_]](baseString, key)(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          11136
+        </td>
+        <td>
+          8512
+          -
+          8574
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          params.map[String](((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.+(&quot;=&quot;).+(v)
+})).sorted[String](cats.instances.`package`.order.catsKernelOrderingForOrder[String](kernel.this.Eq.catsKernelInstancesForString)).mkString(&quot;&amp;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          11861
+        </td>
+        <td>
+          8579
+          -
+          8615
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.mkBaseString
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          `package`.this.mkBaseString(method, uri, paramsStr)
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          11614
+        </td>
+        <td>
+          8699
+          -
+          8874
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.immutable.Seq.apply[String](method.name, `package`.this.encode({
+  &lt;artifact&gt; val x$1: org.http4s.Query = Query.empty;
+  &lt;artifact&gt; val x$2: None.type = scala.None;
+  &lt;artifact&gt; val x$3: Option[org.http4s.Uri.Scheme] @scala.reflect.internal.annotations.uncheckedBounds = uri.copy$default$1;
+  &lt;artifact&gt; val x$4: Option[org.http4s.Uri.Authority] @scala.reflect.internal.annotations.uncheckedBounds = uri.copy$default$2;
+  &lt;artifact&gt; val x$5: org.http4s.Uri.Path = uri.copy$default$3;
+  uri.copy(x$3, x$4, x$5, x$1, x$2)
+}.renderString), `package`.this.encode(paramsStr)).mkString(&quot;&amp;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          11881
+        </td>
+        <td>
+          8978
+          -
+          8992
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Unreserved
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.Unreserved
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          11501
+        </td>
+        <td>
+          8936
+          -
+          8936
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.encode$default$2
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.encode$default$2
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          11291
+        </td>
+        <td>
+          8932
+          -
+          8993
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.encode
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.encode(x$1, x$4, false, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          11164
+        </td>
+        <td>
+          8962
+          -
+          8967
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          12016
+        </td>
+        <td>
+          9245
+          -
+          9261
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ov.getOrElse[String](&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          11525
+        </td>
+        <td>
+          9241
+          -
+          9262
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, String](k, ov.getOrElse[String](&quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          11108
+        </td>
+        <td>
+          9199
+          -
+          9264
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.map
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.query.pairs.map[(String, String)](((x0$1: org.http4s.Query.KeyValue) =&gt; x0$1 match {
+  case (_1: String, _2: Option[String]): (String, Option[String])((k @ _), (ov @ _)) =&gt; scala.Tuple2.apply[String, String](k, ov.getOrElse[String](&quot;&quot;))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          11862
+        </td>
+        <td>
+          9270
+          -
+          9285
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Media.contentType
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.contentType
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          11911
+        </td>
+        <td>
+          9356
+          -
+          9380
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          req.method.==(Method.PUT)
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          11632
+        </td>
+        <td>
+          9341
+          -
+          9352
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.POST
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Method.POST
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          11219
+        </td>
+        <td>
+          9370
+          -
+          9380
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.PUT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Method.PUT
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          11066
+        </td>
+        <td>
+          9326
+          -
+          9457
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.method.==(Method.POST).||(req.method.==(Method.PUT)).&amp;&amp;(t.mediaType.==(MediaType.application.x-www-form-urlencoded))
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          11479
+        </td>
+        <td>
+          9397
+          -
+          9457
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          t.mediaType.==(MediaType.application.x-www-form-urlencoded)
+        </td>
+      </tr><tr>
+        <td>
+          285
+        </td>
+        <td>
+          12000
+        </td>
+        <td>
+          9469
+          -
+          9484
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Media.as
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.as[org.http4s.UrlForm](F, W)
+        </td>
+      </tr><tr>
+        <td>
+          285
+        </td>
+        <td>
+          11880
+        </td>
+        <td>
+          9469
+          -
+          9799
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.UrlForm](req.as[org.http4s.UrlForm](F, W))(F).map[(org.http4s.Request[F], Seq[(String, String)])](((urlform: org.http4s.UrlForm) =&gt; {
+  val bodyparams: Seq[(String, String)] = urlform.values.toSeq.flatMap[(String, String)](((x0$2: (String, cats.data.Chain[String])) =&gt; x0$2 match {
+    case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (vs @ _)) =&gt; if (vs.isEmpty)
+      scala.`package`.Seq.apply[(String, String)](scala.Predef.ArrowAssoc[String](k).-&gt;[String](&quot;&quot;))
+    else
+      vs.toList.map[(String, String)](((x$10: String) =&gt; scala.Tuple2.apply[String, String](k, x$10)))
+  }));
+  implicit val charset: org.http4s.Charset = req.charset.getOrElse[org.http4s.Charset](Charset.UTF-8);
+  scala.Predef.ArrowAssoc[req.Self](req.withEntity[org.http4s.UrlForm](urlform)(http4s.this.UrlForm.entityEncoder[[_]F[_]](charset))).-&gt;[scala.collection.immutable.Vector[(String, String)]](qparams.++[(String, String)](bodyparams))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          11896
+        </td>
+        <td>
+          9623
+          -
+          9644
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          vs.toList.map[(String, String)](((x$10: String) =&gt; scala.Tuple2.apply[String, String](k, x$10)))
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          11109
+        </td>
+        <td>
+          9609
+          -
+          9616
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](k).-&gt;[String](&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          11042
+        </td>
+        <td>
+          9529
+          -
+          9646
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          urlform.values.toSeq.flatMap[(String, String)](((x0$2: (String, cats.data.Chain[String])) =&gt; x0$2 match {
+  case (_1: String, _2: cats.data.Chain[String]): (String, cats.data.Chain[String])((k @ _), (vs @ _)) =&gt; if (vs.isEmpty)
+    scala.`package`.Seq.apply[(String, String)](scala.Predef.ArrowAssoc[String](k).-&gt;[String](&quot;&quot;))
+  else
+    vs.toList.map[(String, String)](((x$10: String) =&gt; scala.Tuple2.apply[String, String](k, x$10)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          11583
+        </td>
+        <td>
+          9593
+          -
+          9603
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.Chain.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          vs.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          11200
+        </td>
+        <td>
+          9637
+          -
+          9643
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, String](k, x$10)
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          11864
+        </td>
+        <td>
+          9605
+          -
+          9617
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqFactory.Delegate.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Seq.apply[(String, String)](scala.Predef.ArrowAssoc[String](k).-&gt;[String](&quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          11481
+        </td>
+        <td>
+          9623
+          -
+          9644
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.immutable.List.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          vs.toList.map[(String, String)](((x$10: String) =&gt; scala.Tuple2.apply[String, String](k, x$10)))
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          11609
+        </td>
+        <td>
+          9605
+          -
+          9617
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.SeqFactory.Delegate.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Seq.apply[(String, String)](scala.Predef.ArrowAssoc[String](k).-&gt;[String](&quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          11980
+        </td>
+        <td>
+          9712
+          -
+          9727
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Charset.UTF-8
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Charset.UTF-8
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          11521
+        </td>
+        <td>
+          9690
+          -
+          9728
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.charset.getOrElse[org.http4s.Charset](Charset.UTF-8)
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          11115
+        </td>
+        <td>
+          9753
+          -
+          9753
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.UrlForm.entityEncoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.UrlForm.entityEncoder[[_]F[_]](charset)
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          11187
+        </td>
+        <td>
+          9739
+          -
+          9789
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[req.Self](req.withEntity[org.http4s.UrlForm](urlform)(http4s.this.UrlForm.entityEncoder[[_]F[_]](charset))).-&gt;[scala.collection.immutable.Vector[(String, String)]](qparams.++[(String, String)](bodyparams))
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          11414
+        </td>
+        <td>
+          9767
+          -
+          9788
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          qparams.++[(String, String)](bodyparams)
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          11852
+        </td>
+        <td>
+          9739
+          -
+          9762
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Message.withEntity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.withEntity[org.http4s.UrlForm](urlform)(http4s.this.UrlForm.entityEncoder[[_]F[_]](charset))
+        </td>
+      </tr><tr>
+        <td>
+          293
+        </td>
+        <td>
+          11486
+        </td>
+        <td>
+          9824
+          -
+          9838
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[org.http4s.Request[F]](req).-&gt;[scala.collection.immutable.Vector[(String, String)]](qparams)
+        </td>
+      </tr><tr>
+        <td>
+          293
+        </td>
+        <td>
+          11021
+        </td>
+        <td>
+          9817
+          -
+          9839
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[(org.http4s.Request[F], Seq[(String, String)])](scala.Predef.ArrowAssoc[org.http4s.Request[F]](req).-&gt;[scala.collection.immutable.Vector[(String, String)]](qparams))
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

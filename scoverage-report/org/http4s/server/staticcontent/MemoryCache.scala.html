@@ -1,0 +1,689 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/staticcontent/MemoryCache.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package staticcontent
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.effect.Concurrent
+</span>22 <span style=''>import cats.syntax.functor._
+</span>23 <span style=''>import fs2.Chunk
+</span>24 <span style=''>import fs2.Stream
+</span>25 <span style=''>import org.log4s.getLogger
+</span>26 <span style=''>
+</span>27 <span style=''>import java.util.concurrent.ConcurrentHashMap
+</span>28 <span style=''>
+</span>29 <span style=''>/** [[CacheStrategy]] that will cache __all__ [[Response]] bodies in local memory
+</span>30 <span style=''>  *
+</span>31 <span style=''>  * This is useful when serving a very limited amount of static content and want
+</span>32 <span style=''>  * to avoid disk access.
+</span>33 <span style=''>  */
+</span>34 <span style=''>class MemoryCache[F[_]] extends CacheStrategy[F] {
+</span>35 <span style=''>  private[this] val logger = getLogger
+</span>36 <span style=''>  private val cacheMap = </span><span style='background: #F0ADAD'>new ConcurrentHashMap[Uri.Path, Response[F]]()</span><span style=''>
+</span>37 <span style=''>
+</span>38 <span style=''>  override def cache(uriPath: Uri.Path, resp: Response[F])(implicit
+</span>39 <span style=''>      F: Concurrent[F]
+</span>40 <span style=''>  ): F[Response[F]] =
+</span>41 <span style=''>    if (</span><span style='background: #F0ADAD'>resp.status == Status.Ok</span><span style=''>)
+</span>42 <span style=''>      </span><span style='background: #F0ADAD'>Option(cacheMap.get(uriPath)) match {
+</span>43 <span style=''></span><span style='background: #F0ADAD'>        case Some(r) if r.headers.headers == resp.headers.headers =&gt;
+</span>44 <span style=''></span><span style='background: #F0ADAD'>          logger.debug(s&quot;Cache hit: $resp&quot;)
+</span>45 <span style=''></span><span style='background: #F0ADAD'>          F.pure(r)
+</span>46 <span style=''></span><span style='background: #F0ADAD'>
+</span>47 <span style=''></span><span style='background: #F0ADAD'>        case _ =&gt;
+</span>48 <span style=''></span><span style='background: #F0ADAD'>          logger.debug(s&quot;Cache miss: $resp&quot;)
+</span>49 <span style=''></span><span style='background: #F0ADAD'>          collectResource(uriPath, resp) /* otherwise cache the response */
+</span>50 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>51 <span style=''>    else </span><span style='background: #F0ADAD'>F.pure(resp)</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>  // //////////// private methods //////////////////////////////////////////////
+</span>54 <span style=''>
+</span>55 <span style=''>  private def collectResource(path: Uri.Path, resp: Response[F])(implicit
+</span>56 <span style=''>      F: Concurrent[F]
+</span>57 <span style=''>  ): F[Response[F]] =
+</span>58 <span style=''>    </span><span style='background: #F0ADAD'>resp
+</span>59 <span style=''></span><span style='background: #F0ADAD'>      .as[Chunk[Byte]]
+</span>60 <span style=''></span><span style='background: #F0ADAD'>      .map { chunk =&gt;
+</span>61 <span style=''></span><span style='background: #F0ADAD'>        val newResponse: Response[F] = resp.copy(body = Stream.chunk(chunk))
+</span>62 <span style=''></span><span style='background: #F0ADAD'>        cacheMap.put(path, newResponse)
+</span>63 <span style=''></span><span style='background: #F0ADAD'>        newResponse
+</span>64 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>65 <span style=''>}
+</span>66 <span style=''>
+</span>67 <span style=''>object MemoryCache {
+</span>68 <span style=''>  def apply[F[_]](): MemoryCache[F] = </span><span style='background: #F0ADAD'>new MemoryCache[F]</span><span style=''>
+</span>69 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          9716
+        </td>
+        <td>
+          1134
+          -
+          1180
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.ConcurrentHashMap.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.util.concurrent.ConcurrentHashMap[org.http4s.Uri.Path,org.http4s.Response[F]]()
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          8587
+        </td>
+        <td>
+          1318
+          -
+          1327
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.Ok
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Status.Ok
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          7384
+        </td>
+        <td>
+          1303
+          -
+          1327
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.status.==(Status.Ok)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          8813
+        </td>
+        <td>
+          1335
+          -
+          1364
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Option.apply[org.http4s.Response[F]](MemoryCache.this.cacheMap.get(uriPath))
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          9342
+        </td>
+        <td>
+          1342
+          -
+          1363
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.ConcurrentHashMap.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          MemoryCache.this.cacheMap.get(uriPath)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          9722
+        </td>
+        <td>
+          1335
+          -
+          1653
+        </td>
+        <td>
+          Match
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Option.apply[org.http4s.Response[F]](MemoryCache.this.cacheMap.get(uriPath)) match {
+  case (value: org.http4s.Response[F]): Some[org.http4s.Response[F]]((r @ _)) if r.headers.headers.==(resp.headers.headers) =&gt; {
+    if (MemoryCache.this.logger.logger.isDebugEnabled())
+      MemoryCache.this.logger.logger.debug((&quot;Cache hit: &quot;.+(resp): String))
+    else
+      ();
+    F.pure[org.http4s.Response[F]](r)
+  }
+  case _ =&gt; {
+    if (MemoryCache.this.logger.logger.isDebugEnabled())
+      MemoryCache.this.logger.logger.debug((&quot;Cache miss: &quot;.+(resp): String))
+    else
+      ();
+    MemoryCache.this.collectResource(uriPath, resp)(F)
+  }
+}
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          9477
+        </td>
+        <td>
+          1397
+          -
+          1438
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          r.headers.headers.==(resp.headers.headers)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          7647
+        </td>
+        <td>
+          1418
+          -
+          1438
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.headers.headers
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          8370
+        </td>
+        <td>
+          1496
+          -
+          1505
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[F]](r)
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          7837
+        </td>
+        <td>
+          1580
+          -
+          1610
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.staticcontent.MemoryCache.collectResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          MemoryCache.this.collectResource(uriPath, resp)(F)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8561
+        </td>
+        <td>
+          1663
+          -
+          1675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[F]](resp)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7459
+        </td>
+        <td>
+          1663
+          -
+          1675
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[F]](resp)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          8767
+        </td>
+        <td>
+          1882
+          -
+          1909
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Media.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.as[fs2.Chunk[Byte]](F, http4s.this.EntityDecoder.binary[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          9295
+        </td>
+        <td>
+          1896
+          -
+          1896
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.binary
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http4s.this.EntityDecoder.binary[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          9219
+        </td>
+        <td>
+          1882
+          -
+          2076
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.functor.toFunctorOps[F, fs2.Chunk[Byte]](resp.as[fs2.Chunk[Byte]](F, http4s.this.EntityDecoder.binary[[_]F[_]](F)))(F).map[org.http4s.Response[F]](((chunk: fs2.Chunk[Byte]) =&gt; {
+  val newResponse: org.http4s.Response[F] = {
+    &lt;artifact&gt; val x$1: fs2.Stream[[x]fs2.Pure[x],Byte] @scala.reflect.internal.annotations.uncheckedBounds = fs2.Stream.chunk[[x]fs2.Pure[x], Byte](chunk);
+    &lt;artifact&gt; val x$2: org.http4s.Status = resp.copy$default$1;
+    &lt;artifact&gt; val x$3: org.http4s.HttpVersion = resp.copy$default$2;
+    &lt;artifact&gt; val x$4: org.http4s.Headers = resp.copy$default$3;
+    &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = resp.copy$default$5;
+    resp.copy(x$2, x$3, x$4, x$1, x$5)
+  };
+  MemoryCache.this.cacheMap.put(path, newResponse);
+  newResponse
+}))
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          7652
+        </td>
+        <td>
+          1988
+          -
+          2007
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.chunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](chunk)
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          8567
+        </td>
+        <td>
+          1971
+          -
+          2008
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy(x$2, x$3, x$4, x$1, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          9461
+        </td>
+        <td>
+          1976
+          -
+          1976
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          7355
+        </td>
+        <td>
+          1976
+          -
+          1976
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          9592
+        </td>
+        <td>
+          1976
+          -
+          1976
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          8314
+        </td>
+        <td>
+          1976
+          -
+          1976
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7374
+        </td>
+        <td>
+          2017
+          -
+          2048
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.ConcurrentHashMap.put
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          MemoryCache.this.cacheMap.put(path, newResponse)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          8776
+        </td>
+        <td>
+          2139
+          -
+          2157
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.MemoryCache.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new org.http4s.server.staticcontent.MemoryCache[F]()
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

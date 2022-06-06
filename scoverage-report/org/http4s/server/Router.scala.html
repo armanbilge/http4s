@@ -1,0 +1,991 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/Router.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>
+</span>20 <span style=''>import cats._
+</span>21 <span style=''>import cats.data.Kleisli
+</span>22 <span style=''>import cats.data.OptionT
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>
+</span>25 <span style=''>object Router {
+</span>26 <span style=''>
+</span>27 <span style=''>  object Segment {
+</span>28 <span style=''>    implicit def instances[F[_]: Functor]: Functor[Segment[F, *]] =
+</span>29 <span style=''>      </span><span style='background: #F0ADAD'>new</span><span style=''> Functor[Segment[F, *]] {
+</span>30 <span style=''>        override def map[A, B](fa: Segment[F, A])(f: A =&gt; B): Segment[F, B] =
+</span>31 <span style=''>          </span><span style='background: #F0ADAD'>Segment(fa.run(_).map(f))</span><span style=''>
+</span>32 <span style=''>      }
+</span>33 <span style=''>  }
+</span>34 <span style=''>
+</span>35 <span style=''>  final case class Segment[F[_], A](run: Uri.Path.Segment =&gt; OptionT[F, A]) {
+</span>36 <span style=''>    def apply(routes: ContextRoutes[A, F])(implicit F: Monad[F]): HttpRoutes[F] =
+</span>37 <span style=''>      </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>38 <span style=''></span><span style='background: #AEF1AE'>        for {
+</span>39 <span style=''></span><span style='background: #AEF1AE'>          head &lt;- OptionT.fromOption[F](req.pathInfo.segments.headOption)
+</span>40 <span style=''></span><span style='background: #AEF1AE'>          a &lt;- run(head)
+</span>41 <span style=''></span><span style='background: #AEF1AE'>          caret = req.attributes.lookup(Request.Keys.PathInfoCaret).getOrElse(0)
+</span>42 <span style=''></span><span style='background: #AEF1AE'>          response &lt;- routes(
+</span>43 <span style=''></span><span style='background: #AEF1AE'>            ContextRequest(a, req.withAttribute(Request.Keys.PathInfoCaret, caret + 1))
+</span>44 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>45 <span style=''></span><span style='background: #AEF1AE'>        } yield response
+</span>46 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>47 <span style=''>
+</span>48 <span style=''>    def -&gt;(routes: ContextRoutes[A, F]): Routable[F] =
+</span>49 <span style=''>      </span><span style='background: #AEF1AE'>Routable.Dynamic(this, routes)</span><span style=''>
+</span>50 <span style=''>  }
+</span>51 <span style=''>
+</span>52 <span style=''>  object Routable {
+</span>53 <span style=''>    final case class Static[F[_]](tupled: (String, HttpRoutes[F])) extends Routable[F]
+</span>54 <span style=''>    final case class Dynamic[F[_], A](segment: Segment[F, A], routes: ContextRoutes[A, F])
+</span>55 <span style=''>        extends Routable[F]
+</span>56 <span style=''>
+</span>57 <span style=''>    implicit def tuple[F[_]](tupled: (String, HttpRoutes[F])): Routable[F] =
+</span>58 <span style=''>      </span><span style='background: #AEF1AE'>Static(tupled)</span><span style=''>
+</span>59 <span style=''>  }
+</span>60 <span style=''>  sealed trait Routable[F[_]]
+</span>61 <span style=''>
+</span>62 <span style=''>  /** Defines an [[HttpRoutes]] based on list of mappings.
+</span>63 <span style=''>    * @see define
+</span>64 <span style=''>    */
+</span>65 <span style=''>  def apply[F[_]: Monad](mappings: (String, HttpRoutes[F])*): HttpRoutes[F] =
+</span>66 <span style=''>    </span><span style='background: #AEF1AE'>define(mappings: _*)(HttpRoutes.empty[F])</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>  /** Defines an [[HttpRoutes]] based on list of mappings and
+</span>69 <span style=''>    * a default Service to be used when none in the list match incomming requests.
+</span>70 <span style=''>    *
+</span>71 <span style=''>    * The mappings are processed in descending order (longest first) of prefix length.
+</span>72 <span style=''>    */
+</span>73 <span style=''>  def define[F[_]: Monad](
+</span>74 <span style=''>      mappings: (String, HttpRoutes[F])*
+</span>75 <span style=''>  )(default: HttpRoutes[F]): HttpRoutes[F] =
+</span>76 <span style=''>    </span><span style='background: #AEF1AE'>mappings.sortBy(_._1.length).foldLeft(default) { case (acc, (prefix, routes)) =&gt;
+</span>77 <span style=''></span><span style='background: #AEF1AE'>      val prefixPath = Uri.Path.unsafeFromString(prefix)
+</span>78 <span style=''></span><span style='background: #AEF1AE'>      if (prefixPath.isEmpty) routes &lt;+&gt; acc
+</span>79 <span style=''></span><span style='background: #AEF1AE'>      else
+</span>80 <span style=''></span><span style='background: #AEF1AE'>        Kleisli { req =&gt;
+</span>81 <span style=''></span><span style='background: #AEF1AE'>          if (req.pathInfo.startsWith(prefixPath))
+</span>82 <span style=''></span><span style='background: #AEF1AE'>            routes(translate(prefixPath)(req)).orElse(acc(req))
+</span>83 <span style=''></span><span style='background: #AEF1AE'>          else
+</span>84 <span style=''></span><span style='background: #AEF1AE'>            acc(req)
+</span>85 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>86 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>87 <span style=''>
+</span>88 <span style=''>  def of[F[_]: Monad](mappings: Routable[F]*): HttpRoutes[F] =
+</span>89 <span style=''>    </span><span style='background: #AEF1AE'>dynamic(mappings: _*)(HttpRoutes.empty[F])</span><span style=''>
+</span>90 <span style=''>
+</span>91 <span style=''>  def dynamic[F[_]: Monad](
+</span>92 <span style=''>      mappings: Routable[F]*
+</span>93 <span style=''>  )(default: HttpRoutes[F]): HttpRoutes[F] = {
+</span>94 <span style=''>    val (statics, dynamic) = mappings.toList.partitionEither {
+</span>95 <span style=''>      case Routable.Static(tupled) =&gt; Left(tupled)
+</span>96 <span style=''>      case Routable.Dynamic(segment, route) =&gt; Right(segment(route))
+</span>97 <span style=''>    }
+</span>98 <span style=''>    </span><span style='background: #AEF1AE'>dynamic.foldLeft(define(statics: _*)(default))(_ &lt;+&gt; _)</span><span style=''>
+</span>99 <span style=''>  }
+</span>100 <span style=''>
+</span>101 <span style=''>  private[server] def translate[F[_]](prefix: Uri.Path)(req: Request[F]): Request[F] = {
+</span>102 <span style=''>    val newCaret = </span><span style='background: #AEF1AE'>req.pathInfo.findSplit(prefix)</span><span style=''>
+</span>103 <span style=''>    val oldCaret = </span><span style='background: #AEF1AE'>req.attributes.lookup(Request.Keys.PathInfoCaret)</span><span style=''>
+</span>104 <span style=''>    val resultCaret = </span><span style='background: #AEF1AE'>oldCaret |+| newCaret</span><span style=''>
+</span>105 <span style=''>    resultCaret match {
+</span>106 <span style=''>      case Some(index) =&gt; </span><span style='background: #AEF1AE'>req.withAttribute(Request.Keys.PathInfoCaret, index)</span><span style=''>
+</span>107 <span style=''>      case None =&gt; req
+</span>108 <span style=''>    }
+</span>109 <span style=''>  }
+</span>110 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          29
+        </td>
+        <td>
+          9261
+        </td>
+        <td>
+          830
+          -
+          833
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.Router.Segment.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          31
+        </td>
+        <td>
+          7433
+        </td>
+        <td>
+          947
+          -
+          972
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.Router.Segment.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Router.this.Segment.apply[[_]F[_], B](((x$1: org.http4s.Uri.Path.Segment) =&gt; fa.run.apply(x$1).map[B](f)(evidence$1)))
+        </td>
+      </tr><tr>
+        <td>
+          31
+        </td>
+        <td>
+          8532
+        </td>
+        <td>
+          955
+          -
+          971
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fa.run.apply(x$1).map[B](f)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          9982
+        </td>
+        <td>
+          1152
+          -
+          1525
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; cats.data.OptionT.fromOption[F].apply[org.http4s.Uri.Path.Segment](req.pathInfo.segments.headOption)(F).flatMap[org.http4s.Response[F]](((head: org.http4s.Uri.Path.Segment) =&gt; Segment.this.run.apply(head).flatMap[org.http4s.Response[F]](((a: A) =&gt; {
+  val caret: Int = req.attributes.lookup[Int](Request.Keys.PathInfoCaret).getOrElse[Int](0);
+  routes.apply(ContextRequest.apply[[_]F[_], A](a, req.withAttribute[Int](Request.Keys.PathInfoCaret, caret.+(1))))
+}))(F)))(F)))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          8110
+        </td>
+        <td>
+          1177
+          -
+          1517
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.flatMap
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.fromOption[F].apply[org.http4s.Uri.Path.Segment](req.pathInfo.segments.headOption)(F).flatMap[org.http4s.Response[F]](((head: org.http4s.Uri.Path.Segment) =&gt; Segment.this.run.apply(head).flatMap[org.http4s.Response[F]](((a: A) =&gt; {
+  val caret: Int = req.attributes.lookup[Int](Request.Keys.PathInfoCaret).getOrElse[Int](0);
+  routes.apply(ContextRequest.apply[[_]F[_], A](a, req.withAttribute[Int](Request.Keys.PathInfoCaret, caret.+(1))))
+}))(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          9518
+        </td>
+        <td>
+          1588
+          -
+          1618
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.Router.Routable.Dynamic.apply
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Router.this.Routable.Dynamic.apply[[_]F[_], A](this, routes)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          8326
+        </td>
+        <td>
+          1934
+          -
+          1948
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.Router.Routable.Static.apply
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Routable.this.Static.apply[[_]F[_]](tupled)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          7276
+        </td>
+        <td>
+          2150
+          -
+          2191
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.Router.define
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Router.this.define[[_]F[_]]((mappings: _*))(HttpRoutes.empty[F](evidence$2))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          9082
+        </td>
+        <td>
+          2571
+          -
+          2582
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.length
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$3._1.length()
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8118
+        </td>
+        <td>
+          2555
+          -
+          2940
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foldLeft
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          mappings.sortBy[Int](((x$3: (String, org.http4s.HttpRoutes[F])) =&gt; x$3._1.length()))(math.this.Ordering.Int).foldLeft[org.http4s.HttpRoutes[F]](default)(((x0$1: org.http4s.HttpRoutes[F], x1$1: (String, org.http4s.HttpRoutes[F])) =&gt; scala.Tuple2.apply[org.http4s.HttpRoutes[F], (String, org.http4s.HttpRoutes[F])](x0$1, x1$1) match {
+  case (_1: org.http4s.HttpRoutes[F], _2: (String, org.http4s.HttpRoutes[F])): (org.http4s.HttpRoutes[F], (String, org.http4s.HttpRoutes[F]))((acc @ _), (_1: String, _2: org.http4s.HttpRoutes[F]): (String, org.http4s.HttpRoutes[F])((prefix @ _), (routes @ _))) =&gt; {
+    val prefixPath: org.http4s.Uri.Path = Uri.Path.unsafeFromString(prefix);
+    if (prefixPath.isEmpty)
+      cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$0$]cats.data.OptionT[F,β$0$],org.http4s.Request[F],B], org.http4s.Response[F]](routes)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$0$]cats.data.OptionT[F,β$0$], org.http4s.Request[F]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$3))).&lt;+&gt;(acc)
+    else
+      cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; if (req.pathInfo.startsWith(prefixPath))
+        routes.apply(Router.this.translate[[_]F[_]](prefixPath)(req)).orElse(acc.apply(req))(evidence$3)
+      else
+        acc.apply(req)))
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7992
+        </td>
+        <td>
+          2570
+          -
+          2570
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.math.Ordering.Int
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          math.this.Ordering.Int
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          7516
+        </td>
+        <td>
+          2659
+          -
+          2692
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.unsafeFromString
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.Path.unsafeFromString(prefix)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9991
+        </td>
+        <td>
+          2723
+          -
+          2737
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.SemigroupK.Ops.&lt;+&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$0$]cats.data.OptionT[F,β$0$],org.http4s.Request[F],B], org.http4s.Response[F]](routes)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$0$]cats.data.OptionT[F,β$0$], org.http4s.Request[F]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$3))).&lt;+&gt;(acc)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8115
+        </td>
+        <td>
+          2723
+          -
+          2737
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.SemigroupK.Ops.&lt;+&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$0$]cats.data.OptionT[F,β$0$],org.http4s.Request[F],B], org.http4s.Response[F]](routes)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$0$]cats.data.OptionT[F,β$0$], org.http4s.Request[F]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$3))).&lt;+&gt;(acc)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9233
+        </td>
+        <td>
+          2703
+          -
+          2721
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.isEmpty
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          prefixPath.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          9351
+        </td>
+        <td>
+          2757
+          -
+          2934
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; if (req.pathInfo.startsWith(prefixPath))
+  routes.apply(Router.this.translate[[_]F[_]](prefixPath)(req)).orElse(acc.apply(req))(evidence$3)
+else
+  acc.apply(req)))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          7469
+        </td>
+        <td>
+          2757
+          -
+          2934
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; if (req.pathInfo.startsWith(prefixPath))
+  routes.apply(Router.this.translate[[_]F[_]](prefixPath)(req)).orElse(acc.apply(req))(evidence$3)
+else
+  acc.apply(req)))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          9485
+        </td>
+        <td>
+          2788
+          -
+          2823
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.startsWith
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.pathInfo.startsWith(prefixPath)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          8429
+        </td>
+        <td>
+          2837
+          -
+          2888
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.orElse
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          routes.apply(Router.this.translate[[_]F[_]](prefixPath)(req)).orElse(acc.apply(req))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          7361
+        </td>
+        <td>
+          2837
+          -
+          2888
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.OptionT.orElse
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          routes.apply(Router.this.translate[[_]F[_]](prefixPath)(req)).orElse(acc.apply(req))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          9031
+        </td>
+        <td>
+          2916
+          -
+          2924
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          acc.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          8075
+        </td>
+        <td>
+          2916
+          -
+          2924
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          acc.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          9937
+        </td>
+        <td>
+          3009
+          -
+          3051
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.Router.dynamic
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Router.this.dynamic[[_]F[_]]((mappings: _*))(HttpRoutes.empty[F](evidence$4))(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          8382
+        </td>
+        <td>
+          3175
+          -
+          3175
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$4._2
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          9489
+        </td>
+        <td>
+          3166
+          -
+          3166
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$4._1
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          8047
+        </td>
+        <td>
+          3350
+          -
+          3405
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          dynamic.foldLeft[org.http4s.HttpRoutes[[_]F[_]]](Router.this.define[[_]F[_]]((statics: _*))(default)(evidence$5))(((x$5: org.http4s.HttpRoutes[[_]F[_]], x$6: org.http4s.HttpRoutes[[_]F[_]]) =&gt; cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$0$]cats.data.OptionT[[_]F[_],β$0$],org.http4s.Request[[_]F[_]],B], org.http4s.Response[[_]F[_]]](x$5)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$0$]cats.data.OptionT[[_]F[_],β$0$], org.http4s.Request[[_]F[_]]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$5))).&lt;+&gt;(x$6)))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          7266
+        </td>
+        <td>
+          3367
+          -
+          3395
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.Router.define
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Router.this.define[[_]F[_]]((statics: _*))(default)(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          9036
+        </td>
+        <td>
+          3397
+          -
+          3404
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.SemigroupK.Ops.&lt;+&gt;
+        </td>
+        <td>
+          org.http4s.server.routersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$0$]cats.data.OptionT[[_]F[_],β$0$],org.http4s.Request[[_]F[_]],B], org.http4s.Response[[_]F[_]]](x$5)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$0$]cats.data.OptionT[[_]F[_],β$0$], org.http4s.Request[[_]F[_]]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$5))).&lt;+&gt;(x$6)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          7476
+        </td>
+        <td>
+          3519
+          -
+          3549
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.findSplit
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.pathInfo.findSplit(prefix)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          9260
+        </td>
+        <td>
+          3591
+          -
+          3617
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.Keys.PathInfoCaret
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.Keys.PathInfoCaret
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          8198
+        </td>
+        <td>
+          3569
+          -
+          3618
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.vault.Vault.lookup
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.attributes.lookup[Int](Request.Keys.PathInfoCaret)
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          9947
+        </td>
+        <td>
+          3641
+          -
+          3662
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.SemigroupOps.|+|
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxSemigroup[Option[Int]](oldCaret)(kernel.this.Semigroup.catsKernelCommutativeMonoidForOption[Int](kernel.this.Semigroup.catsKernelCommutativeGroupForInt)).|+|(newCaret)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          8390
+        </td>
+        <td>
+          3713
+          -
+          3765
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withAttribute
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.withAttribute[Int](Request.Keys.PathInfoCaret, index)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          8940
+        </td>
+        <td>
+          3731
+          -
+          3757
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.Keys.PathInfoCaret
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.Keys.PathInfoCaret
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

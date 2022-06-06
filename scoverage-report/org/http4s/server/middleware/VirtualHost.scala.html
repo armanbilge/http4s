@@ -1,0 +1,1094 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/VirtualHost.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.Applicative
+</span>22 <span style=''>import cats.data.Kleisli
+</span>23 <span style=''>import org.http4s.Status.BadRequest
+</span>24 <span style=''>import org.http4s.Status.NotFound
+</span>25 <span style=''>import org.http4s.headers.Host
+</span>26 <span style=''>
+</span>27 <span style=''>/** Middleware for virtual host mapping
+</span>28 <span style=''>  *
+</span>29 <span style=''>  * The `VirtualHost` middleware allows multiple services to be mapped
+</span>30 <span style=''>  * based on the [[org.http4s.headers.Host]] header of the [[org.http4s.Request]].
+</span>31 <span style=''>  */
+</span>32 <span style=''>object VirtualHost {
+</span>33 <span style=''>
+</span>34 <span style=''>  /** Specification of the virtual host service and predicate.
+</span>35 <span style=''>    *
+</span>36 <span style=''>    * The predicate receives the the Host header information with the port
+</span>37 <span style=''>    * filled in, if possible, using the request Uri or knowledge of the
+</span>38 <span style=''>    * security of the underlying transport protocol.
+</span>39 <span style=''>    */
+</span>40 <span style=''>  final case class HostService[F[_], G[_]](http: Http[F, G], p: Host =&gt; Boolean)
+</span>41 <span style=''>
+</span>42 <span style=''>  /** Create a [[HostService]] that will match based on the exact host string
+</span>43 <span style=''>    * (discounting case) and port, if the port is given. If the port is not
+</span>44 <span style=''>    * given, it is ignored.
+</span>45 <span style=''>    */
+</span>46 <span style=''>  def exact[F[_], G[_]](
+</span>47 <span style=''>      http: Http[F, G],
+</span>48 <span style=''>      requestHost: String,
+</span>49 <span style=''>      port: Option[Int] = None,
+</span>50 <span style=''>  ): HostService[F, G] =
+</span>51 <span style=''>    </span><span style='background: #AEF1AE'>HostService(http, h =&gt; h.host.equalsIgnoreCase(requestHost) &amp;&amp; (port.isEmpty || port == h.port))</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>  /** Create a [[HostService]] that will match based on the host string allowing
+</span>54 <span style=''>    * for wildcard matching of the lowercase host string and port, if the port is
+</span>55 <span style=''>    * given. If the port is not given, it is ignored.
+</span>56 <span style=''>    */
+</span>57 <span style=''>  def wildcard[F[_], G[_]](
+</span>58 <span style=''>      http: Http[F, G],
+</span>59 <span style=''>      wildcardHost: String,
+</span>60 <span style=''>      port: Option[Int] = None,
+</span>61 <span style=''>  ): HostService[F, G] =
+</span>62 <span style=''>    </span><span style='background: #AEF1AE'>regex(http, wildcardHost.replace(&quot;*&quot;, &quot;\\w+&quot;).replace(&quot;.&quot;, &quot;\\.&quot;).replace(&quot;-&quot;, &quot;\\-&quot;), port)</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>  /** Create a [[HostService]] that uses a regular expression to match the host
+</span>65 <span style=''>    * string (which will be provided in lower case form) and port, if the port
+</span>66 <span style=''>    * is given. If the port is not given, it is ignored.
+</span>67 <span style=''>    */
+</span>68 <span style=''>  def regex[F[_], G[_]](
+</span>69 <span style=''>      http: Http[F, G],
+</span>70 <span style=''>      hostRegex: String,
+</span>71 <span style=''>      port: Option[Int] = None,
+</span>72 <span style=''>  ): HostService[F, G] = {
+</span>73 <span style=''>    val r = </span><span style='background: #AEF1AE'>hostRegex.r</span><span style=''>
+</span>74 <span style=''>    </span><span style='background: #AEF1AE'>HostService(
+</span>75 <span style=''></span><span style='background: #AEF1AE'>      http,
+</span>76 <span style=''></span><span style='background: #AEF1AE'>      h =&gt; r.findFirstIn(h.host.toLowerCase).nonEmpty &amp;&amp; (port.isEmpty || port == h.port),
+</span>77 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>78 <span style=''>  }
+</span>79 <span style=''>
+</span>80 <span style=''>  def apply[F[_], G[_]](first: HostService[F, G], rest: HostService[F, G]*)(implicit
+</span>81 <span style=''>      F: Applicative[F],
+</span>82 <span style=''>      W: EntityEncoder[G, String],
+</span>83 <span style=''>  ): Http[F, G] =
+</span>84 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>85 <span style=''></span><span style='background: #AEF1AE'>      req.headers
+</span>86 <span style=''></span><span style='background: #AEF1AE'>        .get[Host]
+</span>87 <span style=''></span><span style='background: #AEF1AE'>        .fold(F.pure(Response[G](BadRequest).withEntity(&quot;Host header required.&quot;))) { h =&gt;
+</span>88 <span style=''></span><span style='background: #AEF1AE'>          // Fill in the host port if possible
+</span>89 <span style=''></span><span style='background: #AEF1AE'>          val host: Host = h.port match {
+</span>90 <span style=''></span><span style='background: #AEF1AE'>            case Some(_) =&gt; h
+</span>91 <span style=''></span><span style='background: #AEF1AE'>            case None =&gt;
+</span>92 <span style=''></span><span style='background: #AEF1AE'>              h.copy(port = req.uri.port.orElse(req.isSecure.map(if (_) </span><span style='background: #F0ADAD'>443</span><span style='background: #AEF1AE'> else </span><span style='background: #F0ADAD'>80</span><span style='background: #AEF1AE'>)))
+</span>93 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>94 <span style=''></span><span style='background: #AEF1AE'>          (first +: rest).toVector
+</span>95 <span style=''></span><span style='background: #AEF1AE'>            .collectFirst { case HostService(s, p) if p(host) =&gt; s(req) }
+</span>96 <span style=''></span><span style='background: #AEF1AE'>            .getOrElse(F.pure(Response[G](NotFound).withEntity(s&quot;Host '$host' not found.&quot;)))
+</span>97 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>98 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>99 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7607
+        </td>
+        <td>
+          1732
+          -
+          1804
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.host.equalsIgnoreCase(requestHost).&amp;&amp;(port.isEmpty.||(port.==(h.port)))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9303
+        </td>
+        <td>
+          1789
+          -
+          1803
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          port.==(h.port)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8778
+        </td>
+        <td>
+          1773
+          -
+          1803
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          port.isEmpty.||(port.==(h.port))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7399
+        </td>
+        <td>
+          1797
+          -
+          1803
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Host.port
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.port
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9528
+        </td>
+        <td>
+          1709
+          -
+          1805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.VirtualHost.HostService.apply
+        </td>
+        <td>
+          org.http4s.client.clientspec,org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          VirtualHost.this.HostService.apply[[_]F[_], [_]G[_]](http, ((h: org.http4s.headers.Host) =&gt; h.host.equalsIgnoreCase(requestHost).&amp;&amp;(port.isEmpty.||(port.==(h.port)))))
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          8304
+        </td>
+        <td>
+          2184
+          -
+          2257
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.replace
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          wildcardHost.replace(&quot;*&quot;, &quot;\\w+&quot;).replace(&quot;.&quot;, &quot;\\.&quot;).replace(&quot;-&quot;, &quot;\\-&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7794
+        </td>
+        <td>
+          2172
+          -
+          2264
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.VirtualHost.regex
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          VirtualHost.this.regex[[_]F[_], [_]G[_]](http, wildcardHost.replace(&quot;*&quot;, &quot;\\w+&quot;).replace(&quot;.&quot;, &quot;\\.&quot;).replace(&quot;-&quot;, &quot;\\-&quot;), port)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          9697
+        </td>
+        <td>
+          2634
+          -
+          2645
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.r
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(hostRegex).r
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          9468
+        </td>
+        <td>
+          2650
+          -
+          2771
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.VirtualHost.HostService.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          VirtualHost.this.HostService.apply[[_]F[_], [_]G[_]](http, ((h: org.http4s.headers.Host) =&gt; r.findFirstIn(h.host.toLowerCase()).nonEmpty.&amp;&amp;(port.isEmpty.||(port.==(h.port)))))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7616
+        </td>
+        <td>
+          2686
+          -
+          2764
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          r.findFirstIn(h.host.toLowerCase()).nonEmpty.&amp;&amp;(port.isEmpty.||(port.==(h.port)))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8716
+        </td>
+        <td>
+          2733
+          -
+          2763
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          port.isEmpty.||(port.==(h.port))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7528
+        </td>
+        <td>
+          2757
+          -
+          2763
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Host.port
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.port
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          9313
+        </td>
+        <td>
+          2749
+          -
+          2763
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          port.==(h.port)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8571
+        </td>
+        <td>
+          2700
+          -
+          2718
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.toLowerCase
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.host.toLowerCase()
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          8492
+        </td>
+        <td>
+          2944
+          -
+          3548
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.client.clientspec,org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; req.headers.get[org.http4s.headers.Host](Header.this.Select.singleHeaders[org.http4s.headers.Host](headers.this.Host.headerInstance)).fold[F[org.http4s.Response[G]]](F.pure[org.http4s.Response[G]](Response.apply[G](org.http4s.Status.BadRequest, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String](&quot;Host header required.&quot;)(W)))(((h: org.http4s.headers.Host) =&gt; {
+  val host: org.http4s.headers.Host = h.port match {
+    case (value: Int): Some[Int](_) =&gt; h
+    case scala.None =&gt; {
+      &lt;artifact&gt; val x$1: Option[Int] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.port.orElse[Int](req.isSecure.map[Int](((x$1: Boolean) =&gt; if (x$1)
+        443
+      else
+        80)));
+      &lt;artifact&gt; val x$2: String = h.copy$default$1;
+      h.copy(x$2, x$1)
+    }
+  };
+  {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.server.middleware.VirtualHost.HostService[F,G] = first;
+  rest.+:[org.http4s.server.middleware.VirtualHost.HostService[F,G]](rassoc$1)
+}.toVector.collectFirst[F[org.http4s.Response[[_]G[_]]]](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[org.http4s.server.middleware.VirtualHost.HostService[F,G],F[org.http4s.Response[[_]G[_]]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.server.middleware.VirtualHost.HostService[F,G] =&gt; F[org.http4s.Response[[_]G[_]]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: org.http4s.server.middleware.VirtualHost.HostService[F,G], B1 &gt;: F[org.http4s.Response[[_]G[_]]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[org.http4s.server.middleware.VirtualHost.HostService[F,G]]: org.http4s.server.middleware.VirtualHost.HostService[F,G]): org.http4s.server.middleware.VirtualHost.HostService[F,G] @unchecked) match {
+      case (http: org.http4s.Http[[_]F[_],[_]G[_]], p: org.http4s.headers.Host =&gt; Boolean): org.http4s.server.middleware.VirtualHost.HostService[[_]F[_],[_]G[_]]((s @ _), (p @ _)) if p.apply(host) =&gt; s.apply(req)
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: org.http4s.server.middleware.VirtualHost.HostService[F,G]): Boolean = ((x1.asInstanceOf[org.http4s.server.middleware.VirtualHost.HostService[F,G]]: org.http4s.server.middleware.VirtualHost.HostService[F,G]): org.http4s.server.middleware.VirtualHost.HostService[F,G] @unchecked) match {
+      case (http: org.http4s.Http[[_]F[_],[_]G[_]], p: org.http4s.headers.Host =&gt; Boolean): org.http4s.server.middleware.VirtualHost.HostService[[_]F[_],[_]G[_]]((s @ _), (p @ _)) if p.apply(host) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[org.http4s.server.middleware.VirtualHost.HostService[F,G],F[org.http4s.Response[[_]G[_]]]])).getOrElse[F[org.http4s.Response[[_]G[_]]]](F.pure[org.http4s.Response[G]](Response.apply[G](org.http4s.Status.NotFound, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String]((&quot;Host \'&quot;.+(host).+(&quot;\' not found.&quot;): String))(W)))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          8346
+        </td>
+        <td>
+          2991
+          -
+          2991
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Host.headerInstance
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Host.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          7328
+        </td>
+        <td>
+          2991
+          -
+          2991
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Host](headers.this.Host.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          9572
+        </td>
+        <td>
+          2967
+          -
+          3542
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Host](Header.this.Select.singleHeaders[org.http4s.headers.Host](headers.this.Host.headerInstance)).fold[F[org.http4s.Response[G]]](F.pure[org.http4s.Response[G]](Response.apply[G](org.http4s.Status.BadRequest, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String](&quot;Host header required.&quot;)(W)))(((h: org.http4s.headers.Host) =&gt; {
+  val host: org.http4s.headers.Host = h.port match {
+    case (value: Int): Some[Int](_) =&gt; h
+    case scala.None =&gt; {
+      &lt;artifact&gt; val x$1: Option[Int] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.port.orElse[Int](req.isSecure.map[Int](((x$1: Boolean) =&gt; if (x$1)
+        443
+      else
+        80)));
+      &lt;artifact&gt; val x$2: String = h.copy$default$1;
+      h.copy(x$2, x$1)
+    }
+  };
+  {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.server.middleware.VirtualHost.HostService[F,G] = first;
+  rest.+:[org.http4s.server.middleware.VirtualHost.HostService[F,G]](rassoc$1)
+}.toVector.collectFirst[F[org.http4s.Response[[_]G[_]]]](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[org.http4s.server.middleware.VirtualHost.HostService[F,G],F[org.http4s.Response[[_]G[_]]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.server.middleware.VirtualHost.HostService[F,G] =&gt; F[org.http4s.Response[[_]G[_]]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: org.http4s.server.middleware.VirtualHost.HostService[F,G], B1 &gt;: F[org.http4s.Response[[_]G[_]]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[org.http4s.server.middleware.VirtualHost.HostService[F,G]]: org.http4s.server.middleware.VirtualHost.HostService[F,G]): org.http4s.server.middleware.VirtualHost.HostService[F,G] @unchecked) match {
+      case (http: org.http4s.Http[[_]F[_],[_]G[_]], p: org.http4s.headers.Host =&gt; Boolean): org.http4s.server.middleware.VirtualHost.HostService[[_]F[_],[_]G[_]]((s @ _), (p @ _)) if p.apply(host) =&gt; s.apply(req)
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: org.http4s.server.middleware.VirtualHost.HostService[F,G]): Boolean = ((x1.asInstanceOf[org.http4s.server.middleware.VirtualHost.HostService[F,G]]: org.http4s.server.middleware.VirtualHost.HostService[F,G]): org.http4s.server.middleware.VirtualHost.HostService[F,G] @unchecked) match {
+      case (http: org.http4s.Http[[_]F[_],[_]G[_]], p: org.http4s.headers.Host =&gt; Boolean): org.http4s.server.middleware.VirtualHost.HostService[[_]F[_],[_]G[_]]((s @ _), (p @ _)) if p.apply(host) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[org.http4s.server.middleware.VirtualHost.HostService[F,G],F[org.http4s.Response[[_]G[_]]]])).getOrElse[F[org.http4s.Response[[_]G[_]]]](F.pure[org.http4s.Response[G]](Response.apply[G](org.http4s.Status.NotFound, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String]((&quot;Host \'&quot;.+(host).+(&quot;\' not found.&quot;): String))(W)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          8537
+        </td>
+        <td>
+          3012
+          -
+          3079
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]](Response.apply[G](org.http4s.Status.BadRequest, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String](&quot;Host header required.&quot;)(W))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          9565
+        </td>
+        <td>
+          3019
+          -
+          3078
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Message.withEntity
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](org.http4s.Status.BadRequest, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String](&quot;Host header required.&quot;)(W)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          7449
+        </td>
+        <td>
+          3162
+          -
+          3168
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Host.port
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.port
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          9569
+        </td>
+        <td>
+          3248
+          -
+          3248
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Host.copy$default$1
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          9446
+        </td>
+        <td>
+          3313
+          -
+          3315
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          80
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          8542
+        </td>
+        <td>
+          3246
+          -
+          3318
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Host.copy
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.copy(x$2, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          7621
+        </td>
+        <td>
+          3313
+          -
+          3315
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          80
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          8727
+        </td>
+        <td>
+          3304
+          -
+          3307
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          443
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          7279
+        </td>
+        <td>
+          3260
+          -
+          3317
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.port.orElse[Int](req.isSecure.map[Int](((x$1: Boolean) =&gt; if (x$1)
+  443
+else
+  80)))
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          9265
+        </td>
+        <td>
+          3304
+          -
+          3307
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          443
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          8296
+        </td>
+        <td>
+          3280
+          -
+          3316
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.isSecure.map[Int](((x$1: Boolean) =&gt; if (x$1)
+  443
+else
+  80))
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          7521
+        </td>
+        <td>
+          3348
+          -
+          3355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.+:
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          rest.+:[org.http4s.server.middleware.VirtualHost.HostService[F,G]](rassoc$1)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          8735
+        </td>
+        <td>
+          3431
+          -
+          3437
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          7574
+        </td>
+        <td>
+          3392
+          -
+          3392
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.VirtualHost.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          9207
+        </td>
+        <td>
+          3420
+          -
+          3427
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          p.apply(host)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          7197
+        </td>
+        <td>
+          3341
+          -
+          3532
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.server.middleware.VirtualHost.HostService[F,G] = first;
+  rest.+:[org.http4s.server.middleware.VirtualHost.HostService[F,G]](rassoc$1)
+}.toVector.collectFirst[F[org.http4s.Response[[_]G[_]]]](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[org.http4s.server.middleware.VirtualHost.HostService[F,G],F[org.http4s.Response[[_]G[_]]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.server.middleware.VirtualHost.HostService[F,G] =&gt; F[org.http4s.Response[[_]G[_]]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: org.http4s.server.middleware.VirtualHost.HostService[F,G], B1 &gt;: F[org.http4s.Response[[_]G[_]]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[org.http4s.server.middleware.VirtualHost.HostService[F,G]]: org.http4s.server.middleware.VirtualHost.HostService[F,G]): org.http4s.server.middleware.VirtualHost.HostService[F,G] @unchecked) match {
+      case (http: org.http4s.Http[[_]F[_],[_]G[_]], p: org.http4s.headers.Host =&gt; Boolean): org.http4s.server.middleware.VirtualHost.HostService[[_]F[_],[_]G[_]]((s @ _), (p @ _)) if p.apply(host) =&gt; s.apply(req)
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: org.http4s.server.middleware.VirtualHost.HostService[F,G]): Boolean = ((x1.asInstanceOf[org.http4s.server.middleware.VirtualHost.HostService[F,G]]: org.http4s.server.middleware.VirtualHost.HostService[F,G]): org.http4s.server.middleware.VirtualHost.HostService[F,G] @unchecked) match {
+      case (http: org.http4s.Http[[_]F[_],[_]G[_]], p: org.http4s.headers.Host =&gt; Boolean): org.http4s.server.middleware.VirtualHost.HostService[[_]F[_],[_]G[_]]((s @ _), (p @ _)) if p.apply(host) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[org.http4s.server.middleware.VirtualHost.HostService[F,G],F[org.http4s.Response[[_]G[_]]]])).getOrElse[F[org.http4s.Response[[_]G[_]]]](F.pure[org.http4s.Response[G]](Response.apply[G](org.http4s.Status.NotFound, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String]((&quot;Host \'&quot;.+(host).+(&quot;\' not found.&quot;): String))(W)))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          8435
+        </td>
+        <td>
+          3463
+          -
+          3531
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]](Response.apply[G](org.http4s.Status.NotFound, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String]((&quot;Host \'&quot;.+(host).+(&quot;\' not found.&quot;): String))(W))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          9448
+        </td>
+        <td>
+          3470
+          -
+          3530
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Message.withEntity
+        </td>
+        <td>
+          org.http4s.server.middleware.virtualhostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](org.http4s.Status.NotFound, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]).withEntity[String]((&quot;Host \'&quot;.+(host).+(&quot;\' not found.&quot;): String))(W)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

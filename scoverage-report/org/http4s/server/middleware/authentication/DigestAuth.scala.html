@@ -1,0 +1,2913 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/authentication/DigestAuth.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>package authentication
+</span>21 <span style=''>
+</span>22 <span style=''>import cats.Functor
+</span>23 <span style=''>import cats.Monad
+</span>24 <span style=''>import cats.data.Kleisli
+</span>25 <span style=''>import cats.data.NonEmptyList
+</span>26 <span style=''>import cats.effect.Async
+</span>27 <span style=''>import cats.effect.Sync
+</span>28 <span style=''>import cats.syntax.all._
+</span>29 <span style=''>import org.http4s.crypto.Hash
+</span>30 <span style=''>import org.http4s.headers._
+</span>31 <span style=''>
+</span>32 <span style=''>import scala.concurrent.duration._
+</span>33 <span style=''>
+</span>34 <span style=''>/** Provides Digest Authentication from RFC 2617.
+</span>35 <span style=''>  */
+</span>36 <span style=''>object DigestAuth {
+</span>37 <span style=''>
+</span>38 <span style=''>  @deprecated(
+</span>39 <span style=''>    &quot;AuthenticationStore is going away, in favor of explicit subclasses of AuthStore. PlainTextAuthStore maintains the previous, insecure behaviour, whereas Md5HashedAuthStore is the new advised implementation going forward.&quot;,
+</span>40 <span style=''>    &quot;0.23.12&quot;,
+</span>41 <span style=''>  )
+</span>42 <span style=''>  type AuthenticationStore[F[_], A] = String =&gt; F[Option[(A, String)]]
+</span>43 <span style=''>
+</span>44 <span style=''>  sealed trait AuthStore[F[_], A]
+</span>45 <span style=''>
+</span>46 <span style=''>  /** A function mapping username to a user object and password, or
+</span>47 <span style=''>    * None if no user exists.
+</span>48 <span style=''>    *
+</span>49 <span style=''>    * Requires that the server can recover the password in clear text,
+</span>50 <span style=''>    * which is _strongly_ discouraged. Please use Md5HashedAuthStore
+</span>51 <span style=''>    * if you can.
+</span>52 <span style=''>    */
+</span>53 <span style=''>  object PlainTextAuthStore {
+</span>54 <span style=''>    def apply[F[_], A](func: String =&gt; F[Option[(A, String)]]): AuthStore[F, A] =
+</span>55 <span style=''>      </span><span style='background: #AEF1AE'>new PlainTextAuthStore(func)</span><span style=''>
+</span>56 <span style=''>  }
+</span>57 <span style=''>  final class PlainTextAuthStore[F[_], A](val func: String =&gt; F[Option[(A, String)]])
+</span>58 <span style=''>      extends AuthStore[F, A]
+</span>59 <span style=''>
+</span>60 <span style=''>  /** A function mapping username to a user object and precomputed md5
+</span>61 <span style=''>    * hash of the username, realm, and password, or None if no user exists.
+</span>62 <span style=''>    *
+</span>63 <span style=''>    * More secure than PlainTextAuthStore due to only needing to
+</span>64 <span style=''>    * store the digested hash instead of the password in plain text.
+</span>65 <span style=''>    */
+</span>66 <span style=''>  object Md5HashedAuthStore {
+</span>67 <span style=''>    def apply[F[_], A](func: String =&gt; F[Option[(A, String)]]): AuthStore[F, A] =
+</span>68 <span style=''>      </span><span style='background: #AEF1AE'>new Md5HashedAuthStore(func)</span><span style=''>
+</span>69 <span style=''>
+</span>70 <span style=''>    def precomputeHash[F[_]: Monad: Hash](
+</span>71 <span style=''>        username: String,
+</span>72 <span style=''>        realm: String,
+</span>73 <span style=''>        password: String,
+</span>74 <span style=''>    ): F[String] =
+</span>75 <span style=''>      </span><span style='background: #AEF1AE'>DigestUtil.computeHa1(username, realm, password)</span><span style=''>
+</span>76 <span style=''>  }
+</span>77 <span style=''>  final class Md5HashedAuthStore[F[_], A](val func: String =&gt; F[Option[(A, String)]])
+</span>78 <span style=''>      extends AuthStore[F, A]
+</span>79 <span style=''>
+</span>80 <span style=''>  private trait AuthReply[+A]
+</span>81 <span style=''>  private final case class OK[A](authInfo: A) extends AuthReply[A]
+</span>82 <span style=''>  private case object StaleNonce extends AuthReply[Nothing]
+</span>83 <span style=''>  private case object BadNC extends AuthReply[Nothing]
+</span>84 <span style=''>  private case object WrongResponse extends AuthReply[Nothing]
+</span>85 <span style=''>  private case object BadParameters extends AuthReply[Nothing]
+</span>86 <span style=''>  private case object UserUnknown extends AuthReply[Nothing]
+</span>87 <span style=''>  private case object NoCredentials extends AuthReply[Nothing]
+</span>88 <span style=''>  private case object NoAuthorizationHeader extends AuthReply[Nothing]
+</span>89 <span style=''>
+</span>90 <span style=''>  @deprecated(&quot;Calling apply is side-effecting, please use applyF&quot;, &quot;0.23.12&quot;)
+</span>91 <span style=''>  def apply[F[_]: Sync, A](
+</span>92 <span style=''>      realm: String,
+</span>93 <span style=''>      store: String =&gt; F[Option[(A, String)]],
+</span>94 <span style=''>      nonceCleanupInterval: Duration = 1.hour,
+</span>95 <span style=''>      nonceStaleTime: Duration = 1.hour,
+</span>96 <span style=''>      nonceBits: Int = 160,
+</span>97 <span style=''>  ): AuthMiddleware[F, A] = {
+</span>98 <span style=''>    val nonceKeeper =
+</span>99 <span style=''>      </span><span style='background: #F0ADAD'>new NonceKeeper(nonceStaleTime.toMillis, nonceCleanupInterval.toMillis, nonceBits)</span><span style=''>
+</span>100 <span style=''>    </span><span style='background: #F0ADAD'>challenged(challenge(realm, store, nonceKeeper))</span><span style=''>
+</span>101 <span style=''>  }
+</span>102 <span style=''>
+</span>103 <span style=''>  /** @param realm The realm used for authentication purposes.
+</span>104 <span style=''>    * @param store A partial function mapping (realm, user) to the
+</span>105 <span style=''>    *              appropriate password.
+</span>106 <span style=''>    * @param nonceCleanupInterval Interval (in milliseconds) at which stale
+</span>107 <span style=''>    *                             nonces should be cleaned up.
+</span>108 <span style=''>    * @param nonceStaleTime Amount of time (in milliseconds) after which a nonce
+</span>109 <span style=''>    *                       is considered stale (i.e. not used for authentication
+</span>110 <span style=''>    *                       purposes anymore).
+</span>111 <span style=''>    * @param nonceBits The number of random bits a nonce should consist of.
+</span>112 <span style=''>    */
+</span>113 <span style=''>  def applyF[F[_], A](
+</span>114 <span style=''>      realm: String,
+</span>115 <span style=''>      store: AuthStore[F, A],
+</span>116 <span style=''>      nonceCleanupInterval: Duration = 1.hour,
+</span>117 <span style=''>      nonceStaleTime: Duration = 1.hour,
+</span>118 <span style=''>      nonceBits: Int = 160,
+</span>119 <span style=''>  )(implicit F: Async[F]): F[AuthMiddleware[F, A]] =
+</span>120 <span style=''>    </span><span style='background: #AEF1AE'>challenge[F, A](
+</span>121 <span style=''></span><span style='background: #AEF1AE'>      realm = realm,
+</span>122 <span style=''></span><span style='background: #AEF1AE'>      store = store,
+</span>123 <span style=''></span><span style='background: #AEF1AE'>      nonceCleanupInterval = nonceCleanupInterval,
+</span>124 <span style=''></span><span style='background: #AEF1AE'>      nonceStaleTime = nonceStaleTime,
+</span>125 <span style=''></span><span style='background: #AEF1AE'>      nonceBits = nonceBits,
+</span>126 <span style=''></span><span style='background: #AEF1AE'>    ).map { runChallenge =&gt;
+</span>127 <span style=''></span><span style='background: #AEF1AE'>      challenged(runChallenge)
+</span>128 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>129 <span style=''>
+</span>130 <span style=''>  @deprecated(
+</span>131 <span style=''>    &quot;Uses a side-effecting NonceKeeper. Use challenge(String, AuthStore, Blocker, Duration, Int, Int).&quot;,
+</span>132 <span style=''>    &quot;0.23.12&quot;,
+</span>133 <span style=''>  )
+</span>134 <span style=''>  def challenge[F[_], A](
+</span>135 <span style=''>      realm: String,
+</span>136 <span style=''>      store: String =&gt; F[Option[(A, String)]],
+</span>137 <span style=''>      nonceKeeper: NonceKeeper,
+</span>138 <span style=''>  )(implicit
+</span>139 <span style=''>      F: Sync[F]
+</span>140 <span style=''>  ): Kleisli[F, Request[F], Either[Challenge, AuthedRequest[F, A]]] =
+</span>141 <span style=''>    </span><span style='background: #F0ADAD'>challengeInterop[F, A](
+</span>142 <span style=''></span><span style='background: #F0ADAD'>      realm,
+</span>143 <span style=''></span><span style='background: #F0ADAD'>      PlainTextAuthStore(store),
+</span>144 <span style=''></span><span style='background: #F0ADAD'>      F.delay(nonceKeeper.newNonce()),
+</span>145 <span style=''></span><span style='background: #F0ADAD'>      (data, nc) =&gt; F.delay(nonceKeeper.receiveNonce(data, nc)),
+</span>146 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>147 <span style=''>
+</span>148 <span style=''>  /** Similar to [[apply]], but exposing the underlying [[challenge[F[_],A](realm:String,store:org*]]
+</span>149 <span style=''>    * [[cats.data.Kleisli]] instead of an entire [[AuthMiddleware]]
+</span>150 <span style=''>    *
+</span>151 <span style=''>    * Side-effect of running the returned task: If req contains a valid
+</span>152 <span style=''>    * AuthorizationHeader, the corresponding nonce counter (nc) is increased.
+</span>153 <span style=''>    *
+</span>154 <span style=''>    * @param realm The realm used for authentication purposes.
+</span>155 <span style=''>    * @param store A partial function mapping (realm, user) to the
+</span>156 <span style=''>    *              appropriate password.
+</span>157 <span style=''>    * @param nonceCleanupInterval Interval (in milliseconds) at which stale
+</span>158 <span style=''>    *                             nonces should be cleaned up.
+</span>159 <span style=''>    * @param nonceStaleTime Amount of time (in milliseconds) after which a nonce
+</span>160 <span style=''>    *                       is considered stale (i.e. not used for authentication
+</span>161 <span style=''>    *                       purposes anymore).
+</span>162 <span style=''>    * @param nonceBits The number of random bits a nonce should consist of.
+</span>163 <span style=''>    */
+</span>164 <span style=''>  def challenge[F[_], A](
+</span>165 <span style=''>      realm: String,
+</span>166 <span style=''>      store: AuthStore[F, A],
+</span>167 <span style=''>      nonceCleanupInterval: Duration = 1.hour,
+</span>168 <span style=''>      nonceStaleTime: Duration = 1.hour,
+</span>169 <span style=''>      nonceBits: Int = 160,
+</span>170 <span style=''>  )(implicit
+</span>171 <span style=''>      F: Async[F]
+</span>172 <span style=''>  ): F[Kleisli[F, Request[F], Either[Challenge, AuthedRequest[F, A]]]] =
+</span>173 <span style=''>    </span><span style='background: #AEF1AE'>NonceKeeperF[F](nonceStaleTime, nonceCleanupInterval, nonceBits)
+</span>174 <span style=''></span><span style='background: #AEF1AE'>      .map { nonceKeeper =&gt;
+</span>175 <span style=''></span><span style='background: #AEF1AE'>        challengeInterop[F, A](realm, store, nonceKeeper.newNonce(), nonceKeeper.receiveNonce _)
+</span>176 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>177 <span style=''>
+</span>178 <span style=''>  private[this] def challengeInterop[F[_], A](
+</span>179 <span style=''>      realm: String,
+</span>180 <span style=''>      store: AuthStore[F, A],
+</span>181 <span style=''>      newNonce: F[String],
+</span>182 <span style=''>      receiveNonce: (String, Int) =&gt; F[NonceKeeper.Reply],
+</span>183 <span style=''>  )(implicit
+</span>184 <span style=''>      F: Sync[F]
+</span>185 <span style=''>  ): Kleisli[F, Request[F], Either[Challenge, AuthedRequest[F, A]]] =
+</span>186 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>187 <span style=''></span><span style='background: #AEF1AE'>      def paramsToChallenge(params: Map[String, String]) =
+</span>188 <span style=''></span><span style='background: #AEF1AE'>        Either.left(Challenge(&quot;Digest&quot;, realm, params))
+</span>189 <span style=''></span><span style='background: #AEF1AE'>
+</span>190 <span style=''></span><span style='background: #AEF1AE'>      checkAuth(realm, store, receiveNonce, req).flatMap {
+</span>191 <span style=''></span><span style='background: #AEF1AE'>        case OK(authInfo) =&gt; F.pure(Either.right(AuthedRequest(authInfo, req)))
+</span>192 <span style=''></span><span style='background: #AEF1AE'>        case StaleNonce =&gt;
+</span>193 <span style=''></span><span style='background: #AEF1AE'>          getChallengeParams(newNonce, staleNonce = true).map(paramsToChallenge)
+</span>194 <span style=''></span><span style='background: #AEF1AE'>        case _ =&gt; getChallengeParams(newNonce, staleNonce = false).map(paramsToChallenge)
+</span>195 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>196 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>197 <span style=''>
+</span>198 <span style=''>  private def checkAuth[F[_]: Hash, A](
+</span>199 <span style=''>      realm: String,
+</span>200 <span style=''>      store: AuthStore[F, A],
+</span>201 <span style=''>      receiveNonce: (String, Int) =&gt; F[NonceKeeper.Reply],
+</span>202 <span style=''>      req: Request[F],
+</span>203 <span style=''>  )(implicit F: Monad[F]): F[AuthReply[A]] =
+</span>204 <span style=''>    </span><span style='background: #AEF1AE'>req.headers.get[Authorization]</span><span style=''> match {
+</span>205 <span style=''>      case Some(Authorization(Credentials.AuthParams(AuthScheme.Digest, params))) =&gt;
+</span>206 <span style=''>        </span><span style='background: #AEF1AE'>checkAuthParams(realm, store, receiveNonce, req, params)</span><span style=''>
+</span>207 <span style=''>      case Some(_) =&gt;
+</span>208 <span style=''>        </span><span style='background: #F0ADAD'>F.pure(NoCredentials)</span><span style=''>
+</span>209 <span style=''>      case None =&gt;
+</span>210 <span style=''>        </span><span style='background: #AEF1AE'>F.pure(NoAuthorizationHeader)</span><span style=''>
+</span>211 <span style=''>    }
+</span>212 <span style=''>
+</span>213 <span style=''>  private def getChallengeParams[F[_]](newNonce: F[String], staleNonce: Boolean)(implicit
+</span>214 <span style=''>      F: Functor[F]
+</span>215 <span style=''>  ): F[Map[String, String]] =
+</span>216 <span style=''>    </span><span style='background: #AEF1AE'>newNonce
+</span>217 <span style=''></span><span style='background: #AEF1AE'>      .map { nonce =&gt;
+</span>218 <span style=''></span><span style='background: #AEF1AE'>        val m = Map(&quot;qop&quot; -&gt; &quot;auth&quot;, &quot;nonce&quot; -&gt; nonce)
+</span>219 <span style=''></span><span style='background: #AEF1AE'>        if (staleNonce)
+</span>220 <span style=''></span><span style='background: #AEF1AE'>          m + (&quot;stale&quot; -&gt; &quot;TRUE&quot;)
+</span>221 <span style=''></span><span style='background: #AEF1AE'>        else
+</span>222 <span style=''></span><span style='background: #AEF1AE'>          m
+</span>223 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>224 <span style=''>
+</span>225 <span style=''>  private def checkAuthParams[F[_]: Hash, A](
+</span>226 <span style=''>      realm: String,
+</span>227 <span style=''>      store: AuthStore[F, A],
+</span>228 <span style=''>      receiveNonce: (String, Int) =&gt; F[NonceKeeper.Reply],
+</span>229 <span style=''>      req: Request[F],
+</span>230 <span style=''>      paramsNel: NonEmptyList[(String, String)],
+</span>231 <span style=''>  )(implicit F: Monad[F]): F[AuthReply[A]] = {
+</span>232 <span style=''>    val params = </span><span style='background: #AEF1AE'>paramsNel.toList.toMap</span><span style=''>
+</span>233 <span style=''>    if (</span><span style='background: #AEF1AE'>!Set(&quot;realm&quot;, &quot;nonce&quot;, &quot;nc&quot;, &quot;username&quot;, &quot;cnonce&quot;, &quot;qop&quot;).subsetOf(params.keySet)</span><span style=''>) {
+</span>234 <span style=''>      </span><span style='background: #AEF1AE'>F.pure(BadParameters)</span><span style=''>
+</span>235 <span style=''>    } else </span><span style='background: #AEF1AE'>{
+</span>236 <span style=''></span><span style='background: #AEF1AE'>      val method = req.method.toString
+</span>237 <span style=''></span><span style='background: #AEF1AE'>
+</span>238 <span style=''></span><span style='background: #AEF1AE'>      if (!params.get(&quot;realm&quot;).contains(realm)) {
+</span>239 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>F.pure(BadParameters)</span><span style='background: #AEF1AE'>
+</span>240 <span style=''></span><span style='background: #AEF1AE'>      } else {
+</span>241 <span style=''></span><span style='background: #AEF1AE'>        val nonce = params(&quot;nonce&quot;)
+</span>242 <span style=''></span><span style='background: #AEF1AE'>        val nc = params(&quot;nc&quot;)
+</span>243 <span style=''></span><span style='background: #AEF1AE'>        receiveNonce(nonce, Integer.parseInt(nc, 16)).flatMap {
+</span>244 <span style=''></span><span style='background: #AEF1AE'>          case NonceKeeper.StaleReply =&gt; F.pure(StaleNonce)
+</span>245 <span style=''></span><span style='background: #AEF1AE'>          case NonceKeeper.BadNCReply =&gt; F.pure(BadNC)
+</span>246 <span style=''></span><span style='background: #AEF1AE'>          case NonceKeeper.OKReply =&gt;
+</span>247 <span style=''></span><span style='background: #AEF1AE'>            store match {
+</span>248 <span style=''></span><span style='background: #AEF1AE'>              case authStore: PlainTextAuthStore[F, A] =&gt;
+</span>249 <span style=''></span><span style='background: #AEF1AE'>                authStore.func(params(&quot;username&quot;)).flatMap {
+</span>250 <span style=''></span><span style='background: #AEF1AE'>                  case None =&gt; </span><span style='background: #F0ADAD'>F.pure(UserUnknown)</span><span style='background: #AEF1AE'>
+</span>251 <span style=''></span><span style='background: #AEF1AE'>                  case Some((authInfo, password)) =&gt;
+</span>252 <span style=''></span><span style='background: #AEF1AE'>                    DigestUtil
+</span>253 <span style=''></span><span style='background: #AEF1AE'>                      .computeResponse(
+</span>254 <span style=''></span><span style='background: #AEF1AE'>                        method,
+</span>255 <span style=''></span><span style='background: #AEF1AE'>                        params(&quot;username&quot;),
+</span>256 <span style=''></span><span style='background: #AEF1AE'>                        realm,
+</span>257 <span style=''></span><span style='background: #AEF1AE'>                        password,
+</span>258 <span style=''></span><span style='background: #AEF1AE'>                        req.uri,
+</span>259 <span style=''></span><span style='background: #AEF1AE'>                        nonce,
+</span>260 <span style=''></span><span style='background: #AEF1AE'>                        nc,
+</span>261 <span style=''></span><span style='background: #AEF1AE'>                        params(&quot;cnonce&quot;),
+</span>262 <span style=''></span><span style='background: #AEF1AE'>                        params(&quot;qop&quot;),
+</span>263 <span style=''></span><span style='background: #AEF1AE'>                      )
+</span>264 <span style=''></span><span style='background: #AEF1AE'>                      .map { resp =&gt;
+</span>265 <span style=''></span><span style='background: #AEF1AE'>                        if (resp == params(&quot;response&quot;)) OK(authInfo)
+</span>266 <span style=''></span><span style='background: #AEF1AE'>                        else </span><span style='background: #F0ADAD'>WrongResponse</span><span style='background: #AEF1AE'>
+</span>267 <span style=''></span><span style='background: #AEF1AE'>                      }
+</span>268 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>269 <span style=''></span><span style='background: #AEF1AE'>              case authStore: Md5HashedAuthStore[F, A] =&gt;
+</span>270 <span style=''></span><span style='background: #AEF1AE'>                authStore.func(params(&quot;username&quot;)).flatMap {
+</span>271 <span style=''></span><span style='background: #AEF1AE'>                  case None =&gt; </span><span style='background: #F0ADAD'>F.pure(UserUnknown)</span><span style='background: #AEF1AE'>
+</span>272 <span style=''></span><span style='background: #AEF1AE'>                  case Some((authInfo, ha1Hash)) =&gt;
+</span>273 <span style=''></span><span style='background: #AEF1AE'>                    DigestUtil
+</span>274 <span style=''></span><span style='background: #AEF1AE'>                      .computeHashedResponse(
+</span>275 <span style=''></span><span style='background: #AEF1AE'>                        method,
+</span>276 <span style=''></span><span style='background: #AEF1AE'>                        ha1Hash,
+</span>277 <span style=''></span><span style='background: #AEF1AE'>                        req.uri,
+</span>278 <span style=''></span><span style='background: #AEF1AE'>                        nonce,
+</span>279 <span style=''></span><span style='background: #AEF1AE'>                        nc,
+</span>280 <span style=''></span><span style='background: #AEF1AE'>                        params(&quot;cnonce&quot;),
+</span>281 <span style=''></span><span style='background: #AEF1AE'>                        params(&quot;qop&quot;),
+</span>282 <span style=''></span><span style='background: #AEF1AE'>                      )
+</span>283 <span style=''></span><span style='background: #AEF1AE'>                      .map { resp =&gt;
+</span>284 <span style=''></span><span style='background: #AEF1AE'>                        if (resp == params(&quot;response&quot;)) OK(authInfo)
+</span>285 <span style=''></span><span style='background: #AEF1AE'>                        else </span><span style='background: #F0ADAD'>WrongResponse</span><span style='background: #AEF1AE'>
+</span>286 <span style=''></span><span style='background: #AEF1AE'>                      }
+</span>287 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>288 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>289 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>290 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>291 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>292 <span style=''>  }
+</span>293 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          8208
+        </td>
+        <td>
+          1765
+          -
+          1793
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.PlainTextAuthStore.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.middleware.authentication.DigestAuth.PlainTextAuthStore[F,A](func)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          7676
+        </td>
+        <td>
+          2327
+          -
+          2355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.Md5HashedAuthStore.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.middleware.authentication.DigestAuth.Md5HashedAuthStore[F,A](func)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9402
+        </td>
+        <td>
+          2500
+          -
+          2548
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestUtil.computeHa1
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          DigestUtil.computeHa1[[_]F[_]](username, realm, password)(evidence$1, evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          7284
+        </td>
+        <td>
+          3594
+          -
+          3623
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.Duration.toMillis
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          nonceCleanupInterval.toMillis
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          8398
+        </td>
+        <td>
+          3569
+          -
+          3592
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.Duration.toMillis
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          nonceStaleTime.toMillis
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          9142
+        </td>
+        <td>
+          3553
+          -
+          3635
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeper.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new NonceKeeper(nonceStaleTime.toMillis, nonceCleanupInterval.toMillis, nonceBits)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          8490
+        </td>
+        <td>
+          3640
+          -
+          3688
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.challenged
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          authentication.this.`package`.challenged[[_]F[_], A](eta$0$1)(routes)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          7435
+        </td>
+        <td>
+          4544
+          -
+          4727
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.challenge
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.challenge[F, A](realm, store, nonceCleanupInterval, nonceStaleTime, nonceBits)(F)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          8216
+        </td>
+        <td>
+          4544
+          -
+          4786
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, cats.data.Kleisli[F,org.http4s.Request[F],Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]]](DigestAuth.this.challenge[F, A](realm, store, nonceCleanupInterval, nonceStaleTime, nonceBits)(F))(F).map[org.http4s.AuthedRoutes[A,[_]F[_]] =&gt; org.http4s.HttpRoutes[[_]F[_]]](((runChallenge: cats.data.Kleisli[F,org.http4s.Request[F],Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]]) =&gt; ((routes: org.http4s.AuthedRoutes[A,[_]F[_]]) =&gt; authentication.this.`package`.challenged[[_]F[_], A](runChallenge)(routes)(F))))
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          9237
+        </td>
+        <td>
+          4756
+          -
+          4780
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.challenged
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          authentication.this.`package`.challenged[[_]F[_], A](runChallenge)(routes)(F)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          7726
+        </td>
+        <td>
+          5157
+          -
+          5336
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.challengeInterop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.challengeInterop[F, A](realm, DigestAuth.this.PlainTextAuthStore.apply[F, A](store), F.delay[String](nonceKeeper.newNonce()), ((data: String, nc: Int) =&gt; F.delay[org.http4s.server.middleware.authentication.NonceKeeper.Reply](nonceKeeper.receiveNonce(data, nc))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          9410
+        </td>
+        <td>
+          6574
+          -
+          6638
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.NonceKeeperF.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          NonceKeeperF.apply[F](nonceStaleTime, nonceCleanupInterval, nonceBits)(F)
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          7360
+        </td>
+        <td>
+          6574
+          -
+          6771
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.server.middleware.authentication.NonceKeeperF[F]](NonceKeeperF.apply[F](nonceStaleTime, nonceCleanupInterval, nonceBits)(F))(F).map[cats.data.Kleisli[F,org.http4s.Request[F],Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]]](((nonceKeeper: org.http4s.server.middleware.authentication.NonceKeeperF[F]) =&gt; DigestAuth.this.challengeInterop[F, A](realm, store, nonceKeeper.newNonce(), ((data: String, nc: Int) =&gt; nonceKeeper.receiveNonce(data, nc)))(F)))
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          8327
+        </td>
+        <td>
+          6675
+          -
+          6763
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.challengeInterop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.challengeInterop[F, A](realm, store, nonceKeeper.newNonce(), ((data: String, nc: Int) =&gt; nonceKeeper.receiveNonce(data, nc)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          8396
+        </td>
+        <td>
+          7061
+          -
+          7544
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[F], Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((req: org.http4s.Request[F]) =&gt; {
+  def paramsToChallenge(params: Map[String,String]): Either[org.http4s.Challenge,Nothing] = cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).left[org.http4s.Challenge, Nothing](Challenge.apply(&quot;Digest&quot;, realm, params));
+  cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.checkAuth[F, A](realm, store, receiveNonce, req)(crypto.this.Hash.forApplicativeThrow[[_]F[_]](F), F))(F).flatMap[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((x0$1: org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]) =&gt; x0$1 match {
+    case (authInfo: A): org.http4s.server.middleware.authentication.DigestAuth.OK[?A1]((authInfo @ _)) =&gt; F.pure[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[Nothing, org.http4s.AuthedRequest[[_]F[_],A]](AuthedRequest.apply[[_]F[_], A](authInfo, req)))
+    case DigestAuth.this.StaleNonce =&gt; cats.syntax.`package`.all.toFunctorOps[F, Map[String,String]](DigestAuth.this.getChallengeParams[F](newNonce, true)(F))(F).map[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((params: Map[String,String]) =&gt; paramsToChallenge(params)))
+    case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Map[String,String]](DigestAuth.this.getChallengeParams[F](newNonce, false)(F))(F).map[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((params: Map[String,String]) =&gt; paramsToChallenge(params)))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          9149
+        </td>
+        <td>
+          7145
+          -
+          7151
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          7408
+        </td>
+        <td>
+          7145
+          -
+          7192
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.left
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).left[org.http4s.Challenge, Nothing](Challenge.apply(&quot;Digest&quot;, realm, params))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          8631
+        </td>
+        <td>
+          7157
+          -
+          7191
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Challenge.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Challenge.apply(&quot;Digest&quot;, realm, params)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          9357
+        </td>
+        <td>
+          7209
+          -
+          7209
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.crypto.HashCompanionPlatform.forApplicativeThrow
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          crypto.this.Hash.forApplicativeThrow[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          8275
+        </td>
+        <td>
+          7200
+          -
+          7242
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.checkAuth
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.checkAuth[F, A](realm, store, receiveNonce, req)(crypto.this.Hash.forApplicativeThrow[[_]F[_]](F), F)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          9543
+        </td>
+        <td>
+          7200
+          -
+          7538
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.checkAuth[F, A](realm, store, receiveNonce, req)(crypto.this.Hash.forApplicativeThrow[[_]F[_]](F), F))(F).flatMap[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((x0$1: org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]) =&gt; x0$1 match {
+  case (authInfo: A): org.http4s.server.middleware.authentication.DigestAuth.OK[?A1]((authInfo @ _)) =&gt; F.pure[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[Nothing, org.http4s.AuthedRequest[[_]F[_],A]](AuthedRequest.apply[[_]F[_], A](authInfo, req)))
+  case DigestAuth.this.StaleNonce =&gt; cats.syntax.`package`.all.toFunctorOps[F, Map[String,String]](DigestAuth.this.getChallengeParams[F](newNonce, true)(F))(F).map[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((params: Map[String,String]) =&gt; paramsToChallenge(params)))
+  case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Map[String,String]](DigestAuth.this.getChallengeParams[F](newNonce, false)(F))(F).map[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((params: Map[String,String]) =&gt; paramsToChallenge(params)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          9416
+        </td>
+        <td>
+          7302
+          -
+          7330
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.AuthedRequest.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          AuthedRequest.apply[[_]F[_], A](authInfo, req)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          8393
+        </td>
+        <td>
+          7289
+          -
+          7331
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.right
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[Nothing, org.http4s.AuthedRequest[[_]F[_],A]](AuthedRequest.apply[[_]F[_], A](authInfo, req))
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          9948
+        </td>
+        <td>
+          7289
+          -
+          7295
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          7364
+        </td>
+        <td>
+          7282
+          -
+          7332
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[Nothing, org.http4s.AuthedRequest[[_]F[_],A]](AuthedRequest.apply[[_]F[_], A](authInfo, req)))
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          7413
+        </td>
+        <td>
+          7370
+          -
+          7440
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Map[String,String]](DigestAuth.this.getChallengeParams[F](newNonce, true)(F))(F).map[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((params: Map[String,String]) =&gt; paramsToChallenge(params)))
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          8636
+        </td>
+        <td>
+          7422
+          -
+          7439
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.paramsToChallenge
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          paramsToChallenge(params)
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          9135
+        </td>
+        <td>
+          7370
+          -
+          7417
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.getChallengeParams
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.getChallengeParams[F](newNonce, true)(F)
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          8277
+        </td>
+        <td>
+          7512
+          -
+          7529
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.paramsToChallenge
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          paramsToChallenge(params)
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          10061
+        </td>
+        <td>
+          7459
+          -
+          7530
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Map[String,String]](DigestAuth.this.getChallengeParams[F](newNonce, false)(F))(F).map[Either[org.http4s.Challenge,org.http4s.AuthedRequest[F,A]]](((params: Map[String,String]) =&gt; paramsToChallenge(params)))
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          9319
+        </td>
+        <td>
+          7459
+          -
+          7507
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.getChallengeParams
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.getChallengeParams[F](newNonce, false)(F)
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          7335
+        </td>
+        <td>
+          7783
+          -
+          7783
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Authorization.headerInstance
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Authorization.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          8581
+        </td>
+        <td>
+          7768
+          -
+          7798
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Authorization](Header.this.Select.singleHeaders[org.http4s.headers.Authorization](headers.this.Authorization.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          9140
+        </td>
+        <td>
+          7783
+          -
+          7783
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Authorization](headers.this.Authorization.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          7454
+        </td>
+        <td>
+          7900
+          -
+          7956
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.checkAuthParams
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.checkAuthParams[F, A](realm, store, receiveNonce, req, params)(evidence$4, F)
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          8258
+        </td>
+        <td>
+          7987
+          -
+          8008
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.NoCredentials)
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          9325
+        </td>
+        <td>
+          7994
+          -
+          8007
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.NoCredentials
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.NoCredentials
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          9473
+        </td>
+        <td>
+          8036
+          -
+          8065
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.NoAuthorizationHeader)
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          10043
+        </td>
+        <td>
+          8043
+          -
+          8064
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.NoAuthorizationHeader
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.NoAuthorizationHeader
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          10046
+        </td>
+        <td>
+          8217
+          -
+          8393
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, String](newNonce)(F).map[Map[String,String]](((nonce: String) =&gt; {
+  val m: scala.collection.immutable.Map[String,String] = scala.Predef.Map.apply[String, String](scala.Predef.ArrowAssoc[String](&quot;qop&quot;).-&gt;[String](&quot;auth&quot;), scala.Predef.ArrowAssoc[String](&quot;nonce&quot;).-&gt;[String](nonce));
+  if (staleNonce)
+    m.+[String](scala.Predef.ArrowAssoc[String](&quot;stale&quot;).-&gt;[String](&quot;TRUE&quot;))
+  else
+    m
+}))
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          7338
+        </td>
+        <td>
+          8285
+          -
+          8301
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;nonce&quot;).-&gt;[String](nonce)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          9146
+        </td>
+        <td>
+          8264
+          -
+          8302
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapFactory.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Map.apply[String, String](scala.Predef.ArrowAssoc[String](&quot;qop&quot;).-&gt;[String](&quot;auth&quot;), scala.Predef.ArrowAssoc[String](&quot;nonce&quot;).-&gt;[String](nonce))
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          8356
+        </td>
+        <td>
+          8268
+          -
+          8283
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;qop&quot;).-&gt;[String](&quot;auth&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          8032
+        </td>
+        <td>
+          8342
+          -
+          8359
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;stale&quot;).-&gt;[String](&quot;TRUE&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          7406
+        </td>
+        <td>
+          8337
+          -
+          8360
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          m.+[String](scala.Predef.ArrowAssoc[String](&quot;stale&quot;).-&gt;[String](&quot;TRUE&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          9277
+        </td>
+        <td>
+          8337
+          -
+          8360
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          m.+[String](scala.Predef.ArrowAssoc[String](&quot;stale&quot;).-&gt;[String](&quot;TRUE&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          8166
+        </td>
+        <td>
+          8384
+          -
+          8385
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.m
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          m
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          9533
+        </td>
+        <td>
+          8704
+          -
+          8704
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[(String, String)]
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          8308
+        </td>
+        <td>
+          8687
+          -
+          8709
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toMap
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          paramsNel.toList.toMap[String, String](scala.this.&lt;:&lt;.refl[(String, String)])
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          9213
+        </td>
+        <td>
+          8759
+          -
+          8767
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;cnonce&quot;
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          7293
+        </td>
+        <td>
+          8723
+          -
+          8730
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;realm&quot;
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          8866
+        </td>
+        <td>
+          8718
+          -
+          8799
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Set.apply[String](&quot;realm&quot;, &quot;nonce&quot;, &quot;nc&quot;, &quot;username&quot;, &quot;cnonce&quot;, &quot;qop&quot;).subsetOf(params.keySet).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          9099
+        </td>
+        <td>
+          8732
+          -
+          8739
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;nonce&quot;
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          8034
+        </td>
+        <td>
+          8741
+          -
+          8745
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;nc&quot;
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          10008
+        </td>
+        <td>
+          8785
+          -
+          8798
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.keySet
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          params.keySet
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          8170
+        </td>
+        <td>
+          8769
+          -
+          8774
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;qop&quot;
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          7533
+        </td>
+        <td>
+          8747
+          -
+          8757
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;username&quot;
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          7334
+        </td>
+        <td>
+          8809
+          -
+          8830
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadParameters)
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          9107
+        </td>
+        <td>
+          8809
+          -
+          8830
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadParameters)
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          8446
+        </td>
+        <td>
+          8816
+          -
+          8829
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.BadParameters
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.BadParameters
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          7908
+        </td>
+        <td>
+          8842
+          -
+          10900
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val method: String = req.method.toString();
+  if (params.get(&quot;realm&quot;).contains[String](realm).unary_!)
+    F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadParameters)
+  else
+    {
+      val nonce: String = params.apply(&quot;nonce&quot;);
+      val nc: String = params.apply(&quot;nc&quot;);
+      cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.server.middleware.authentication.NonceKeeper.Reply](receiveNonce.apply(nonce, java.lang.Integer.parseInt(nc, 16)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$1: org.http4s.server.middleware.authentication.NonceKeeper.Reply) =&gt; x0$1 match {
+        case NonceKeeper.StaleReply =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.StaleNonce)
+        case NonceKeeper.BadNCReply =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadNC)
+        case NonceKeeper.OKReply =&gt; store match {
+          case (authStore @ (_: org.http4s.server.middleware.authentication.DigestAuth.PlainTextAuthStore[F,A])) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[(A, String)]](authStore.func.apply(params.apply(&quot;username&quot;)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$2: Option[(A, String)]) =&gt; x0$2 match {
+            case scala.None =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+            case (value: (A, String)): Some[(A, String)]((_1: A, _2: String): (A, String)((authInfo @ _), (password @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeResponse[[_]F[_]](method, params.apply(&quot;username&quot;), realm, password, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+              DigestAuth.this.OK.apply[A](authInfo)
+            else
+              DigestAuth.this.WrongResponse))
+          }))
+          case (authStore @ (_: org.http4s.server.middleware.authentication.DigestAuth.Md5HashedAuthStore[F,A])) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[(A, String)]](authStore.func.apply(params.apply(&quot;username&quot;)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$3: Option[(A, String)]) =&gt; x0$3 match {
+            case scala.None =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+            case (value: (A, String)): Some[(A, String)]((_1: A, _2: String): (A, String)((authInfo @ _), (ha1Hash @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeHashedResponse[[_]F[_]](method, ha1Hash, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+              DigestAuth.this.OK.apply[A](authInfo)
+            else
+              DigestAuth.this.WrongResponse))
+          }))
+        }
+      }))
+    }
+}
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          8090
+        </td>
+        <td>
+          8863
+          -
+          8882
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Method.toString
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.method.toString()
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          9217
+        </td>
+        <td>
+          8894
+          -
+          8930
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          params.get(&quot;realm&quot;).contains[String](realm).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          7542
+        </td>
+        <td>
+          8906
+          -
+          8913
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;realm&quot;
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          8256
+        </td>
+        <td>
+          8949
+          -
+          8962
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.BadParameters
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.BadParameters
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          10014
+        </td>
+        <td>
+          8942
+          -
+          8963
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadParameters)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          9003
+        </td>
+        <td>
+          8942
+          -
+          8963
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadParameters)
+        </td>
+      </tr><tr>
+        <td>
+          240
+        </td>
+        <td>
+          8901
+        </td>
+        <td>
+          8977
+          -
+          10894
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val nonce: String = params.apply(&quot;nonce&quot;);
+  val nc: String = params.apply(&quot;nc&quot;);
+  cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.server.middleware.authentication.NonceKeeper.Reply](receiveNonce.apply(nonce, java.lang.Integer.parseInt(nc, 16)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$1: org.http4s.server.middleware.authentication.NonceKeeper.Reply) =&gt; x0$1 match {
+    case NonceKeeper.StaleReply =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.StaleNonce)
+    case NonceKeeper.BadNCReply =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadNC)
+    case NonceKeeper.OKReply =&gt; store match {
+      case (authStore @ (_: org.http4s.server.middleware.authentication.DigestAuth.PlainTextAuthStore[F,A])) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[(A, String)]](authStore.func.apply(params.apply(&quot;username&quot;)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$2: Option[(A, String)]) =&gt; x0$2 match {
+        case scala.None =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+        case (value: (A, String)): Some[(A, String)]((_1: A, _2: String): (A, String)((authInfo @ _), (password @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeResponse[[_]F[_]](method, params.apply(&quot;username&quot;), realm, password, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+          DigestAuth.this.OK.apply[A](authInfo)
+        else
+          DigestAuth.this.WrongResponse))
+      }))
+      case (authStore @ (_: org.http4s.server.middleware.authentication.DigestAuth.Md5HashedAuthStore[F,A])) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[(A, String)]](authStore.func.apply(params.apply(&quot;username&quot;)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$3: Option[(A, String)]) =&gt; x0$3 match {
+        case scala.None =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+        case (value: (A, String)): Some[(A, String)]((_1: A, _2: String): (A, String)((authInfo @ _), (ha1Hash @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeHashedResponse[[_]F[_]](method, ha1Hash, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+          DigestAuth.this.OK.apply[A](authInfo)
+        else
+          DigestAuth.this.WrongResponse))
+      }))
+    }
+  }))
+}
+        </td>
+      </tr><tr>
+        <td>
+          241
+        </td>
+        <td>
+          8455
+        </td>
+        <td>
+          8999
+          -
+          9014
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          params.apply(&quot;nonce&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          7336
+        </td>
+        <td>
+          9032
+          -
+          9044
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          params.apply(&quot;nc&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          9961
+        </td>
+        <td>
+          9053
+          -
+          10886
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.server.middleware.authentication.NonceKeeper.Reply](receiveNonce.apply(nonce, java.lang.Integer.parseInt(nc, 16)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$1: org.http4s.server.middleware.authentication.NonceKeeper.Reply) =&gt; x0$1 match {
+  case NonceKeeper.StaleReply =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.StaleNonce)
+  case NonceKeeper.BadNCReply =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadNC)
+  case NonceKeeper.OKReply =&gt; store match {
+    case (authStore @ (_: org.http4s.server.middleware.authentication.DigestAuth.PlainTextAuthStore[F,A])) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[(A, String)]](authStore.func.apply(params.apply(&quot;username&quot;)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$2: Option[(A, String)]) =&gt; x0$2 match {
+      case scala.None =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+      case (value: (A, String)): Some[(A, String)]((_1: A, _2: String): (A, String)((authInfo @ _), (password @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeResponse[[_]F[_]](method, params.apply(&quot;username&quot;), realm, password, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+        DigestAuth.this.OK.apply[A](authInfo)
+      else
+        DigestAuth.this.WrongResponse))
+    }))
+    case (authStore @ (_: org.http4s.server.middleware.authentication.DigestAuth.Md5HashedAuthStore[F,A])) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[(A, String)]](authStore.func.apply(params.apply(&quot;username&quot;)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$3: Option[(A, String)]) =&gt; x0$3 match {
+      case scala.None =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+      case (value: (A, String)): Some[(A, String)]((_1: A, _2: String): (A, String)((authInfo @ _), (ha1Hash @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeHashedResponse[[_]F[_]](method, ha1Hash, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+        DigestAuth.this.OK.apply[A](authInfo)
+      else
+        DigestAuth.this.WrongResponse))
+    }))
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          8096
+        </td>
+        <td>
+          9053
+          -
+          9098
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function2.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          receiveNonce.apply(nonce, java.lang.Integer.parseInt(nc, 16))
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          9178
+        </td>
+        <td>
+          9073
+          -
+          9097
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Integer.parseInt
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.Integer.parseInt(nc, 16)
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          7488
+        </td>
+        <td>
+          9157
+          -
+          9167
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.StaleNonce
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.StaleNonce
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          9274
+        </td>
+        <td>
+          9150
+          -
+          9168
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.StaleNonce)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          8261
+        </td>
+        <td>
+          9217
+          -
+          9222
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.BadNC
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.BadNC
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          9998
+        </td>
+        <td>
+          9210
+          -
+          9223
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.BadNC)
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          9156
+        </td>
+        <td>
+          9362
+          -
+          10110
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[(A, String)]](authStore.func.apply(params.apply(&quot;username&quot;)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$2: Option[(A, String)]) =&gt; x0$2 match {
+  case scala.None =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+  case (value: (A, String)): Some[(A, String)]((_1: A, _2: String): (A, String)((authInfo @ _), (password @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeResponse[[_]F[_]](method, params.apply(&quot;username&quot;), realm, password, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+    DigestAuth.this.OK.apply[A](authInfo)
+  else
+    DigestAuth.this.WrongResponse))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          9009
+        </td>
+        <td>
+          9377
+          -
+          9395
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          params.apply(&quot;username&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          8461
+        </td>
+        <td>
+          9362
+          -
+          9396
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          authStore.func.apply(params.apply(&quot;username&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          9180
+        </td>
+        <td>
+          9438
+          -
+          9457
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          7291
+        </td>
+        <td>
+          9445
+          -
+          9456
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.UserUnknown
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.UserUnknown
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          8002
+        </td>
+        <td>
+          9531
+          -
+          9919
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestUtil.computeResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestUtil.computeResponse[[_]F[_]](method, params.apply(&quot;username&quot;), realm, password, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          264
+        </td>
+        <td>
+          7297
+        </td>
+        <td>
+          9531
+          -
+          10092
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeResponse[[_]F[_]](method, params.apply(&quot;username&quot;), realm, password, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+  DigestAuth.this.OK.apply[A](authInfo)
+else
+  DigestAuth.this.WrongResponse))
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          10006
+        </td>
+        <td>
+          10013
+          -
+          10025
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.OK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.OK.apply[A](authInfo)
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          8226
+        </td>
+        <td>
+          10013
+          -
+          10025
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.OK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.OK.apply[A](authInfo)
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          9280
+        </td>
+        <td>
+          9985
+          -
+          10011
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.==(params.apply(&quot;response&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          9911
+        </td>
+        <td>
+          9993
+          -
+          10011
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          params.apply(&quot;response&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          266
+        </td>
+        <td>
+          8331
+        </td>
+        <td>
+          10055
+          -
+          10068
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.WrongResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.WrongResponse
+        </td>
+      </tr><tr>
+        <td>
+          266
+        </td>
+        <td>
+          8895
+        </td>
+        <td>
+          10055
+          -
+          10068
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.WrongResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.WrongResponse
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          8007
+        </td>
+        <td>
+          10200
+          -
+          10218
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          params.apply(&quot;username&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          9801
+        </td>
+        <td>
+          10185
+          -
+          10219
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          authStore.func.apply(params.apply(&quot;username&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          8180
+        </td>
+        <td>
+          10185
+          -
+          10862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[(A, String)]](authStore.func.apply(params.apply(&quot;username&quot;)))(F).flatMap[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((x0$3: Option[(A, String)]) =&gt; x0$3 match {
+  case scala.None =&gt; F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+  case (value: (A, String)): Some[(A, String)]((_1: A, _2: String): (A, String)((authInfo @ _), (ha1Hash @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeHashedResponse[[_]F[_]](method, ha1Hash, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+    DigestAuth.this.OK.apply[A](authInfo)
+  else
+    DigestAuth.this.WrongResponse))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          9242
+        </td>
+        <td>
+          10268
+          -
+          10279
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.UserUnknown
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.UserUnknown
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          8233
+        </td>
+        <td>
+          10261
+          -
+          10280
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](DigestAuth.this.UserUnknown)
+        </td>
+      </tr><tr>
+        <td>
+          274
+        </td>
+        <td>
+          9956
+        </td>
+        <td>
+          10353
+          -
+          10671
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestUtil.computeHashedResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestUtil.computeHashedResponse[[_]F[_]](method, ha1Hash, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          9371
+        </td>
+        <td>
+          10353
+          -
+          10844
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, String](DigestUtil.computeHashedResponse[[_]F[_]](method, ha1Hash, req.uri, nonce, nc, params.apply(&quot;cnonce&quot;), params.apply(&quot;qop&quot;))(F, evidence$5))(F).map[org.http4s.server.middleware.authentication.DigestAuth.AuthReply[A]](((resp: String) =&gt; if (resp.==(params.apply(&quot;response&quot;)))
+  DigestAuth.this.OK.apply[A](authInfo)
+else
+  DigestAuth.this.WrongResponse))
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          8454
+        </td>
+        <td>
+          10737
+          -
+          10763
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.==(params.apply(&quot;response&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          9052
+        </td>
+        <td>
+          10765
+          -
+          10777
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.OK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.OK.apply[A](authInfo)
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          7248
+        </td>
+        <td>
+          10765
+          -
+          10777
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.OK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          DigestAuth.this.OK.apply[A](authInfo)
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          8898
+        </td>
+        <td>
+          10745
+          -
+          10763
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          params.apply(&quot;response&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          285
+        </td>
+        <td>
+          9901
+        </td>
+        <td>
+          10807
+          -
+          10820
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.WrongResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.WrongResponse
+        </td>
+      </tr><tr>
+        <td>
+          285
+        </td>
+        <td>
+          8013
+        </td>
+        <td>
+          10807
+          -
+          10820
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.authentication.DigestAuth.WrongResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          DigestAuth.this.WrongResponse
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

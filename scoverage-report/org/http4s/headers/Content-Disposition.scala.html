@@ -1,0 +1,2582 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/Content-Disposition.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package headers
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.parse.Parser
+</span>21 <span style=''>import cats.parse.Rfc5234
+</span>22 <span style=''>import org.http4s.internal.CharPredicate
+</span>23 <span style=''>import org.http4s.internal.parsing.Rfc2616
+</span>24 <span style=''>import org.http4s.internal.parsing.Rfc3986
+</span>25 <span style=''>import org.http4s.internal.parsing.Rfc7230
+</span>26 <span style=''>import org.http4s.util.Renderable
+</span>27 <span style=''>import org.http4s.util.Writer
+</span>28 <span style=''>import org.typelevel.ci._
+</span>29 <span style=''>
+</span>30 <span style=''>import java.nio.charset.StandardCharsets
+</span>31 <span style=''>import scala.collection.immutable.TreeMap
+</span>32 <span style=''>
+</span>33 <span style=''>object `Content-Disposition` {
+</span>34 <span style=''>  private val safeChars = </span><span style='background: #AEF1AE'>CharPredicate.Printable -- &quot;%\&quot;\\&quot;</span><span style=''>
+</span>35 <span style=''>
+</span>36 <span style=''>  def parse(s: String): ParseResult[`Content-Disposition`] =
+</span>37 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Content-Disposition header&quot;)(s)</span><span style=''>
+</span>38 <span style=''>
+</span>39 <span style=''>  private[http4s] val parser = {
+</span>40 <span style=''>    sealed trait ValueChar
+</span>41 <span style=''>    case class AsciiChar(c: Char) extends ValueChar
+</span>42 <span style=''>    case class EncodedChar(a: Char, b: Char) extends ValueChar
+</span>43 <span style=''>
+</span>44 <span style=''>    val attrChar = </span><span style='background: #AEF1AE'>Rfc3986.alpha
+</span>45 <span style=''></span><span style='background: #AEF1AE'>      .orElse(Rfc3986.digit)
+</span>46 <span style=''></span><span style='background: #AEF1AE'>      .orElse(Parser.charIn('!', '#', '$', '&amp;', '+', '-', '.', '^', '_', '`', '|', '~'))
+</span>47 <span style=''></span><span style='background: #AEF1AE'>      .map { (a: Char) =&gt;
+</span>48 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>AsciiChar(a)</span><span style='background: #AEF1AE'>
+</span>49 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>50 <span style=''>    val pctEncoded = </span><span style='background: #AEF1AE'>(Parser.string(&quot;%&quot;) *&gt; Rfc3986.hexdig ~ Rfc3986.hexdig).map {
+</span>51 <span style=''></span><span style='background: #AEF1AE'>      case (a: Char, b: Char) =&gt; </span><span style='background: #F0ADAD'>EncodedChar(a, b)</span><span style='background: #AEF1AE'>
+</span>52 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>53 <span style=''>    val valueChars = </span><span style='background: #AEF1AE'>attrChar.orElse(pctEncoded).rep</span><span style=''>
+</span>54 <span style=''>    val language = </span><span style='background: #AEF1AE'>Parser.string(Rfc5234.alpha.rep) ~ (Parser.string(&quot;-&quot;) *&gt; Rfc2616.token).rep0</span><span style=''>
+</span>55 <span style=''>    val charset = </span><span style='background: #AEF1AE'>Parser.ignoreCase(&quot;UTF-8&quot;).as(StandardCharsets.UTF_8)</span><span style=''>
+</span>56 <span style=''>    val extValue = </span><span style='background: #AEF1AE'>(Rfc5234.dquote *&gt; Parser.charsWhile0(
+</span>57 <span style=''></span><span style='background: #AEF1AE'>      CharPredicate.All -- '&quot;'
+</span>58 <span style=''></span><span style='background: #AEF1AE'>    ) &lt;* Rfc5234.dquote) | (charset ~ (Parser.string(&quot;'&quot;) *&gt; language.? &lt;* Parser.string(
+</span>59 <span style=''></span><span style='background: #AEF1AE'>      &quot;'&quot;
+</span>60 <span style=''></span><span style='background: #AEF1AE'>    )) ~ valueChars).map { case ((charset, _), values) =&gt;
+</span>61 <span style=''></span><span style='background: #AEF1AE'>      </span><span style='background: #F0ADAD'>values
+</span>62 <span style=''></span><span style='background: #F0ADAD'>        .map {
+</span>63 <span style=''></span><span style='background: #F0ADAD'>          case EncodedChar(a: Char, b: Char) =&gt;
+</span>64 <span style=''></span><span style='background: #F0ADAD'>            val charByte = (Character.digit(a, 16) &lt;&lt; 4) + Character.digit(b, 16)
+</span>65 <span style=''></span><span style='background: #F0ADAD'>            new String(Array(charByte.toByte), charset)
+</span>66 <span style=''></span><span style='background: #F0ADAD'>          case AsciiChar(a) =&gt; a.toString
+</span>67 <span style=''></span><span style='background: #F0ADAD'>        }
+</span>68 <span style=''></span><span style='background: #F0ADAD'>        .toList
+</span>69 <span style=''></span><span style='background: #F0ADAD'>        .mkString</span><span style='background: #AEF1AE'>
+</span>70 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>71 <span style=''>
+</span>72 <span style=''>    val value = </span><span style='background: #AEF1AE'>Rfc7230.token | Rfc7230.quotedString</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>    val parameter = </span><span style='background: #AEF1AE'>for {
+</span>75 <span style=''></span><span style='background: #AEF1AE'>      tok &lt;- Rfc7230.token &lt;* Parser.string(&quot;=&quot;) &lt;* Rfc7230.ows
+</span>76 <span style=''></span><span style='background: #AEF1AE'>      v &lt;- if (tok.endsWith(&quot;*&quot;)) </span><span style='background: #F0ADAD'>extValue</span><span style='background: #AEF1AE'> else value
+</span>77 <span style=''></span><span style='background: #AEF1AE'>    } yield (CIString(tok), v)</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>    </span><span style='background: #AEF1AE'>(Rfc7230.token ~ (Parser.string(&quot;;&quot;) *&gt; Rfc7230.ows *&gt; parameter).rep0).map {
+</span>80 <span style=''></span><span style='background: #AEF1AE'>      case (token: String, params: List[(CIString, String)]) =&gt;
+</span>81 <span style=''></span><span style='background: #AEF1AE'>        `Content-Disposition`(token, params.toMap)
+</span>82 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>83 <span style=''>  }
+</span>84 <span style=''>
+</span>85 <span style=''>  implicit val headerInstance: Header[`Content-Disposition`, Header.Single] =
+</span>86 <span style=''>    </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>87 <span style=''></span><span style='background: #AEF1AE'>      ci&quot;Content-Disposition&quot;,
+</span>88 <span style=''></span><span style='background: #AEF1AE'>      v =&gt;
+</span>89 <span style=''></span><span style='background: #AEF1AE'>        new Renderable {
+</span>90 <span style=''></span><span style='background: #AEF1AE'>          // Adapted from https://github.com/akka/akka-http/blob/b071bd67547714bd8bed2ccd8170fbbc6c2dbd77/akka-http-core/src/main/scala/akka/http/scaladsl/model/headers/headers.scala#L468-L492
+</span>91 <span style=''></span><span style='background: #AEF1AE'>          def render(writer: Writer): writer.type = {
+</span>92 <span style=''></span><span style='background: #AEF1AE'>            val renderExtFilename =
+</span>93 <span style=''></span><span style='background: #AEF1AE'>              v.parameters.get(ci&quot;filename&quot;).exists(!safeChars.matchesAll(_))
+</span>94 <span style=''></span><span style='background: #AEF1AE'>            val withExtParams =
+</span>95 <span style=''></span><span style='background: #AEF1AE'>              if (renderExtFilename &amp;&amp; !v.parameters.contains(ci&quot;filename*&quot;))
+</span>96 <span style=''></span><span style='background: #AEF1AE'>                v.parameters + (ci&quot;filename*&quot; -&gt; v.parameters(ci&quot;filename&quot;))
+</span>97 <span style=''></span><span style='background: #AEF1AE'>              else v.parameters
+</span>98 <span style=''></span><span style='background: #AEF1AE'>            val withExtParamsSorted =
+</span>99 <span style=''></span><span style='background: #AEF1AE'>              if (withExtParams.contains(ci&quot;filename&quot;) &amp;&amp; withExtParams.contains(ci&quot;filename*&quot;))
+</span>100 <span style=''></span><span style='background: #AEF1AE'>                TreeMap[CIString, String]() ++ withExtParams
+</span>101 <span style=''></span><span style='background: #AEF1AE'>              else withExtParams
+</span>102 <span style=''></span><span style='background: #AEF1AE'>
+</span>103 <span style=''></span><span style='background: #AEF1AE'>            writer.append(v.dispositionType)
+</span>104 <span style=''></span><span style='background: #AEF1AE'>            withExtParamsSorted.foreach {
+</span>105 <span style=''></span><span style='background: #AEF1AE'>              case (k, v) if k == ci&quot;filename&quot; =&gt;
+</span>106 <span style=''></span><span style='background: #AEF1AE'>                writer &lt;&lt; &quot;; &quot; &lt;&lt; k &lt;&lt; '=' &lt;&lt; '&quot;'
+</span>107 <span style=''></span><span style='background: #AEF1AE'>                writer.eligibleOnly(v, keep = safeChars, placeholder = '?') &lt;&lt; '&quot;'
+</span>108 <span style=''></span><span style='background: #AEF1AE'>              case (k @ ci&quot;${_}*&quot;, v) =&gt;
+</span>109 <span style=''></span><span style='background: #AEF1AE'>                writer &lt;&lt; &quot;; &quot; &lt;&lt; k &lt;&lt; '=' &lt;&lt; &quot;UTF-8''&quot; &lt;&lt; Uri.encode(v)
+</span>110 <span style=''></span><span style='background: #AEF1AE'>              case (k, v) =&gt; writer &lt;&lt; &quot;; &quot; &lt;&lt; k &lt;&lt; &quot;=\&quot;&quot; &lt;&lt; v &lt;&lt; '&quot;'
+</span>111 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>112 <span style=''></span><span style='background: #AEF1AE'>            writer
+</span>113 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>114 <span style=''></span><span style='background: #AEF1AE'>        },
+</span>115 <span style=''></span><span style='background: #AEF1AE'>      parse,
+</span>116 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>117 <span style=''>}
+</span>118 <span style=''>
+</span>119 <span style=''>// see https://datatracker.ietf.org/doc/html/rfc2183
+</span>120 <span style=''>final case class `Content-Disposition`(dispositionType: String, parameters: Map[CIString, String])
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          13795
+        </td>
+        <td>
+          1084
+          -
+          1118
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.CharPredicate.--
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.CharPredicate.Printable.--(&quot;%\&quot;\\&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          20333
+        </td>
+        <td>
+          1185
+          -
+          1256
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.headers.Content-Disposition](Content-Disposition.this.parser, &quot;Invalid Content-Disposition header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          16215
+        </td>
+        <td>
+          1481
+          -
+          1494
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc3986.digit
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc3986.digit
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          14626
+        </td>
+        <td>
+          1510
+          -
+          1583
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.charIn
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn('!', '#', '$', '&amp;', '+', '-', '.', '^', '_', '`', '|', '~')
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          17006
+        </td>
+        <td>
+          1453
+          -
+          1639
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc3986.alpha.orElse[Char](org.http4s.internal.parsing.Rfc3986.digit).orElse[Char](cats.parse.Parser.charIn('!', '#', '$', '&amp;', '+', '-', '.', '^', '_', '`', '|', '~')).map[AsciiChar](((a: Char) =&gt; AsciiChar.apply(a)))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          20912
+        </td>
+        <td>
+          1619
+          -
+          1631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.AsciiChar.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          AsciiChar.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          13256
+        </td>
+        <td>
+          1676
+          -
+          1679
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;%&quot;
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          17858
+        </td>
+        <td>
+          1684
+          -
+          1715
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc3986.hexdig.~[Char](org.http4s.internal.parsing.Rfc3986.hexdig)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          20214
+        </td>
+        <td>
+          1661
+          -
+          1779
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;%&quot;).*&gt;[(Char, Char)](org.http4s.internal.parsing.Rfc3986.hexdig.~[Char](org.http4s.internal.parsing.Rfc3986.hexdig)).map[EncodedChar](((x0$1: (Char, Char)) =&gt; x0$1 match {
+  case (_1: Char, _2: Char): (Char, Char)((a @ (_: Char)), (b @ (_: Char))) =&gt; EncodedChar.apply(a, b)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          19454
+        </td>
+        <td>
+          1701
+          -
+          1715
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc3986.hexdig
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc3986.hexdig
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          13805
+        </td>
+        <td>
+          1756
+          -
+          1773
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.EncodedChar.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EncodedChar.apply(a, b)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          16233
+        </td>
+        <td>
+          1801
+          -
+          1832
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          attrChar.orElse[Product with ValueChar with java.io.Serializable](pctEncoded).rep
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          19477
+        </td>
+        <td>
+          1852
+          -
+          1929
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(cats.parse.Rfc5234.alpha.rep).~[List[String]](cats.parse.Parser.string(&quot;-&quot;).*&gt;[String](org.http4s.internal.parsing.Rfc2616.token).rep0)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          17017
+        </td>
+        <td>
+          1910
+          -
+          1923
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc2616.token
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc2616.token
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          20788
+        </td>
+        <td>
+          1902
+          -
+          1905
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;-&quot;
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          14310
+        </td>
+        <td>
+          1866
+          -
+          1883
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.alpha.rep
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          13529
+        </td>
+        <td>
+          1887
+          -
+          1929
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep0
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;-&quot;).*&gt;[String](org.http4s.internal.parsing.Rfc2616.token).rep0
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          17940
+        </td>
+        <td>
+          1966
+          -
+          1973
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;UTF-8&quot;
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          13700
+        </td>
+        <td>
+          1978
+          -
+          2000
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          20231
+        </td>
+        <td>
+          1948
+          -
+          2001
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.as
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.ignoreCase(&quot;UTF-8&quot;).as[java.nio.charset.Charset](java.nio.charset.StandardCharsets.UTF_8)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          22687
+        </td>
+        <td>
+          2040
+          -
+          2096
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.charsWhile0
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charsWhile0(org.http4s.internal.CharPredicate.All.--('\&quot;'))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          16765
+        </td>
+        <td>
+          2066
+          -
+          2090
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.CharPredicate.--
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.CharPredicate.All.--('\&quot;')
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          20207
+        </td>
+        <td>
+          2021
+          -
+          2554
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.|
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.dquote.*&gt;[String](cats.parse.Parser.charsWhile0(org.http4s.internal.CharPredicate.All.--('\&quot;'))).&lt;*[Unit](cats.parse.Rfc5234.dquote).|[String](charset.~[Option[(String, List[String])]](cats.parse.Parser.string(&quot;\'&quot;).*&gt;[Option[(String, List[String])]](language.?).&lt;*[Unit](cats.parse.Parser.string(&quot;\'&quot;))).~[cats.data.NonEmptyList[Product with ValueChar with java.io.Serializable]](valueChars).map[String](((x0$2: ((java.nio.charset.Charset, Option[(String, List[String])]), cats.data.NonEmptyList[Product with ValueChar with java.io.Serializable])) =&gt; x0$2 match {
+  case (_1: (java.nio.charset.Charset, Option[(String, List[String])]), _2: cats.data.NonEmptyList[Product with ValueChar with java.io.Serializable]): ((java.nio.charset.Charset, Option[(String, List[String])]), cats.data.NonEmptyList[Product with ValueChar with java.io.Serializable])((_1: java.nio.charset.Charset, _2: Option[(String, List[String])]): (java.nio.charset.Charset, Option[(String, List[String])])((charset @ _), _), (values @ _)) =&gt; values.map[String](((x0$3: Product with ValueChar with java.io.Serializable) =&gt; x0$3 match {
+  case (a: Char, b: Char): EncodedChar((a @ (_: Char)), (b @ (_: Char))) =&gt; {
+    val charByte: Int = java.lang.Character.digit(a, 16).&lt;&lt;(4).+(java.lang.Character.digit(b, 16));
+    new scala.Predef.String(scala.Array.apply(charByte.toByte), charset)
+  }
+  case (c: Char): AsciiChar((a @ _)) =&gt; a.toString()
+})).toList.mkString
+})))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          17832
+        </td>
+        <td>
+          2130
+          -
+          2196
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;\'&quot;).*&gt;[Option[(String, List[String])]](language.?).&lt;*[Unit](cats.parse.Parser.string(&quot;\'&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          21121
+        </td>
+        <td>
+          2100
+          -
+          2114
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.dquote
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.dquote
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          19491
+        </td>
+        <td>
+          2166
+          -
+          2196
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;\'&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          16916
+        </td>
+        <td>
+          2144
+          -
+          2147
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;\'&quot;
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          12896
+        </td>
+        <td>
+          2152
+          -
+          2162
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.?
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          language.?
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          13914
+        </td>
+        <td>
+          2118
+          -
+          2554
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          charset.~[Option[(String, List[String])]](cats.parse.Parser.string(&quot;\'&quot;).*&gt;[Option[(String, List[String])]](language.?).&lt;*[Unit](cats.parse.Parser.string(&quot;\'&quot;))).~[cats.data.NonEmptyList[Product with ValueChar with java.io.Serializable]](valueChars).map[String](((x0$2: ((java.nio.charset.Charset, Option[(String, List[String])]), cats.data.NonEmptyList[Product with ValueChar with java.io.Serializable])) =&gt; x0$2 match {
+  case (_1: (java.nio.charset.Charset, Option[(String, List[String])]), _2: cats.data.NonEmptyList[Product with ValueChar with java.io.Serializable]): ((java.nio.charset.Charset, Option[(String, List[String])]), cats.data.NonEmptyList[Product with ValueChar with java.io.Serializable])((_1: java.nio.charset.Charset, _2: Option[(String, List[String])]): (java.nio.charset.Charset, Option[(String, List[String])])((charset @ _), _), (values @ _)) =&gt; values.map[String](((x0$3: Product with ValueChar with java.io.Serializable) =&gt; x0$3 match {
+  case (a: Char, b: Char): EncodedChar((a @ (_: Char)), (b @ (_: Char))) =&gt; {
+    val charByte: Int = java.lang.Character.digit(a, 16).&lt;&lt;(4).+(java.lang.Character.digit(b, 16));
+    new scala.Predef.String(scala.Array.apply(charByte.toByte), charset)
+  }
+  case (c: Char): AsciiChar((a @ _)) =&gt; a.toString()
+})).toList.mkString
+}))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          14031
+        </td>
+        <td>
+          2372
+          -
+          2374
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          16
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          16139
+        </td>
+        <td>
+          2384
+          -
+          2406
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Character.digit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.Character.digit(b, 16)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          20508
+        </td>
+        <td>
+          2379
+          -
+          2380
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          4
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          23077
+        </td>
+        <td>
+          2352
+          -
+          2406
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.Character.digit(a, 16).&lt;&lt;(4).+(java.lang.Character.digit(b, 16))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          13098
+        </td>
+        <td>
+          2419
+          -
+          2462
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new scala.Predef.String(scala.Array.apply(charByte.toByte), charset)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          17262
+        </td>
+        <td>
+          2430
+          -
+          2452
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Array.apply(charByte.toByte)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          21015
+        </td>
+        <td>
+          2436
+          -
+          2451
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toByte
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          charByte.toByte
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          19372
+        </td>
+        <td>
+          2494
+          -
+          2504
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          a.toString()
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          17850
+        </td>
+        <td>
+          2255
+          -
+          2548
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          values.map[String](((x0$3: Product with ValueChar with java.io.Serializable) =&gt; x0$3 match {
+  case (a: Char, b: Char): EncodedChar((a @ (_: Char)), (b @ (_: Char))) =&gt; {
+    val charByte: Int = java.lang.Character.digit(a, 16).&lt;&lt;(4).+(java.lang.Character.digit(b, 16));
+    new scala.Predef.String(scala.Array.apply(charByte.toByte), charset)
+  }
+  case (c: Char): AsciiChar((a @ _)) =&gt; a.toString()
+})).toList.mkString
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          16516
+        </td>
+        <td>
+          2588
+          -
+          2608
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          22974
+        </td>
+        <td>
+          2572
+          -
+          2608
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.|
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.|[String](org.http4s.internal.parsing.Rfc7230.quotedString)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          22680
+        </td>
+        <td>
+          2630
+          -
+          2784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.flatMap
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.&lt;*[Unit](cats.parse.Parser.string(&quot;=&quot;)).&lt;*[Unit](org.http4s.internal.parsing.Rfc7230.ows).flatMap[(org.typelevel.ci.CIString, String)](((tok: String) =&gt; if (tok.endsWith(&quot;*&quot;))
+  extValue
+else
+  value.map[(org.typelevel.ci.CIString, String)](((v: String) =&gt; scala.Tuple2.apply[org.typelevel.ci.CIString, String](org.typelevel.ci.CIString.apply(tok), v)))))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          16896
+        </td>
+        <td>
+          2688
+          -
+          2699
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          21031
+        </td>
+        <td>
+          2666
+          -
+          2684
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;=&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          16375
+        </td>
+        <td>
+          2706
+          -
+          2784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          if (tok.endsWith(&quot;*&quot;))
+  extValue
+else
+  value.map[(org.typelevel.ci.CIString, String)](((v: String) =&gt; scala.Tuple2.apply[org.typelevel.ci.CIString, String](org.typelevel.ci.CIString.apply(tok), v)))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          19467
+        </td>
+        <td>
+          2734
+          -
+          2742
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.extValue
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          extValue
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          13115
+        </td>
+        <td>
+          2715
+          -
+          2732
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.endsWith
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          tok.endsWith(&quot;*&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          15899
+        </td>
+        <td>
+          2748
+          -
+          2753
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.value
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          value
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          20225
+        </td>
+        <td>
+          2766
+          -
+          2784
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[org.typelevel.ci.CIString, String](org.typelevel.ci.CIString.apply(tok), v)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          13929
+        </td>
+        <td>
+          2767
+          -
+          2780
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIString.apply
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.CIString.apply(tok)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          13131
+        </td>
+        <td>
+          2807
+          -
+          2860
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep0
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;;&quot;).*&gt;[Unit](org.http4s.internal.parsing.Rfc7230.ows).*&gt;[(org.typelevel.ci.CIString, String)](parameter).rep0
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          20930
+        </td>
+        <td>
+          2822
+          -
+          2825
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          20119
+        </td>
+        <td>
+          2790
+          -
+          2988
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.~[List[(org.typelevel.ci.CIString, String)]](cats.parse.Parser.string(&quot;;&quot;).*&gt;[Unit](org.http4s.internal.parsing.Rfc7230.ows).*&gt;[(org.typelevel.ci.CIString, String)](parameter).rep0).map[org.http4s.headers.Content-Disposition](((x0$4: (String, List[(org.typelevel.ci.CIString, String)])) =&gt; x0$4 match {
+  case (_1: String, _2: List[(org.typelevel.ci.CIString, String)]): (String, List[(org.typelevel.ci.CIString, String)])((token @ (_: String)), (params @ (_: List[(org.typelevel.ci.CIString, String)]))) =&gt; Content-Disposition.apply(token, params.toMap[org.typelevel.ci.CIString, String](scala.this.&lt;:&lt;.refl[(org.typelevel.ci.CIString, String)]))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          16909
+        </td>
+        <td>
+          2830
+          -
+          2841
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          13561
+        </td>
+        <td>
+          2940
+          -
+          2982
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.apply
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          Content-Disposition.apply(token, params.toMap[org.typelevel.ci.CIString, String](scala.this.&lt;:&lt;.refl[(org.typelevel.ci.CIString, String)]))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          19981
+        </td>
+        <td>
+          2976
+          -
+          2976
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[(org.typelevel.ci.CIString, String)]
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          15623
+        </td>
+        <td>
+          2969
+          -
+          2981
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toMap
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          params.toMap[org.typelevel.ci.CIString, String](scala.this.&lt;:&lt;.refl[(org.typelevel.ci.CIString, String)])
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          19512
+        </td>
+        <td>
+          3076
+          -
+          4504
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.createRendered[org.http4s.headers.Content-Disposition, org.http4s.Header.Single, org.http4s.util.Renderable](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Content-Disposition&quot;)).ci(), ((v: org.http4s.headers.Content-Disposition) =&gt; {
+  final class $anon extends AnyRef with org.http4s.util.Renderable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.util.Renderable&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def render(writer: org.http4s.util.Writer): writer.type = {
+      val renderExtFilename: Boolean = v.parameters.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).exists(((x$1: String) =&gt; Content-Disposition.this.safeChars.matchesAll(x$1).unary_!));
+      val withExtParams: scala.collection.immutable.Map[org.typelevel.ci.CIString,String] = if (renderExtFilename.&amp;&amp;(v.parameters.contains(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()).unary_!))
+        v.parameters.+[String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()).-&gt;[String](v.parameters.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci())))
+      else
+        v.parameters;
+      val withExtParamsSorted: scala.collection.immutable.Map[org.typelevel.ci.CIString,String] = if (withExtParams.contains(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).&amp;&amp;(withExtParams.contains(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci())))
+        scala.collection.immutable.TreeMap.apply[org.typelevel.ci.CIString, String]()(math.this.Ordering.ordered[org.typelevel.ci.CIString](scala.Predef.$conforms[org.typelevel.ci.CIString])).++[String](withExtParams)
+      else
+        withExtParams;
+      writer.append(v.dispositionType);
+      withExtParamsSorted.foreach[org.http4s.util.Writer](((x0$1: (org.typelevel.ci.CIString, String)) =&gt; x0$1 match {
+        case (_1: org.typelevel.ci.CIString, _2: String): (org.typelevel.ci.CIString, String)((k @ _), (v @ _)) if k.==(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()) =&gt; {
+          writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;('=').&lt;&lt;('\&quot;');
+          writer.eligibleOnly(v, Content-Disposition.this.safeChars, '?').&lt;&lt;('\&quot;')
+        }
+        case (_1: org.typelevel.ci.CIString, _2: String): (org.typelevel.ci.CIString, String)((k @ org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;&quot;, &quot;*&quot;)).ci.unapplySeq(&lt;unapply-selector&gt;) &lt;unapply&gt; (_)), (v @ _)) =&gt; writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;('=').&lt;&lt;(&quot;UTF-8\'\'&quot;).&lt;&lt;(Uri.encode(v, Uri.encode$default$2, Uri.encode$default$3, Uri.encode$default$4))
+        case (_1: org.typelevel.ci.CIString, _2: String): (org.typelevel.ci.CIString, String)((k @ _), (v @ _)) =&gt; writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;(&quot;=\&quot;&quot;).&lt;&lt;(v).&lt;&lt;('\&quot;')
+      }));
+      writer
+    }
+  };
+  new $anon()
+}), ((s: String) =&gt; Content-Disposition.this.parse(s)))(util.this.Renderable.renderableInst[org.http4s.util.Renderable])
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          12908
+        </td>
+        <td>
+          3097
+          -
+          3097
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.util.Renderable]
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          16135
+        </td>
+        <td>
+          3105
+          -
+          3128
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Content-Disposition&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          19009
+        </td>
+        <td>
+          3149
+          -
+          3152
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          23188
+        </td>
+        <td>
+          3480
+          -
+          3492
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          18847
+        </td>
+        <td>
+          3501
+          -
+          3525
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Content-Disposition.this.safeChars.matchesAll(x$1).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          16927
+        </td>
+        <td>
+          3463
+          -
+          3526
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          v.parameters.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).exists(((x$1: String) =&gt; Content-Disposition.this.safeChars.matchesAll(x$1).unary_!))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          16125
+        </td>
+        <td>
+          3577
+          -
+          3635
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          renderExtFilename.&amp;&amp;(v.parameters.contains(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()).unary_!)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          13013
+        </td>
+        <td>
+          3621
+          -
+          3634
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          19367
+        </td>
+        <td>
+          3598
+          -
+          3635
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          v.parameters.contains(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          20132
+        </td>
+        <td>
+          3699
+          -
+          3711
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          17129
+        </td>
+        <td>
+          3653
+          -
+          3713
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.+
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          v.parameters.+[String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()).-&gt;[String](v.parameters.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci())))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          16680
+        </td>
+        <td>
+          3686
+          -
+          3712
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.apply
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          v.parameters.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          22571
+        </td>
+        <td>
+          3669
+          -
+          3712
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()).-&gt;[String](v.parameters.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          13907
+        </td>
+        <td>
+          3669
+          -
+          3682
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          19084
+        </td>
+        <td>
+          3653
+          -
+          3713
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.+
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          v.parameters.+[String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()).-&gt;[String](v.parameters.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci())))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          19901
+        </td>
+        <td>
+          3733
+          -
+          3745
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.parameters
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          v.parameters
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          13030
+        </td>
+        <td>
+          3733
+          -
+          3745
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.parameters
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          v.parameters
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          16693
+        </td>
+        <td>
+          3802
+          -
+          3879
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          withExtParams.contains(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).&amp;&amp;(withExtParams.contains(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          15502
+        </td>
+        <td>
+          3825
+          -
+          3837
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          13925
+        </td>
+        <td>
+          3865
+          -
+          3878
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          20351
+        </td>
+        <td>
+          3842
+          -
+          3879
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.contains
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          withExtParams.contains(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename*&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          23090
+        </td>
+        <td>
+          3897
+          -
+          3941
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SortedMapOps.++
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.immutable.TreeMap.apply[org.typelevel.ci.CIString, String]()(math.this.Ordering.ordered[org.typelevel.ci.CIString](scala.Predef.$conforms[org.typelevel.ci.CIString])).++[String](withExtParams)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          19103
+        </td>
+        <td>
+          3897
+          -
+          3941
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.SortedMapOps.++
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.immutable.TreeMap.apply[org.typelevel.ci.CIString, String]()(math.this.Ordering.ordered[org.typelevel.ci.CIString](scala.Predef.$conforms[org.typelevel.ci.CIString])).++[String](withExtParams)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          17146
+        </td>
+        <td>
+          3961
+          -
+          3974
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.$anon.withExtParams
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          withExtParams
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          19914
+        </td>
+        <td>
+          3988
+          -
+          4020
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append(v.dispositionType)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          12995
+        </td>
+        <td>
+          4002
+          -
+          4019
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.dispositionType
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          v.dispositionType
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          22562
+        </td>
+        <td>
+          4033
+          -
+          4443
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foreach
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          withExtParamsSorted.foreach[org.http4s.util.Writer](((x0$1: (org.typelevel.ci.CIString, String)) =&gt; x0$1 match {
+  case (_1: org.typelevel.ci.CIString, _2: String): (org.typelevel.ci.CIString, String)((k @ _), (v @ _)) if k.==(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()) =&gt; {
+    writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;('=').&lt;&lt;('\&quot;');
+    writer.eligibleOnly(v, Content-Disposition.this.safeChars, '?').&lt;&lt;('\&quot;')
+  }
+  case (_1: org.typelevel.ci.CIString, _2: String): (org.typelevel.ci.CIString, String)((k @ org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;&quot;, &quot;*&quot;)).ci.unapplySeq(&lt;unapply-selector&gt;) &lt;unapply&gt; (_)), (v @ _)) =&gt; writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;('=').&lt;&lt;(&quot;UTF-8\'\'&quot;).&lt;&lt;(Uri.encode(v, Uri.encode$default$2, Uri.encode$default$3, Uri.encode$default$4))
+  case (_1: org.typelevel.ci.CIString, _2: String): (org.typelevel.ci.CIString, String)((k @ _), (v @ _)) =&gt; writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;(&quot;=\&quot;&quot;).&lt;&lt;(v).&lt;&lt;('\&quot;')
+}))
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          22275
+        </td>
+        <td>
+          4092
+          -
+          4109
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          k.==(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          15908
+        </td>
+        <td>
+          4097
+          -
+          4109
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          20375
+        </td>
+        <td>
+          4129
+          -
+          4162
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;('=').&lt;&lt;('\&quot;')
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          16248
+        </td>
+        <td>
+          4179
+          -
+          4245
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.eligibleOnly(v, Content-Disposition.this.safeChars, '?').&lt;&lt;('\&quot;')
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          19492
+        </td>
+        <td>
+          4350
+          -
+          4350
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.encode$default$3
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.encode$default$3
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          15807
+        </td>
+        <td>
+          4350
+          -
+          4350
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.encode$default$4
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.encode$default$4
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          17033
+        </td>
+        <td>
+          4333
+          -
+          4342
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;UTF-8\'\'&quot;
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          22290
+        </td>
+        <td>
+          4346
+          -
+          4359
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.encode
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.encode(v, Uri.encode$default$2, Uri.encode$default$3, Uri.encode$default$4)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          19117
+        </td>
+        <td>
+          4326
+          -
+          4329
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          23106
+        </td>
+        <td>
+          4313
+          -
+          4317
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;; &quot;
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          20007
+        </td>
+        <td>
+          4303
+          -
+          4359
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;('=').&lt;&lt;(&quot;UTF-8\'\'&quot;).&lt;&lt;(Uri.encode(v, Uri.encode$default$2, Uri.encode$default$3, Uri.encode$default$4))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          13009
+        </td>
+        <td>
+          4350
+          -
+          4350
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.encode$default$2
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.encode$default$2
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          16263
+        </td>
+        <td>
+          4389
+          -
+          4429
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.simpleheadersspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(&quot;; &quot;).&lt;&lt;(k).&lt;&lt;(&quot;=\&quot;&quot;).&lt;&lt;(v).&lt;&lt;('\&quot;')
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          17050
+        </td>
+        <td>
+          4492
+          -
+          4497
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.parse
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Content-Disposition.this.parse(s)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,1764 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/websocket/WebSocketBuilder2.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server.websocket
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.Applicative
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import cats.~&gt;
+</span>23 <span style=''>import fs2.Pipe
+</span>24 <span style=''>import fs2.Stream
+</span>25 <span style=''>import org.http4s.websocket.WebSocket
+</span>26 <span style=''>import org.http4s.websocket.WebSocketCombinedPipe
+</span>27 <span style=''>import org.http4s.websocket.WebSocketContext
+</span>28 <span style=''>import org.http4s.websocket.WebSocketFrame
+</span>29 <span style=''>import org.http4s.websocket.WebSocketSeparatePipe
+</span>30 <span style=''>import org.typelevel.vault.Key
+</span>31 <span style=''>
+</span>32 <span style=''>/** Build a response which will accept an HTTP websocket upgrade request and initiate a websocket connection using the
+</span>33 <span style=''>  * supplied exchange to process and respond to websocket messages.
+</span>34 <span style=''>  * @param headers Handshake response headers, such as such as:Sec-WebSocket-Protocol.
+</span>35 <span style=''>  * @param onNonWebSocketRequest The status code to return to a client making a non-websocket HTTP request to this route.
+</span>36 <span style=''>  *                              default: NotImplemented
+</span>37 <span style=''>  * @param onHandshakeFailure The status code to return when failing to handle a websocket HTTP request to this route.
+</span>38 <span style=''>  *                           default: BadRequest
+</span>39 <span style=''>  */
+</span>40 <span style=''>sealed abstract class WebSocketBuilder2[F[_]: Applicative] private (
+</span>41 <span style=''>    headers: Headers,
+</span>42 <span style=''>    onNonWebSocketRequest: F[Response[F]],
+</span>43 <span style=''>    onHandshakeFailure: F[Response[F]],
+</span>44 <span style=''>    onClose: F[Unit],
+</span>45 <span style=''>    filterPingPongs: Boolean,
+</span>46 <span style=''>    webSocketKey: Key[WebSocketContext[F]],
+</span>47 <span style=''>) {
+</span>48 <span style=''>  import WebSocketBuilder2.impl
+</span>49 <span style=''>
+</span>50 <span style=''>  private def copy(
+</span>51 <span style=''>      headers: Headers = this.headers,
+</span>52 <span style=''>      onNonWebSocketRequest: F[Response[F]] = this.onNonWebSocketRequest,
+</span>53 <span style=''>      onHandshakeFailure: F[Response[F]] = this.onHandshakeFailure,
+</span>54 <span style=''>      onClose: F[Unit] = this.onClose,
+</span>55 <span style=''>      filterPingPongs: Boolean = this.filterPingPongs,
+</span>56 <span style=''>      webSocketKey: Key[WebSocketContext[F]] = this.webSocketKey,
+</span>57 <span style=''>  ): WebSocketBuilder2[F] = </span><span style='background: #AEF1AE'>WebSocketBuilder2.impl[F](
+</span>58 <span style=''></span><span style='background: #AEF1AE'>    headers,
+</span>59 <span style=''></span><span style='background: #AEF1AE'>    onNonWebSocketRequest,
+</span>60 <span style=''></span><span style='background: #AEF1AE'>    onHandshakeFailure,
+</span>61 <span style=''></span><span style='background: #AEF1AE'>    onClose,
+</span>62 <span style=''></span><span style='background: #AEF1AE'>    filterPingPongs,
+</span>63 <span style=''></span><span style='background: #AEF1AE'>    webSocketKey,
+</span>64 <span style=''></span><span style='background: #AEF1AE'>  )</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>  def withHeaders(headers: Headers): WebSocketBuilder2[F] =
+</span>67 <span style=''>    </span><span style='background: #F0ADAD'>copy(headers = headers)</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>  def withOnNonWebSocketRequest(onNonWebSocketRequest: F[Response[F]]): WebSocketBuilder2[F] =
+</span>70 <span style=''>    </span><span style='background: #F0ADAD'>copy(onNonWebSocketRequest = onNonWebSocketRequest)</span><span style=''>
+</span>71 <span style=''>
+</span>72 <span style=''>  def withOnHandshakeFailure(onHandshakeFailure: F[Response[F]]): WebSocketBuilder2[F] =
+</span>73 <span style=''>    </span><span style='background: #F0ADAD'>copy(onHandshakeFailure = onHandshakeFailure)</span><span style=''>
+</span>74 <span style=''>
+</span>75 <span style=''>  def withOnClose(onClose: F[Unit]): WebSocketBuilder2[F] =
+</span>76 <span style=''>    </span><span style='background: #F0ADAD'>copy(onClose = onClose)</span><span style=''>
+</span>77 <span style=''>
+</span>78 <span style=''>  def withFilterPingPongs(filterPingPongs: Boolean): WebSocketBuilder2[F] =
+</span>79 <span style=''>    </span><span style='background: #AEF1AE'>copy(filterPingPongs = filterPingPongs)</span><span style=''>
+</span>80 <span style=''>
+</span>81 <span style=''>  /** Transform the parameterized effect from F to G. */
+</span>82 <span style=''>  def imapK[G[_]: Applicative](fk: F ~&gt; G)(gk: G ~&gt; F): WebSocketBuilder2[G] =
+</span>83 <span style=''>    </span><span style='background: #F0ADAD'>impl[G](
+</span>84 <span style=''></span><span style='background: #F0ADAD'>      headers,
+</span>85 <span style=''></span><span style='background: #F0ADAD'>      fk(onNonWebSocketRequest).map(_.mapK(fk)),
+</span>86 <span style=''></span><span style='background: #F0ADAD'>      fk(onHandshakeFailure).map(_.mapK(fk)),
+</span>87 <span style=''></span><span style='background: #F0ADAD'>      fk(onClose),
+</span>88 <span style=''></span><span style='background: #F0ADAD'>      filterPingPongs,
+</span>89 <span style=''></span><span style='background: #F0ADAD'>      webSocketKey.imap(_.imapK(fk)(gk))(_.imapK(gk)(fk)),
+</span>90 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>91 <span style=''>
+</span>92 <span style=''>  private def buildResponse(webSocket: WebSocket[F]): F[Response[F]] =
+</span>93 <span style=''>    </span><span style='background: #AEF1AE'>onNonWebSocketRequest
+</span>94 <span style=''></span><span style='background: #AEF1AE'>      .map(
+</span>95 <span style=''></span><span style='background: #AEF1AE'>        _.withAttribute(
+</span>96 <span style=''></span><span style='background: #AEF1AE'>          webSocketKey,
+</span>97 <span style=''></span><span style='background: #AEF1AE'>          WebSocketContext(
+</span>98 <span style=''></span><span style='background: #AEF1AE'>            webSocket,
+</span>99 <span style=''></span><span style='background: #AEF1AE'>            headers,
+</span>100 <span style=''></span><span style='background: #AEF1AE'>            onHandshakeFailure,
+</span>101 <span style=''></span><span style='background: #AEF1AE'>          ),
+</span>102 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>103 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>104 <span style=''>
+</span>105 <span style=''>  /** @param sendReceive The send-receive stream represents transforming of incoming messages to outgoing for a single websocket
+</span>106 <span style=''>    *                    Once the stream have terminated, the server will initiate a close of the websocket connection.
+</span>107 <span style=''>    *                    As defined in the websocket specification, this means the server
+</span>108 <span style=''>    *                    will send a CloseFrame to the client and wait for a CloseFrame in response before closing the
+</span>109 <span style=''>    *                    connection, this ensures that no messages are lost in flight. The server will shutdown the
+</span>110 <span style=''>    *                    connection when it receives the `CloseFrame` message back from the client. The connection will also
+</span>111 <span style=''>    *                    be closed if the client does not respond with a `CloseFrame` after some reasonable amount of
+</span>112 <span style=''>    *                    time.
+</span>113 <span style=''>    *                    Another way of closing the connection is by emitting a `CloseFrame` in the stream of messages
+</span>114 <span style=''>    *                    heading to the client. This method allows one to attach a message to the `CloseFrame` as defined
+</span>115 <span style=''>    *                    by the websocket protocol.
+</span>116 <span style=''>    *                    Unfortunately the current implementation does not quite respect the description above, it violates
+</span>117 <span style=''>    *                    the websocket protocol by terminating the connection immediately upon reception
+</span>118 <span style=''>    *                    of a `CloseFrame`. This bug will be addressed soon in an upcoming release and this message will be
+</span>119 <span style=''>    *                    removed.
+</span>120 <span style=''>    *                    Currently, there is no way for the server to be notified when the connection is closed, neither in
+</span>121 <span style=''>    *                    the case of a normal disconnection such as a Close handshake or due to a connection error. There
+</span>122 <span style=''>    *                    are plans to address this limitation in the future.
+</span>123 <span style=''>    * @return
+</span>124 <span style=''>    */
+</span>125 <span style=''>  def build(sendReceive: Pipe[F, WebSocketFrame, WebSocketFrame]): F[Response[F]] = {
+</span>126 <span style=''>
+</span>127 <span style=''>    val finalSendReceive: Pipe[F, WebSocketFrame, WebSocketFrame] =
+</span>128 <span style=''>      if (</span><span style='background: #AEF1AE'>filterPingPongs</span><span style=''>)
+</span>129 <span style=''>        </span><span style='background: #AEF1AE'>sendReceive.compose(inputStream =&gt; inputStream.filterNot(isPingPong))</span><span style=''>
+</span>130 <span style=''>      else
+</span>131 <span style=''>        </span><span style='background: #F0ADAD'>sendReceive</span><span style=''>
+</span>132 <span style=''>
+</span>133 <span style=''>    </span><span style='background: #AEF1AE'>buildResponse(WebSocketCombinedPipe(finalSendReceive, onClose))</span><span style=''>
+</span>134 <span style=''>  }
+</span>135 <span style=''>
+</span>136 <span style=''>  /** @param send     The send side of the Exchange represents the outgoing stream of messages that should be sent to the client
+</span>137 <span style=''>    * @param receive  The receive side of the Exchange is a sink to which the framework will push the incoming websocket messages
+</span>138 <span style=''>    *                 Once both streams have terminated, the server will initiate a close of the websocket connection.
+</span>139 <span style=''>    *                 As defined in the websocket specification, this means the server
+</span>140 <span style=''>    *                 will send a CloseFrame to the client and wait for a CloseFrame in response before closing the
+</span>141 <span style=''>    *                 connection, this ensures that no messages are lost in flight. The server will shutdown the
+</span>142 <span style=''>    *                 connection when it receives the `CloseFrame` message back from the client. The connection will also
+</span>143 <span style=''>    *                 be closed if the client does not respond with a `CloseFrame` after some reasonable amount of
+</span>144 <span style=''>    *                 time.
+</span>145 <span style=''>    *                 Another way of closing the connection is by emitting a `CloseFrame` in the stream of messages
+</span>146 <span style=''>    *                 heading to the client. This method allows one to attach a message to the `CloseFrame` as defined
+</span>147 <span style=''>    *                 by the websocket protocol.
+</span>148 <span style=''>    *                 Unfortunately the current implementation does not quite respect the description above, it violates
+</span>149 <span style=''>    *                 the websocket protocol by terminating the connection immediately upon reception
+</span>150 <span style=''>    *                 of a `CloseFrame`. This bug will be addressed soon in an upcoming release and this message will be
+</span>151 <span style=''>    *                 removed.
+</span>152 <span style=''>    *                 Currently, there is no way for the server to be notified when the connection is closed, neither in
+</span>153 <span style=''>    *                 the case of a normal disconnection such as a Close handshake or due to a connection error. There
+</span>154 <span style=''>    *                 are plans to address this limitation in the future.
+</span>155 <span style=''>    * @return
+</span>156 <span style=''>    */
+</span>157 <span style=''>  def build(
+</span>158 <span style=''>      send: Stream[F, WebSocketFrame],
+</span>159 <span style=''>      receive: Pipe[F, WebSocketFrame, Unit],
+</span>160 <span style=''>  ): F[Response[F]] = {
+</span>161 <span style=''>
+</span>162 <span style=''>    val finalReceive: Pipe[F, WebSocketFrame, Unit] =
+</span>163 <span style=''>      if (</span><span style='background: #AEF1AE'>filterPingPongs</span><span style=''>)
+</span>164 <span style=''>        </span><span style='background: #AEF1AE'>_.filterNot(isPingPong).through(receive)</span><span style=''>
+</span>165 <span style=''>      else
+</span>166 <span style=''>        </span><span style='background: #AEF1AE'>receive</span><span style=''>
+</span>167 <span style=''>
+</span>168 <span style=''>    </span><span style='background: #AEF1AE'>buildResponse(WebSocketSeparatePipe(send, finalReceive, onClose))</span><span style=''>
+</span>169 <span style=''>  }
+</span>170 <span style=''>
+</span>171 <span style=''>  private val isPingPong: WebSocketFrame =&gt; Boolean = {
+</span>172 <span style=''>    case _: WebSocketFrame.Ping =&gt; </span><span style='background: #AEF1AE'>true</span><span style=''>
+</span>173 <span style=''>    case _: WebSocketFrame.Pong =&gt; </span><span style='background: #F0ADAD'>true</span><span style=''>
+</span>174 <span style=''>    case _ =&gt; </span><span style='background: #AEF1AE'>false</span><span style=''>
+</span>175 <span style=''>  }
+</span>176 <span style=''>
+</span>177 <span style=''>}
+</span>178 <span style=''>
+</span>179 <span style=''>object WebSocketBuilder2 {
+</span>180 <span style=''>  private[http4s] def apply[F[_]: Applicative](
+</span>181 <span style=''>      webSocketKey: Key[WebSocketContext[F]]
+</span>182 <span style=''>  ): WebSocketBuilder2[F] =
+</span>183 <span style=''>    </span><span style='background: #AEF1AE'>impl(
+</span>184 <span style=''></span><span style='background: #AEF1AE'>      headers = Headers.empty,
+</span>185 <span style=''></span><span style='background: #AEF1AE'>      onNonWebSocketRequest =
+</span>186 <span style=''></span><span style='background: #AEF1AE'>        Response[F](Status.NotImplemented).withEntity(&quot;This is a WebSocket route.&quot;).pure[F],
+</span>187 <span style=''></span><span style='background: #AEF1AE'>      onHandshakeFailure =
+</span>188 <span style=''></span><span style='background: #AEF1AE'>        Response[F](Status.BadRequest).withEntity(&quot;WebSocket handshake failed.&quot;).pure[F],
+</span>189 <span style=''></span><span style='background: #AEF1AE'>      onClose = Applicative[F].unit,
+</span>190 <span style=''></span><span style='background: #AEF1AE'>      filterPingPongs = true,
+</span>191 <span style=''></span><span style='background: #AEF1AE'>      webSocketKey = webSocketKey,
+</span>192 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>193 <span style=''>
+</span>194 <span style=''>  private def impl[F[_]: Applicative](
+</span>195 <span style=''>      headers: Headers,
+</span>196 <span style=''>      onNonWebSocketRequest: F[Response[F]],
+</span>197 <span style=''>      onHandshakeFailure: F[Response[F]],
+</span>198 <span style=''>      onClose: F[Unit],
+</span>199 <span style=''>      filterPingPongs: Boolean,
+</span>200 <span style=''>      webSocketKey: Key[WebSocketContext[F]],
+</span>201 <span style=''>  ): WebSocketBuilder2[F] =
+</span>202 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> WebSocketBuilder2[F](
+</span>203 <span style=''>      headers = headers,
+</span>204 <span style=''>      onNonWebSocketRequest = onNonWebSocketRequest,
+</span>205 <span style=''>      onHandshakeFailure = onHandshakeFailure,
+</span>206 <span style=''>      onClose = onClose,
+</span>207 <span style=''>      filterPingPongs = filterPingPongs,
+</span>208 <span style=''>      webSocketKey = webSocketKey,
+</span>209 <span style=''>    ) {}
+</span>210 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          9757
+        </td>
+        <td>
+          2344
+          -
+          2344
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.evidence$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.evidence$1
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          8794
+        </td>
+        <td>
+          2319
+          -
+          2465
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.impl[F](headers, onNonWebSocketRequest, onHandshakeFailure, onClose, filterPingPongs, webSocketKey)(WebSocketBuilder2.this.evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          7748
+        </td>
+        <td>
+          2531
+          -
+          2531
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          7679
+        </td>
+        <td>
+          2531
+          -
+          2531
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          9617
+        </td>
+        <td>
+          2531
+          -
+          2531
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          10011
+        </td>
+        <td>
+          2531
+          -
+          2531
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          8584
+        </td>
+        <td>
+          2531
+          -
+          2554
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy(headers, WebSocketBuilder2.this.copy$default$2, WebSocketBuilder2.this.copy$default$3, WebSocketBuilder2.this.copy$default$4, WebSocketBuilder2.this.copy$default$5, WebSocketBuilder2.this.copy$default$6)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          8868
+        </td>
+        <td>
+          2531
+          -
+          2531
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          7634
+        </td>
+        <td>
+          2655
+          -
+          2655
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          9006
+        </td>
+        <td>
+          2655
+          -
+          2706
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy(x$2, x$1, x$3, x$4, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          10019
+        </td>
+        <td>
+          2655
+          -
+          2655
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          8682
+        </td>
+        <td>
+          2655
+          -
+          2655
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          8012
+        </td>
+        <td>
+          2655
+          -
+          2655
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          9761
+        </td>
+        <td>
+          2655
+          -
+          2655
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          8100
+        </td>
+        <td>
+          2801
+          -
+          2801
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          9906
+        </td>
+        <td>
+          2801
+          -
+          2801
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          8787
+        </td>
+        <td>
+          2801
+          -
+          2846
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy(x$2, x$3, x$1, x$4, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          9729
+        </td>
+        <td>
+          2801
+          -
+          2801
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          8554
+        </td>
+        <td>
+          2801
+          -
+          2801
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          7749
+        </td>
+        <td>
+          2801
+          -
+          2801
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8630
+        </td>
+        <td>
+          2912
+          -
+          2935
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy(x$2, x$3, x$4, x$1, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7753
+        </td>
+        <td>
+          2912
+          -
+          2912
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          9012
+        </td>
+        <td>
+          2912
+          -
+          2912
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          9702
+        </td>
+        <td>
+          2912
+          -
+          2912
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          9965
+        </td>
+        <td>
+          2912
+          -
+          2912
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7725
+        </td>
+        <td>
+          2912
+          -
+          2912
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          7706
+        </td>
+        <td>
+          3017
+          -
+          3017
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          8061
+        </td>
+        <td>
+          3017
+          -
+          3017
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          9472
+        </td>
+        <td>
+          3017
+          -
+          3017
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          8963
+        </td>
+        <td>
+          3017
+          -
+          3056
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.copy(x$2, x$3, x$4, x$5, x$1, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          9914
+        </td>
+        <td>
+          3017
+          -
+          3017
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          8792
+        </td>
+        <td>
+          3017
+          -
+          3017
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          7815
+        </td>
+        <td>
+          3198
+          -
+          3423
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketBuilder2.impl[G](WebSocketBuilder2.this.headers, cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](fk.apply[org.http4s.Response[F]](WebSocketBuilder2.this.onNonWebSocketRequest))(evidence$2).map[org.http4s.Response[[_]G[_]]](((x$1: org.http4s.Response[F]) =&gt; x$1.mapK[[_]G[_]](fk))), cats.syntax.`package`.all.toFunctorOps[G, org.http4s.Response[F]](fk.apply[org.http4s.Response[F]](WebSocketBuilder2.this.onHandshakeFailure))(evidence$2).map[org.http4s.Response[[_]G[_]]](((x$2: org.http4s.Response[F]) =&gt; x$2.mapK[[_]G[_]](fk))), fk.apply[Unit](WebSocketBuilder2.this.onClose), WebSocketBuilder2.this.filterPingPongs, WebSocketBuilder2.this.webSocketKey.imap[org.http4s.websocket.WebSocketContext[[_]G[_]]](((x$3: org.http4s.websocket.WebSocketContext[F]) =&gt; x$3.imapK[[_]G[_]](fk)(gk)(evidence$2)))(((x$4: org.http4s.websocket.WebSocketContext[[_]G[_]]) =&gt; x$4.imapK[[_]F[_]](gk)(fk)(WebSocketBuilder2.this.evidence$1))))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          8603
+        </td>
+        <td>
+          3500
+          -
+          3500
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.evidence$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.evidence$1
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          9707
+        </td>
+        <td>
+          3500
+          -
+          3521
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.onNonWebSocketRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.onNonWebSocketRequest
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          8900
+        </td>
+        <td>
+          3500
+          -
+          3717
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[F]](WebSocketBuilder2.this.onNonWebSocketRequest)(WebSocketBuilder2.this.evidence$1).map[org.http4s.Response[F]](((x$5: org.http4s.Response[F]) =&gt; x$5.withAttribute[org.http4s.websocket.WebSocketContext[F]](WebSocketBuilder2.this.webSocketKey, org.http4s.websocket.WebSocketContext.apply[F](webSocket, WebSocketBuilder2.this.headers, WebSocketBuilder2.this.onHandshakeFailure))))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          9451
+        </td>
+        <td>
+          3542
+          -
+          3709
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withAttribute
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$5.withAttribute[org.http4s.websocket.WebSocketContext[F]](WebSocketBuilder2.this.webSocketKey, org.http4s.websocket.WebSocketContext.apply[F](webSocket, WebSocketBuilder2.this.headers, WebSocketBuilder2.this.onHandshakeFailure))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          8011
+        </td>
+        <td>
+          3569
+          -
+          3581
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.webSocketKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.webSocketKey
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          7707
+        </td>
+        <td>
+          3593
+          -
+          3698
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketContext.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.websocket.WebSocketContext.apply[F](webSocket, WebSocketBuilder2.this.headers, WebSocketBuilder2.this.onHandshakeFailure)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          9739
+        </td>
+        <td>
+          3646
+          -
+          3653
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.headers
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          8740
+        </td>
+        <td>
+          3667
+          -
+          3685
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.onHandshakeFailure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.onHandshakeFailure
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          7823
+        </td>
+        <td>
+          5756
+          -
+          5771
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.filterPingPongs
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.filterPingPongs
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          8017
+        </td>
+        <td>
+          5816
+          -
+          5849
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FunctorFilter.Ops.filterNot
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorFilterOps[[+O]fs2.Stream[F,O], org.http4s.websocket.WebSocketFrame](inputStream)(fs2.this.Stream.functorFilterInstance[[_]F[_]]).filterNot(WebSocketBuilder2.this.isPingPong)
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          9904
+        </td>
+        <td>
+          5781
+          -
+          5850
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.compose
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sendReceive.compose[fs2.Stream[F,org.http4s.websocket.WebSocketFrame]](((inputStream: fs2.Stream[F,org.http4s.websocket.WebSocketFrame]) =&gt; cats.syntax.`package`.all.toFunctorFilterOps[[+O]fs2.Stream[F,O], org.http4s.websocket.WebSocketFrame](inputStream)(fs2.this.Stream.functorFilterInstance[[_]F[_]]).filterNot(WebSocketBuilder2.this.isPingPong)))
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          8552
+        </td>
+        <td>
+          5838
+          -
+          5848
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.isPingPong
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.isPingPong
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          9670
+        </td>
+        <td>
+          5816
+          -
+          5816
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.Stream.functorFilterInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.functorFilterInstance[[_]F[_]]
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          8747
+        </td>
+        <td>
+          5781
+          -
+          5850
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Function1.compose
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sendReceive.compose[fs2.Stream[F,org.http4s.websocket.WebSocketFrame]](((inputStream: fs2.Stream[F,org.http4s.websocket.WebSocketFrame]) =&gt; cats.syntax.`package`.all.toFunctorFilterOps[[+O]fs2.Stream[F,O], org.http4s.websocket.WebSocketFrame](inputStream)(fs2.this.Stream.functorFilterInstance[[_]F[_]]).filterNot(WebSocketBuilder2.this.isPingPong)))
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          7683
+        </td>
+        <td>
+          5870
+          -
+          5881
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.sendReceive
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          sendReceive
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          8905
+        </td>
+        <td>
+          5901
+          -
+          5949
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketCombinedPipe.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.websocket.WebSocketCombinedPipe.apply[F](finalSendReceive, WebSocketBuilder2.this.onClose)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          9454
+        </td>
+        <td>
+          5941
+          -
+          5948
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.onClose
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.onClose
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          7910
+        </td>
+        <td>
+          5887
+          -
+          5950
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.buildResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.buildResponse(org.http4s.websocket.WebSocketCombinedPipe.apply[F](finalSendReceive, WebSocketBuilder2.this.onClose))
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          9676
+        </td>
+        <td>
+          8096
+          -
+          8111
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.filterPingPongs
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.filterPingPongs
+        </td>
+      </tr><tr>
+        <td>
+          164
+        </td>
+        <td>
+          7440
+        </td>
+        <td>
+          8121
+          -
+          8161
+        </td>
+        <td>
+          Function
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.$anonfun
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ((x$6: fs2.Stream[F,org.http4s.websocket.WebSocketFrame]) =&gt; cats.syntax.`package`.all.toFunctorFilterOps[[+O]fs2.Stream[F,O], org.http4s.websocket.WebSocketFrame](x$6)(fs2.this.Stream.functorFilterInstance[[_]F[_]]).filterNot(WebSocketBuilder2.this.isPingPong).through[[x]F[x], Unit](receive))
+        </td>
+      </tr><tr>
+        <td>
+          164
+        </td>
+        <td>
+          8504
+        </td>
+        <td>
+          8121
+          -
+          8161
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.through
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorFilterOps[[+O]fs2.Stream[F,O], org.http4s.websocket.WebSocketFrame](x$6)(fs2.this.Stream.functorFilterInstance[[_]F[_]]).filterNot(WebSocketBuilder2.this.isPingPong).through[[x]F[x], Unit](receive)
+        </td>
+      </tr><tr>
+        <td>
+          166
+        </td>
+        <td>
+          9912
+        </td>
+        <td>
+          8181
+          -
+          8188
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.receive
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          receive
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          7591
+        </td>
+        <td>
+          8208
+          -
+          8258
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketSeparatePipe.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.websocket.WebSocketSeparatePipe.apply[F](send, finalReceive, WebSocketBuilder2.this.onClose)
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          9457
+        </td>
+        <td>
+          8194
+          -
+          8259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.buildResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.buildResponse(org.http4s.websocket.WebSocketSeparatePipe.apply[F](send, finalReceive, WebSocketBuilder2.this.onClose))
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          8826
+        </td>
+        <td>
+          8250
+          -
+          8257
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.onClose
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.onClose
+        </td>
+      </tr><tr>
+        <td>
+          172
+        </td>
+        <td>
+          8961
+        </td>
+        <td>
+          8356
+          -
+          8360
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          7918
+        </td>
+        <td>
+          8396
+          -
+          8400
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          9732
+        </td>
+        <td>
+          8415
+          -
+          8420
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          8513
+        </td>
+        <td>
+          8581
+          -
+          8965
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.impl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketBuilder2.this.impl[F](Headers.empty, cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](Response.apply[F](Status.NotImplemented, Response.apply$default$2[F], Response.apply$default$3[F], Response.apply$default$4[F], Response.apply$default$5[F]).withEntity[String](&quot;This is a WebSocket route.&quot;)(http4s.this.EntityEncoder.stringEncoder[[_]F[_]](http4s.this.EntityEncoder.stringEncoder$default$1[[_]F[_]]))).pure[F](evidence$3), cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](Response.apply[F](Status.BadRequest, Response.apply$default$2[F], Response.apply$default$3[F], Response.apply$default$4[F], Response.apply$default$5[F]).withEntity[String](&quot;WebSocket handshake failed.&quot;)(http4s.this.EntityEncoder.stringEncoder[[_]F[_]](http4s.this.EntityEncoder.stringEncoder$default$1[[_]F[_]]))).pure[F](evidence$3), cats.Applicative.apply[F](evidence$3).unit, true, webSocketKey)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          202
+        </td>
+        <td>
+          7441
+        </td>
+        <td>
+          9251
+          -
+          9254
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.websocket.WebSocketBuilder2.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,4265 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ember/server/internal/WebSocketHelpers.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2019 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.ember.server.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.MonadThrow
+</span>20 <span style=''>import cats.data.NonEmptyList
+</span>21 <span style=''>import cats.effect.Async
+</span>22 <span style=''>import cats.effect.Concurrent
+</span>23 <span style=''>import cats.effect.Ref
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>import fs2.Chunk
+</span>26 <span style=''>import fs2.Pipe
+</span>27 <span style=''>import fs2.Pull
+</span>28 <span style=''>import fs2.Stream
+</span>29 <span style=''>import fs2.concurrent.SignallingRef
+</span>30 <span style=''>import fs2.io.net._
+</span>31 <span style=''>import org.http4s._
+</span>32 <span style=''>import org.http4s.crypto.Hash
+</span>33 <span style=''>import org.http4s.crypto.HashAlgorithm
+</span>34 <span style=''>import org.http4s.ember.core.Read
+</span>35 <span style=''>import org.http4s.ember.core.Util.timeoutMaybe
+</span>36 <span style=''>import org.http4s.headers.Connection
+</span>37 <span style=''>import org.http4s.headers._
+</span>38 <span style=''>import org.http4s.syntax.all._
+</span>39 <span style=''>import org.http4s.websocket.FrameTranscoder
+</span>40 <span style=''>import org.http4s.websocket.Rfc6455
+</span>41 <span style=''>import org.http4s.websocket.WebSocketCombinedPipe
+</span>42 <span style=''>import org.http4s.websocket.WebSocketContext
+</span>43 <span style=''>import org.http4s.websocket.WebSocketFrame
+</span>44 <span style=''>import org.http4s.websocket.WebSocketSeparatePipe
+</span>45 <span style=''>import org.typelevel.ci._
+</span>46 <span style=''>import org.typelevel.log4cats.Logger
+</span>47 <span style=''>import scodec.bits.ByteVector
+</span>48 <span style=''>
+</span>49 <span style=''>import java.io.IOException
+</span>50 <span style=''>import java.nio.ByteBuffer
+</span>51 <span style=''>import scala.concurrent.duration.Duration
+</span>52 <span style=''>
+</span>53 <span style=''>object WebSocketHelpers {
+</span>54 <span style=''>
+</span>55 <span style=''>  private[this] val supportedWebSocketVersion = </span><span style='background: #AEF1AE'>13L</span><span style=''>
+</span>56 <span style=''>
+</span>57 <span style=''>  private[this] val upgradeCi = </span><span style='background: #AEF1AE'>ci&quot;upgrade&quot;</span><span style=''>
+</span>58 <span style=''>  private[this] val webSocketProtocol = </span><span style='background: #AEF1AE'>Protocol(ci&quot;websocket&quot;, None)</span><span style=''>
+</span>59 <span style=''>  private[this] val connectionUpgrade = </span><span style='background: #AEF1AE'>Connection(NonEmptyList.of(upgradeCi))</span><span style=''>
+</span>60 <span style=''>  private[this] val upgradeWebSocket = </span><span style='background: #AEF1AE'>Upgrade(webSocketProtocol)</span><span style=''>
+</span>61 <span style=''>
+</span>62 <span style=''>  // TODO followup: use websocketcontext responses for error modes
+</span>63 <span style=''>  def upgrade[F[_]](
+</span>64 <span style=''>      socket: Socket[F],
+</span>65 <span style=''>      req: Request[F],
+</span>66 <span style=''>      ctx: WebSocketContext[F],
+</span>67 <span style=''>      buffer: Array[Byte],
+</span>68 <span style=''>      receiveBufferSize: Int,
+</span>69 <span style=''>      idleTimeout: Duration,
+</span>70 <span style=''>      onWriteFailure: (Option[Request[F]], Response[F], Throwable) =&gt; F[Unit],
+</span>71 <span style=''>      errorHandler: Throwable =&gt; F[Response[F]],
+</span>72 <span style=''>      logger: Logger[F],
+</span>73 <span style=''>  )(implicit F: Async[F]): F[Unit] = {
+</span>74 <span style=''>    val wsResponse = </span><span style='background: #AEF1AE'>clientHandshake(req)</span><span style=''> match {
+</span>75 <span style=''>      case Right(key) =&gt;
+</span>76 <span style=''>        </span><span style='background: #AEF1AE'>serverHandshake(key)
+</span>77 <span style=''></span><span style='background: #AEF1AE'>          .map { hashBytes =&gt;
+</span>78 <span style=''></span><span style='background: #AEF1AE'>            val secWebSocketAccept = new `Sec-WebSocket-Accept`(hashBytes)
+</span>79 <span style=''></span><span style='background: #AEF1AE'>            val headers =
+</span>80 <span style=''></span><span style='background: #AEF1AE'>              ctx.headers ++ Headers(connectionUpgrade, upgradeWebSocket, secWebSocketAccept)
+</span>81 <span style=''></span><span style='background: #AEF1AE'>            Response[F](Status.SwitchingProtocols)
+</span>82 <span style=''></span><span style='background: #AEF1AE'>              .withHeaders(headers)
+</span>83 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>84 <span style=''></span><span style='background: #AEF1AE'>          .handleErrorWith(errorHandler)</span><span style=''>
+</span>85 <span style=''>      case Left(error) =&gt;
+</span>86 <span style=''>        </span><span style='background: #F0ADAD'>Response[F](error.status).withEntity(error.message).pure[F]</span><span style=''>
+</span>87 <span style=''>    }
+</span>88 <span style=''>
+</span>89 <span style=''>    val handler = </span><span style='background: #AEF1AE'>for {
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      response &lt;- wsResponse
+</span>91 <span style=''></span><span style='background: #AEF1AE'>      _ &lt;- ServerHelpers.send(socket)(Some(req), response, idleTimeout, onWriteFailure)
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      _ &lt;-
+</span>93 <span style=''></span><span style='background: #AEF1AE'>        if (response.status == Status.SwitchingProtocols)
+</span>94 <span style=''></span><span style='background: #AEF1AE'>          runConnection(socket, ctx, buffer, receiveBufferSize, idleTimeout)
+</span>95 <span style=''></span><span style='background: #AEF1AE'>        else </span><span style='background: #F0ADAD'>F.unit</span><span style='background: #AEF1AE'>
+</span>96 <span style=''></span><span style='background: #AEF1AE'>    } yield ()</span><span style=''>
+</span>97 <span style=''>
+</span>98 <span style=''>    </span><span style='background: #AEF1AE'>handler.handleErrorWith {
+</span>99 <span style=''></span><span style='background: #AEF1AE'>      case e @ BrokenPipeError() =&gt;
+</span>100 <span style=''></span><span style='background: #AEF1AE'>        logger.trace(e)(&quot;WebSocket connection abruptly terminated by client&quot;)
+</span>101 <span style=''></span><span style='background: #AEF1AE'>      case e =&gt; logger.error(e)(&quot;WebSocket connection terminated with exception&quot;)
+</span>102 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>103 <span style=''>  }
+</span>104 <span style=''>
+</span>105 <span style=''>  private def runConnection[F[_]](
+</span>106 <span style=''>      socket: Socket[F],
+</span>107 <span style=''>      ctx: WebSocketContext[F],
+</span>108 <span style=''>      buffer: Array[Byte],
+</span>109 <span style=''>      receiveBufferSize: Int,
+</span>110 <span style=''>      idleTimeout: Duration,
+</span>111 <span style=''>  )(implicit F: Async[F]): F[Unit] = {
+</span>112 <span style=''>    val read: Read[F] = </span><span style='background: #AEF1AE'>timeoutMaybe(socket.read(receiveBufferSize), idleTimeout)</span><span style=''>
+</span>113 <span style=''>    def write(s: Stream[F, Byte]) =
+</span>114 <span style=''>      </span><span style='background: #AEF1AE'>s.chunks.foreach(c =&gt; timeoutMaybe(socket.write(c), idleTimeout))</span><span style=''>
+</span>115 <span style=''>    val frameTranscoder = </span><span style='background: #AEF1AE'>new FrameTranscoder(false)</span><span style=''>
+</span>116 <span style=''>
+</span>117 <span style=''>    val incoming = </span><span style='background: #AEF1AE'>Stream.chunk(Chunk.array(buffer)) ++ readStream(read)</span><span style=''>
+</span>118 <span style=''>
+</span>119 <span style=''>    // TODO followup: handle close frames from the user?
+</span>120 <span style=''>    </span><span style='background: #AEF1AE'>SignallingRef[F, Close](Open).flatMap { close =&gt;
+</span>121 <span style=''></span><span style='background: #AEF1AE'>      val (stream, onClose) = ctx.webSocket match {
+</span>122 <span style=''></span><span style='background: #AEF1AE'>        case WebSocketCombinedPipe(receiveSend, onClose) =&gt;
+</span>123 <span style=''></span><span style='background: #AEF1AE'>          incoming
+</span>124 <span style=''></span><span style='background: #AEF1AE'>            .through(decodeFrames(frameTranscoder))
+</span>125 <span style=''></span><span style='background: #AEF1AE'>            .through(handleIncomingFrames(write, frameTranscoder, close))
+</span>126 <span style=''></span><span style='background: #AEF1AE'>            .through(receiveSend)
+</span>127 <span style=''></span><span style='background: #AEF1AE'>            .through(encodeFrames(frameTranscoder))
+</span>128 <span style=''></span><span style='background: #AEF1AE'>            .through(write) -&gt; onClose
+</span>129 <span style=''></span><span style='background: #AEF1AE'>        case WebSocketSeparatePipe(send, receive, onClose) =&gt;
+</span>130 <span style=''></span><span style='background: #AEF1AE'>          val closeFrame: F[Stream[F, WebSocketFrame]] = close.get.flatMap {
+</span>131 <span style=''></span><span style='background: #AEF1AE'>            case Open =&gt;
+</span>132 <span style=''></span><span style='background: #AEF1AE'>              for {
+</span>133 <span style=''></span><span style='background: #AEF1AE'>                frame &lt;- F.fromEither(WebSocketFrame.Close(1000))
+</span>134 <span style=''></span><span style='background: #AEF1AE'>                _ &lt;- close.update {
+</span>135 <span style=''></span><span style='background: #AEF1AE'>                  case Open =&gt; EndpointClosed
+</span>136 <span style=''></span><span style='background: #AEF1AE'>                  case _ =&gt; BothClosed
+</span>137 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>138 <span style=''></span><span style='background: #AEF1AE'>              } yield Stream(frame)
+</span>139 <span style=''></span><span style='background: #AEF1AE'>            case _ =&gt; F.pure(Stream.empty)
+</span>140 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>141 <span style=''></span><span style='background: #AEF1AE'>          val sendWithClose = send ++ Stream.eval(closeFrame).flatten
+</span>142 <span style=''></span><span style='background: #AEF1AE'>
+</span>143 <span style=''></span><span style='background: #AEF1AE'>          val writer = sendWithClose
+</span>144 <span style=''></span><span style='background: #AEF1AE'>            .through(encodeFrames(frameTranscoder))
+</span>145 <span style=''></span><span style='background: #AEF1AE'>            .through(write)
+</span>146 <span style=''></span><span style='background: #AEF1AE'>
+</span>147 <span style=''></span><span style='background: #AEF1AE'>          val reader = incoming
+</span>148 <span style=''></span><span style='background: #AEF1AE'>            .through(decodeFrames(frameTranscoder))
+</span>149 <span style=''></span><span style='background: #AEF1AE'>            .through(handleIncomingFrames(write, frameTranscoder, close))
+</span>150 <span style=''></span><span style='background: #AEF1AE'>            .through(receive)
+</span>151 <span style=''></span><span style='background: #AEF1AE'>
+</span>152 <span style=''></span><span style='background: #AEF1AE'>          reader.concurrently(writer) -&gt; onClose
+</span>153 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>154 <span style=''></span><span style='background: #AEF1AE'>
+</span>155 <span style=''></span><span style='background: #AEF1AE'>      stream
+</span>156 <span style=''></span><span style='background: #AEF1AE'>        .interruptWhen(close.map(_ == BothClosed))
+</span>157 <span style=''></span><span style='background: #AEF1AE'>        .onFinalize(onClose)
+</span>158 <span style=''></span><span style='background: #AEF1AE'>        .compile
+</span>159 <span style=''></span><span style='background: #AEF1AE'>        .drain
+</span>160 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>161 <span style=''>  }
+</span>162 <span style=''>
+</span>163 <span style=''>  private def handleIncomingFrames[F[_]](
+</span>164 <span style=''>      write: Pipe[F, Byte, Unit],
+</span>165 <span style=''>      frameTranscoder: FrameTranscoder,
+</span>166 <span style=''>      closeState: Ref[F, Close],
+</span>167 <span style=''>  )(implicit F: Concurrent[F]): Pipe[F, WebSocketFrame, WebSocketFrame] = {
+</span>168 <span style=''>    def writeFrame(frame: WebSocketFrame): F[Unit] =
+</span>169 <span style=''>      </span><span style='background: #AEF1AE'>Stream(frame).through(encodeFrames(frameTranscoder)).through(write).compile.drain</span><span style=''>
+</span>170 <span style=''>
+</span>171 <span style=''>    stream =&gt;
+</span>172 <span style=''>      </span><span style='background: #AEF1AE'>stream.evalMapFilter[F, WebSocketFrame] {
+</span>173 <span style=''></span><span style='background: #AEF1AE'>        case ping @ WebSocketFrame.Ping(data) =&gt;
+</span>174 <span style=''></span><span style='background: #AEF1AE'>          writeFrame(WebSocketFrame.Pong(data)).as(ping.some)
+</span>175 <span style=''></span><span style='background: #AEF1AE'>        case frame @ WebSocketFrame.Close(_) =&gt;
+</span>176 <span style=''></span><span style='background: #AEF1AE'>          closeState.get.flatMap {
+</span>177 <span style=''></span><span style='background: #AEF1AE'>            case Open =&gt;
+</span>178 <span style=''></span><span style='background: #AEF1AE'>              for {
+</span>179 <span style=''></span><span style='background: #AEF1AE'>                frame &lt;- F.fromEither(WebSocketFrame.Close(frame.closeCode))
+</span>180 <span style=''></span><span style='background: #AEF1AE'>                _ &lt;- writeFrame(frame)
+</span>181 <span style=''></span><span style='background: #AEF1AE'>                _ &lt;- closeState.set(BothClosed)
+</span>182 <span style=''></span><span style='background: #AEF1AE'>              } yield None
+</span>183 <span style=''></span><span style='background: #AEF1AE'>            case _ =&gt; F.pure(None)
+</span>184 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>185 <span style=''></span><span style='background: #AEF1AE'>        case x =&gt; F.pure(Some(x))
+</span>186 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>187 <span style=''>  }
+</span>188 <span style=''>
+</span>189 <span style=''>  private def encodeFrames[F[_]](frameTranscoder: FrameTranscoder): Pipe[F, WebSocketFrame, Byte] =
+</span>190 <span style=''>    stream =&gt;
+</span>191 <span style=''>      </span><span style='background: #AEF1AE'>stream.flatMap { frame =&gt;
+</span>192 <span style=''></span><span style='background: #AEF1AE'>        val chunks = frameTranscoder.frameToBuffer(frame).map { buffer =&gt;
+</span>193 <span style=''></span><span style='background: #AEF1AE'>          // TODO followup: improve the buffering here
+</span>194 <span style=''></span><span style='background: #AEF1AE'>          val bytes = new Array[Byte](buffer.remaining())
+</span>195 <span style=''></span><span style='background: #AEF1AE'>          buffer.get(bytes)
+</span>196 <span style=''></span><span style='background: #AEF1AE'>          Chunk.array(bytes)
+</span>197 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>198 <span style=''></span><span style='background: #AEF1AE'>        Stream
+</span>199 <span style=''></span><span style='background: #AEF1AE'>          .iterable(chunks)
+</span>200 <span style=''></span><span style='background: #AEF1AE'>          .flatMap(Stream.chunk(_))
+</span>201 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>202 <span style=''>
+</span>203 <span style=''>  private def decodeFrames[F[_]](
+</span>204 <span style=''>      frameTranscoder: FrameTranscoder
+</span>205 <span style=''>  )(implicit F: Async[F]): Pipe[F, Byte, WebSocketFrame] = stream =&gt; {
+</span>206 <span style=''>    def go(rest: Stream[F, Byte], acc: Array[Byte]): Pull[F, WebSocketFrame, Unit] =
+</span>207 <span style=''>      </span><span style='background: #AEF1AE'>rest.pull.uncons.flatMap {
+</span>208 <span style=''></span><span style='background: #AEF1AE'>        case Some((chunk, next)) =&gt;
+</span>209 <span style=''></span><span style='background: #AEF1AE'>          val buffer = acc ++ chunk.toArray[Byte]
+</span>210 <span style=''></span><span style='background: #AEF1AE'>          val byteBuffer = ByteBuffer.wrap(buffer)
+</span>211 <span style=''></span><span style='background: #AEF1AE'>          Pull
+</span>212 <span style=''></span><span style='background: #AEF1AE'>            .eval(F.delay(frameTranscoder.bufferToFrame(byteBuffer)))
+</span>213 <span style=''></span><span style='background: #AEF1AE'>            .flatMap { value =&gt;
+</span>214 <span style=''></span><span style='background: #AEF1AE'>              // TODO followup: improve this buffering
+</span>215 <span style=''></span><span style='background: #AEF1AE'>              if (value != null) {
+</span>216 <span style=''></span><span style='background: #AEF1AE'>                val remaining = new Array[Byte](byteBuffer.remaining())
+</span>217 <span style=''></span><span style='background: #AEF1AE'>                byteBuffer.get(remaining)
+</span>218 <span style=''></span><span style='background: #AEF1AE'>                Pull.output1(value) &gt;&gt; go(next, remaining)
+</span>219 <span style=''></span><span style='background: #AEF1AE'>              } else {
+</span>220 <span style=''></span><span style='background: #AEF1AE'>                </span><span style='background: #F0ADAD'>go(next, buffer)</span><span style='background: #AEF1AE'>
+</span>221 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>222 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>223 <span style=''></span><span style='background: #AEF1AE'>        case None =&gt;
+</span>224 <span style=''></span><span style='background: #AEF1AE'>          // TODO followup: sometimes the peer closes connection before stream can interrupt itself
+</span>225 <span style=''></span><span style='background: #AEF1AE'>          Pull.raiseError(EndOfStreamError())
+</span>226 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>227 <span style=''>
+</span>228 <span style=''>    </span><span style='background: #AEF1AE'>go(stream, Array.emptyByteArray).void.stream</span><span style=''>
+</span>229 <span style=''>  }
+</span>230 <span style=''>
+</span>231 <span style=''>  private def clientHandshake[F[_]](req: Request[F]): Either[ClientHandshakeError, String] = {
+</span>232 <span style=''>    val connection = </span><span style='background: #AEF1AE'>req.headers.get[Connection]</span><span style=''> match {
+</span>233 <span style=''>      case Some(header) if </span><span style='background: #AEF1AE'>header.hasUpgrade</span><span style=''> =&gt; </span><span style='background: #AEF1AE'>Either.unit</span><span style=''>
+</span>234 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>Left(UpgradeRequired)</span><span style=''>
+</span>235 <span style=''>    }
+</span>236 <span style=''>
+</span>237 <span style=''>    val upgrade = </span><span style='background: #AEF1AE'>req.headers.get[Upgrade]</span><span style=''> match {
+</span>238 <span style=''>      case Some(header) if </span><span style='background: #AEF1AE'>header.values.contains_(webSocketProtocol)</span><span style=''> =&gt; </span><span style='background: #AEF1AE'>Either.unit</span><span style=''>
+</span>239 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>Left(UpgradeRequired)</span><span style=''>
+</span>240 <span style=''>    }
+</span>241 <span style=''>
+</span>242 <span style=''>    val version = </span><span style='background: #AEF1AE'>req.headers.get[`Sec-WebSocket-Version`]</span><span style=''> match {
+</span>243 <span style=''>      case Some(header) if </span><span style='background: #AEF1AE'>header.version == supportedWebSocketVersion</span><span style=''> =&gt; </span><span style='background: #AEF1AE'>Either.unit</span><span style=''>
+</span>244 <span style=''>      case Some(header) =&gt; </span><span style='background: #F0ADAD'>Left(UnsupportedVersion(supportedWebSocketVersion, header.version))</span><span style=''>
+</span>245 <span style=''>      case None =&gt; </span><span style='background: #F0ADAD'>Left(VersionNotFound)</span><span style=''>
+</span>246 <span style=''>    }
+</span>247 <span style=''>
+</span>248 <span style=''>    val key = </span><span style='background: #AEF1AE'>req.headers.get[`Sec-WebSocket-Key`]</span><span style=''> match {
+</span>249 <span style=''>      case Some(header) =&gt; </span><span style='background: #AEF1AE'>Right(header.value)</span><span style=''>
+</span>250 <span style=''>      case None =&gt; </span><span style='background: #F0ADAD'>Left(KeyNotFound)</span><span style=''>
+</span>251 <span style=''>    }
+</span>252 <span style=''>
+</span>253 <span style=''>    </span><span style='background: #AEF1AE'>(connection, upgrade, version, key).mapN { case (_, _, _, key) =&gt; key }</span><span style=''>
+</span>254 <span style=''>  }
+</span>255 <span style=''>
+</span>256 <span style=''>  private[this] val magic = </span><span style='background: #AEF1AE'>ByteVector.view(Rfc6455.handshakeMagicBytes)</span><span style=''>
+</span>257 <span style=''>
+</span>258 <span style=''>  private def serverHandshake[F[_]](value: String)(implicit F: MonadThrow[F]): F[ByteVector] = </span><span style='background: #AEF1AE'>for {
+</span>259 <span style=''></span><span style='background: #AEF1AE'>    value &lt;- ByteVector.encodeAscii(value).liftTo[F]
+</span>260 <span style=''></span><span style='background: #AEF1AE'>    digest &lt;- Hash[F].digest(HashAlgorithm.SHA1, value ++ magic)
+</span>261 <span style=''></span><span style='background: #AEF1AE'>  } yield digest</span><span style=''>
+</span>262 <span style=''>
+</span>263 <span style=''>  private def readStream[F[_]](read: Read[F]): Stream[F, Byte] =
+</span>264 <span style=''>    </span><span style='background: #AEF1AE'>Stream.eval(read).flatMap {
+</span>265 <span style=''></span><span style='background: #AEF1AE'>      case Some(bytes) =&gt;
+</span>266 <span style=''></span><span style='background: #AEF1AE'>        Stream.chunk(bytes) ++ readStream(read)
+</span>267 <span style=''></span><span style='background: #AEF1AE'>      case None =&gt; Stream.empty
+</span>268 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>269 <span style=''>
+</span>270 <span style=''>  sealed abstract class Close
+</span>271 <span style=''>  case object Open extends Close
+</span>272 <span style=''>  case object PeerClosed extends Close
+</span>273 <span style=''>  case object EndpointClosed extends Close
+</span>274 <span style=''>  case object BothClosed extends Close
+</span>275 <span style=''>
+</span>276 <span style=''>  sealed abstract class ClientHandshakeError(val status: Status, val message: String)
+</span>277 <span style=''>  case object VersionNotFound
+</span>278 <span style=''>      extends ClientHandshakeError(Status.BadRequest, &quot;Sec-WebSocket-Version header not present.&quot;)
+</span>279 <span style=''>  final case class UnsupportedVersion(supported: Long, requested: Long)
+</span>280 <span style=''>      extends ClientHandshakeError(
+</span>281 <span style=''>        Status.UpgradeRequired,
+</span>282 <span style=''>        s&quot;This server only supports WebSocket version $supported.&quot;,
+</span>283 <span style=''>      )
+</span>284 <span style=''>  case object UpgradeRequired
+</span>285 <span style=''>      extends ClientHandshakeError(
+</span>286 <span style=''>        Status.UpgradeRequired,
+</span>287 <span style=''>        &quot;Upgrade required for WebSocket communication.&quot;,
+</span>288 <span style=''>      )
+</span>289 <span style=''>  case object KeyNotFound
+</span>290 <span style=''>      extends ClientHandshakeError(Status.BadRequest, &quot;Sec-WebSocket-Key header not present.&quot;)
+</span>291 <span style=''>
+</span>292 <span style=''>  final case class EndOfStreamError() extends Exception(&quot;Reached End Of Stream&quot;)
+</span>293 <span style=''>
+</span>294 <span style=''>  object BrokenPipeError {
+</span>295 <span style=''>    def unapply(err: IOException): Boolean = </span><span style='background: #F0ADAD'>err.getMessage == &quot;Broken pipe&quot;</span><span style=''>
+</span>296 <span style=''>  }
+</span>297 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          10128
+        </td>
+        <td>
+          1716
+          -
+          1719
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          13L
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          10884
+        </td>
+        <td>
+          1753
+          -
+          1764
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;upgrade&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          10768
+        </td>
+        <td>
+          1805
+          -
+          1834
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Protocol.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Protocol.apply(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;websocket&quot;)).ci(), scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          10161
+        </td>
+        <td>
+          1829
+          -
+          1833
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          10501
+        </td>
+        <td>
+          1814
+          -
+          1827
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;websocket&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          10419
+        </td>
+        <td>
+          1902
+          -
+          1911
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.upgradeCi
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.upgradeCi
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          10262
+        </td>
+        <td>
+          1886
+          -
+          1912
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.of
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.of[org.typelevel.ci.CIString](WebSocketHelpers.this.upgradeCi)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          10785
+        </td>
+        <td>
+          1875
+          -
+          1913
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Connection.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Connection.apply(cats.data.NonEmptyList.of[org.typelevel.ci.CIString](WebSocketHelpers.this.upgradeCi))
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          10154
+        </td>
+        <td>
+          1953
+          -
+          1979
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Upgrade.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Upgrade.apply(WebSocketHelpers.this.webSocketProtocol)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          10485
+        </td>
+        <td>
+          1961
+          -
+          1978
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.webSocketProtocol
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.webSocketProtocol
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          10887
+        </td>
+        <td>
+          2448
+          -
+          2468
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.clientHandshake
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.clientHandshake[[_]F[_]](req)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          10542
+        </td>
+        <td>
+          2510
+          -
+          2895
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.handleErrorWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, org.http4s.Response[F]](cats.syntax.`package`.all.toFunctorOps[F, scodec.bits.ByteVector](WebSocketHelpers.this.serverHandshake[[_]F[_]](key)(F))(F).map[org.http4s.Response[F]](((hashBytes: scodec.bits.ByteVector) =&gt; {
+  val secWebSocketAccept: org.http4s.headers.Sec-WebSocket-Accept = new org.http4s.headers.Sec-WebSocket-Accept(hashBytes);
+  val headers: org.http4s.Headers = ctx.headers.++(org.http4s.Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](WebSocketHelpers.this.connectionUpgrade)(headers.this.Connection.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Upgrade](WebSocketHelpers.this.upgradeWebSocket)(headers.this.Upgrade.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Sec-WebSocket-Accept](secWebSocketAccept)(headers.this.Sec-WebSocket-Accept.headerInstance)));
+  org.http4s.Response.apply[F](org.http4s.Status.SwitchingProtocols, org.http4s.Response.apply$default$2[F], org.http4s.Response.apply$default$3[F], org.http4s.Response.apply$default$4[F], org.http4s.Response.apply$default$5[F]).withHeaders(headers)
+})))(F).handleErrorWith(errorHandler)(F)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          10178
+        </td>
+        <td>
+          2930
+          -
+          2989
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](org.http4s.Response.apply[F](error.status, org.http4s.Response.apply$default$2[F], org.http4s.Response.apply$default$3[F], org.http4s.Response.apply$default$4[F], org.http4s.Response.apply$default$5[F]).withEntity[String](error.message)(http4s.this.EntityEncoder.stringEncoder[[_]F[_]](http4s.this.EntityEncoder.stringEncoder$default$1[[_]F[_]]))).pure[F](F)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          10182
+        </td>
+        <td>
+          3015
+          -
+          3318
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[F]](wsResponse)(F).flatMap[Unit](((response: org.http4s.Response[F]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), response, idleTimeout, onWriteFailure)(F))(F).flatMap[Unit](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+  case _ =&gt; if (response.status.==(org.http4s.Status.SwitchingProtocols))
+    WebSocketHelpers.this.runConnection[[_]F[_]](socket, ctx, buffer, receiveBufferSize, idleTimeout)(F)
+  else
+    F.unit
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          10771
+        </td>
+        <td>
+          3061
+          -
+          3137
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.ServerHelpers.send
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ServerHelpers.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), response, idleTimeout, onWriteFailure)(F)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          10546
+        </td>
+        <td>
+          3056
+          -
+          3318
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](ServerHelpers.send[[_]F[_]](socket)(scala.Some.apply[org.http4s.Request[F]](req), response, idleTimeout, onWriteFailure)(F))(F).flatMap[Unit](((x$2: Unit) =&gt; (x$2: Unit @unchecked) match {
+  case _ =&gt; if (response.status.==(org.http4s.Status.SwitchingProtocols))
+    WebSocketHelpers.this.runConnection[[_]F[_]](socket, ctx, buffer, receiveBufferSize, idleTimeout)(F)
+  else
+    F.unit
+}))
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          10266
+        </td>
+        <td>
+          3161
+          -
+          3205
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.status.==(org.http4s.Status.SwitchingProtocols)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          10414
+        </td>
+        <td>
+          3180
+          -
+          3205
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.SwitchingProtocols
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Status.SwitchingProtocols
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          10823
+        </td>
+        <td>
+          3217
+          -
+          3283
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.runConnection
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.runConnection[[_]F[_]](socket, ctx, buffer, receiveBufferSize, idleTimeout)(F)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          10464
+        </td>
+        <td>
+          3217
+          -
+          3283
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.runConnection
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.runConnection[[_]F[_]](socket, ctx, buffer, receiveBufferSize, idleTimeout)(F)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          10155
+        </td>
+        <td>
+          3297
+          -
+          3303
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          10699
+        </td>
+        <td>
+          3297
+          -
+          3303
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          10756
+        </td>
+        <td>
+          3324
+          -
+          3551
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.handleErrorWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](handler)(F).handleErrorWith(((x0$1: Throwable) =&gt; x0$1 match {
+  case (e @ WebSocketHelpers.this.BrokenPipeError.unapply(&lt;unapply-selector&gt;) &lt;unapply&gt; ()) =&gt; logger.trace(e)(&quot;WebSocket connection abruptly terminated by client&quot;)
+  case (e @ _) =&gt; logger.error(e)(&quot;WebSocket connection terminated with exception&quot;)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          10415
+        </td>
+        <td>
+          3798
+          -
+          3855
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.Util.timeoutMaybe
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.Util.timeoutMaybe[F, Option[fs2.Chunk[Byte]]](socket.read(receiveBufferSize), idleTimeout)(F)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          10237
+        </td>
+        <td>
+          3920
+          -
+          3962
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.Util.timeoutMaybe
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.Util.timeoutMaybe[F, Unit](socket.write(c), idleTimeout)(F)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          10799
+        </td>
+        <td>
+          3898
+          -
+          3963
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          s.chunks.foreach[[x]F[x]](((c: fs2.Chunk[Byte]) =&gt; org.http4s.ember.core.Util.timeoutMaybe[F, Unit](socket.write(c), idleTimeout)(F)))
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          10467
+        </td>
+        <td>
+          3990
+          -
+          4016
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.FrameTranscoder.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.websocket.FrameTranscoder(false)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          10700
+        </td>
+        <td>
+          4074
+          -
+          4090
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.readStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.readStream[[_]F[_]](read)
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          10525
+        </td>
+        <td>
+          4037
+          -
+          4090
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](fs2.Chunk.array[Byte](buffer)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))).++[[_]F[_], Byte](WebSocketHelpers.this.readStream[[_]F[_]](read))
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          10108
+        </td>
+        <td>
+          4050
+          -
+          4069
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.array[Byte](buffer)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          10682
+        </td>
+        <td>
+          4153
+          -
+          5630
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, fs2.concurrent.SignallingRef[F,org.http4s.ember.server.internal.WebSocketHelpers.Close]](fs2.concurrent.SignallingRef.apply[F, org.http4s.ember.server.internal.WebSocketHelpers.Close](WebSocketHelpers.this.Open)(F))(F).flatMap[Unit](((close: fs2.concurrent.SignallingRef[F,org.http4s.ember.server.internal.WebSocketHelpers.Close]) =&gt; {
+  &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$4: (fs2.Stream[[x]F[x],Unit], F[Unit]) = (ctx.webSocket match {
+    case (receiveSend: fs2.Pipe[[_]F[_],org.http4s.websocket.WebSocketFrame,org.http4s.websocket.WebSocketFrame], onClose: F[Unit]): org.http4s.websocket.WebSocketCombinedPipe[[_]F[_]]((receiveSend @ _), (onClose @ _)) =&gt; scala.Predef.ArrowAssoc[fs2.Stream[[x]F[x],fs2.INothing]](incoming.through[[x]F[x], org.http4s.websocket.WebSocketFrame](WebSocketHelpers.this.decodeFrames[[_]F[_]](frameTranscoder)(F)).through[[x]F[x], org.http4s.websocket.WebSocketFrame](WebSocketHelpers.this.handleIncomingFrames[[_]F[_]](((s: fs2.Stream[F,Byte]) =&gt; write(s)), frameTranscoder, close)(F)).through[[x]F[x], org.http4s.websocket.WebSocketFrame](receiveSend).through[[x]F[x], Byte](WebSocketHelpers.this.encodeFrames[[x]F[x]](frameTranscoder)).through[[x]F[x], fs2.INothing](((s: fs2.Stream[F,Byte]) =&gt; write(s)))).-&gt;[F[Unit]](onClose)
+    case (send: fs2.Stream[[_]F[_],org.http4s.websocket.WebSocketFrame], receive: fs2.Pipe[[_]F[_],org.http4s.websocket.WebSocketFrame,Unit], onClose: F[Unit]): org.http4s.websocket.WebSocketSeparatePipe[[_]F[_]]((send @ _), (receive @ _), (onClose @ _)) =&gt; {
+      val closeFrame: F[fs2.Stream[F,org.http4s.websocket.WebSocketFrame]] = cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.server.internal.WebSocketHelpers.Close](close.get)(F).flatMap[fs2.Stream[F,org.http4s.websocket.WebSocketFrame]](((x0$1: org.http4s.ember.server.internal.WebSocketHelpers.Close) =&gt; x0$1 match {
+        case WebSocketHelpers.this.Open =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.websocket.WebSocketFrame.Close](F.fromEither[org.http4s.websocket.WebSocketFrame.Close](org.http4s.websocket.WebSocketFrame.Close.apply(1000)))(F).flatMap[fs2.Stream[F,org.http4s.websocket.WebSocketFrame]](((frame: org.http4s.websocket.WebSocketFrame.Close) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](close.update(((x0$2: org.http4s.ember.server.internal.WebSocketHelpers.Close) =&gt; x0$2 match {
+  case WebSocketHelpers.this.Open =&gt; WebSocketHelpers.this.EndpointClosed
+  case _ =&gt; WebSocketHelpers.this.BothClosed
+})))(F).map[fs2.Stream[F,org.http4s.websocket.WebSocketFrame]](((x$3: Unit) =&gt; (x$3: Unit @unchecked) match {
+          case _ =&gt; fs2.Stream.apply[[x]fs2.Pure[x], org.http4s.websocket.WebSocketFrame.Close](frame)
+        }))))
+        case _ =&gt; F.pure[fs2.Stream[F,org.http4s.websocket.WebSocketFrame]](fs2.Stream.empty)
+      }));
+      val sendWithClose: fs2.Stream[[x]F[x],org.http4s.websocket.WebSocketFrame] = send.++[[x]F[x], org.http4s.websocket.WebSocketFrame](fs2.Stream.eval[F, fs2.Stream[F,org.http4s.websocket.WebSocketFrame]](closeFrame).flatten[[x]F[x], org.http4s.websocket.WebSocketFrame](scala.this.&lt;:&lt;.refl[fs2.Stream[F,org.http4s.websocket.WebSocketFrame]]));
+      val writer: fs2.Stream[[x]F[x],fs2.INothing] = sendWithClose.through[[x]F[x], Byte](WebSocketHelpers.this.encodeFrames[[x]F[x]](frameTranscoder)).through[[x]F[x], fs2.INothing](((s: fs2.Stream[F,Byte]) =&gt; write(s)));
+      val reader: fs2.Stream[[x]F[x],Unit] = incoming.through[[x]F[x], org.http4s.websocket.WebSocketFrame](WebSocketHelpers.this.decodeFrames[[_]F[_]](frameTranscoder)(F)).through[[x]F[x], org.http4s.websocket.WebSocketFrame](WebSocketHelpers.this.handleIncomingFrames[[_]F[_]](((s: fs2.Stream[F,Byte]) =&gt; write(s)), frameTranscoder, close)(F)).through[[x]F[x], Unit](receive);
+      scala.Predef.ArrowAssoc[fs2.Stream[[x]F[x],Unit]](reader.concurrently[[x]F[x], fs2.INothing](writer)(F)).-&gt;[F[Unit]](onClose)
+    }
+  }: (fs2.Stream[[x]F[x],Unit], F[Unit]) @unchecked) match {
+    case (_1: fs2.Stream[[x]F[x],Unit], _2: F[Unit]): (fs2.Stream[[x]F[x],Unit], F[Unit])((stream @ _), (onClose @ _)) =&gt; scala.Tuple2.apply[fs2.Stream[[x]F[x],Unit], F[Unit]](stream, onClose)
+  };
+  val stream: fs2.Stream[[x]F[x],Unit] = x$4._1;
+  val onClose: F[Unit] = x$4._2;
+  stream.interruptWhen[[x]F[x]](concurrent.this.Signal.SignalOps[[_]F[_], org.http4s.ember.server.internal.WebSocketHelpers.Close](close).map[Boolean](((x$5: org.http4s.ember.server.internal.WebSocketHelpers.Close) =&gt; x$5.==(WebSocketHelpers.this.BothClosed)))(F))(F).onFinalize[[x]F[x]](onClose)(F).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain
+}))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          10218
+        </td>
+        <td>
+          4153
+          -
+          4182
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.concurrent.SignallingRef.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.concurrent.SignallingRef.apply[F, org.http4s.ember.server.internal.WebSocketHelpers.Close](WebSocketHelpers.this.Open)(F)
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          10760
+        </td>
+        <td>
+          4213
+          -
+          4213
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4._1
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          10395
+        </td>
+        <td>
+          4221
+          -
+          4221
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4._2
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          10240
+        </td>
+        <td>
+          5536
+          -
+          5562
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.concurrent.Signal.SignalOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          concurrent.this.Signal.SignalOps[[_]F[_], org.http4s.ember.server.internal.WebSocketHelpers.Close](close).map[Boolean](((x$5: org.http4s.ember.server.internal.WebSocketHelpers.Close) =&gt; x$5.==(WebSocketHelpers.this.BothClosed)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          10781
+        </td>
+        <td>
+          5602
+          -
+          5602
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](F)
+        </td>
+      </tr><tr>
+        <td>
+          158
+        </td>
+        <td>
+          10497
+        </td>
+        <td>
+          5602
+          -
+          5602
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          10109
+        </td>
+        <td>
+          5506
+          -
+          5624
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.CompileOps.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          stream.interruptWhen[[x]F[x]](concurrent.this.Signal.SignalOps[[_]F[_], org.http4s.ember.server.internal.WebSocketHelpers.Close](close).map[Boolean](((x$5: org.http4s.ember.server.internal.WebSocketHelpers.Close) =&gt; x$5.==(WebSocketHelpers.this.BothClosed)))(F))(F).onFinalize[[x]F[x]](onClose)(F).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          10751
+        </td>
+        <td>
+          5988
+          -
+          5988
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          10396
+        </td>
+        <td>
+          5920
+          -
+          6001
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.CompileOps.drain
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.apply[[x]fs2.Pure[x], org.http4s.websocket.WebSocketFrame](frame).through[[x]fs2.Pure[x], Byte](WebSocketHelpers.this.encodeFrames[[x]fs2.Pure[x]](frameTranscoder)).through[[_]F[_], Unit](write).compile[[x]F[x], [x]F[x], Unit](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](F))).drain
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          10539
+        </td>
+        <td>
+          5942
+          -
+          5971
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.encodeFrames
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.encodeFrames[[x]fs2.Pure[x]](frameTranscoder)
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          10162
+        </td>
+        <td>
+          5988
+          -
+          5988
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](F)
+        </td>
+      </tr><tr>
+        <td>
+          172
+        </td>
+        <td>
+          10449
+        </td>
+        <td>
+          6023
+          -
+          6583
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.evalMapFilter
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          stream.evalMapFilter[F, org.http4s.websocket.WebSocketFrame](((x0$1: org.http4s.websocket.WebSocketFrame) =&gt; x0$1 match {
+  case (ping @ (data: scodec.bits.ByteVector): org.http4s.websocket.WebSocketFrame.Ping((data @ _))) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](writeFrame(org.http4s.websocket.WebSocketFrame.Pong.apply(data)))(F).as[Option[org.http4s.websocket.WebSocketFrame]](cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.websocket.WebSocketFrame.Ping](ping).some)
+  case (frame @ (data: scodec.bits.ByteVector): org.http4s.websocket.WebSocketFrame.Close(_)) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.server.internal.WebSocketHelpers.Close](closeState.get)(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((x0$2: org.http4s.ember.server.internal.WebSocketHelpers.Close) =&gt; x0$2 match {
+    case WebSocketHelpers.this.Open =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.websocket.WebSocketFrame.Close](F.fromEither[org.http4s.websocket.WebSocketFrame.Close](org.http4s.websocket.WebSocketFrame.Close.apply(frame.closeCode)))(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((frame: org.http4s.websocket.WebSocketFrame.Close) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](writeFrame(frame))(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((x$7: Unit) =&gt; (x$7: Unit @unchecked) match {
+      case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](closeState.set(WebSocketHelpers.this.BothClosed))(F).map[Option[org.http4s.websocket.WebSocketFrame]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+        case _ =&gt; scala.None
+      }))
+    }))))
+    case _ =&gt; F.pure[Option[org.http4s.websocket.WebSocketFrame]](scala.None)
+  }))
+  case (x @ _) =&gt; F.pure[Option[org.http4s.websocket.WebSocketFrame]](scala.Some.apply[org.http4s.websocket.WebSocketFrame](x))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          10439
+        </td>
+        <td>
+          6165
+          -
+          6174
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.OptionIdOps.some
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.websocket.WebSocketFrame.Ping](ping).some
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          10141
+        </td>
+        <td>
+          6124
+          -
+          6175
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Unit](writeFrame(org.http4s.websocket.WebSocketFrame.Pong.apply(data)))(F).as[Option[org.http4s.websocket.WebSocketFrame]](cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.websocket.WebSocketFrame.Ping](ping).some)
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          10972
+        </td>
+        <td>
+          6135
+          -
+          6160
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketFrame.Pong.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.websocket.WebSocketFrame.Pong.apply(data)
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          10820
+        </td>
+        <td>
+          6124
+          -
+          6161
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.writeFrame
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          writeFrame(org.http4s.websocket.WebSocketFrame.Pong.apply(data))
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          10428
+        </td>
+        <td>
+          6234
+          -
+          6541
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.server.internal.WebSocketHelpers.Close](closeState.get)(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((x0$2: org.http4s.ember.server.internal.WebSocketHelpers.Close) =&gt; x0$2 match {
+  case WebSocketHelpers.this.Open =&gt; cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.websocket.WebSocketFrame.Close](F.fromEither[org.http4s.websocket.WebSocketFrame.Close](org.http4s.websocket.WebSocketFrame.Close.apply(frame.closeCode)))(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((frame: org.http4s.websocket.WebSocketFrame.Close) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](writeFrame(frame))(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((x$7: Unit) =&gt; (x$7: Unit @unchecked) match {
+    case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](closeState.set(WebSocketHelpers.this.BothClosed))(F).map[Option[org.http4s.websocket.WebSocketFrame]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+      case _ =&gt; scala.None
+    }))
+  }))))
+  case _ =&gt; F.pure[Option[org.http4s.websocket.WebSocketFrame]](scala.None)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          10684
+        </td>
+        <td>
+          6234
+          -
+          6248
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.RefSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          closeState.get
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          10543
+        </td>
+        <td>
+          6363
+          -
+          6378
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketFrame.Close.closeCode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          frame.closeCode
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          10752
+        </td>
+        <td>
+          6329
+          -
+          6380
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.fromEither
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.fromEither[org.http4s.websocket.WebSocketFrame.Close](org.http4s.websocket.WebSocketFrame.Close.apply(frame.closeCode))
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          10201
+        </td>
+        <td>
+          6342
+          -
+          6379
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketFrame.Close.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.websocket.WebSocketFrame.Close.apply(frame.closeCode)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          10530
+        </td>
+        <td>
+          6298
+          -
+          6494
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.websocket.WebSocketFrame.Close](F.fromEither[org.http4s.websocket.WebSocketFrame.Close](org.http4s.websocket.WebSocketFrame.Close.apply(frame.closeCode)))(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((frame: org.http4s.websocket.WebSocketFrame.Close) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Unit](writeFrame(frame))(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((x$7: Unit) =&gt; (x$7: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](closeState.set(WebSocketHelpers.this.BothClosed))(F).map[Option[org.http4s.websocket.WebSocketFrame]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+    case _ =&gt; scala.None
+  }))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          10710
+        </td>
+        <td>
+          6397
+          -
+          6494
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Unit](writeFrame(frame))(F).flatMap[Option[org.http4s.websocket.WebSocketFrame]](((x$7: Unit) =&gt; (x$7: Unit @unchecked) match {
+  case _ =&gt; cats.syntax.`package`.all.toFunctorOps[F, Unit](closeState.set(WebSocketHelpers.this.BothClosed))(F).map[Option[org.http4s.websocket.WebSocketFrame]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+    case _ =&gt; scala.None
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          10432
+        </td>
+        <td>
+          6402
+          -
+          6419
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.writeFrame
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          writeFrame(frame)
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          10824
+        </td>
+        <td>
+          6441
+          -
+          6467
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.RefSink.set
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          closeState.set(WebSocketHelpers.this.BothClosed)
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          10142
+        </td>
+        <td>
+          6436
+          -
+          6494
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Unit](closeState.set(WebSocketHelpers.this.BothClosed))(F).map[Option[org.http4s.websocket.WebSocketFrame]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+  case _ =&gt; scala.None
+}))
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          10981
+        </td>
+        <td>
+          6456
+          -
+          6466
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.BothClosed
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.BothClosed
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          10488
+        </td>
+        <td>
+          6490
+          -
+          6494
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          10206
+        </td>
+        <td>
+          6524
+          -
+          6528
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          10737
+        </td>
+        <td>
+          6517
+          -
+          6529
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Option[org.http4s.websocket.WebSocketFrame]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          10970
+        </td>
+        <td>
+          6567
+          -
+          6574
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.websocket.WebSocketFrame](x)
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          10805
+        </td>
+        <td>
+          6560
+          -
+          6575
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Option[org.http4s.websocket.WebSocketFrame]](scala.Some.apply[org.http4s.websocket.WebSocketFrame](x))
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          10343
+        </td>
+        <td>
+          6709
+          -
+          7075
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          stream.flatMap[[x]F[x], Byte](((frame: org.http4s.websocket.WebSocketFrame) =&gt; {
+  val chunks: Array[fs2.Chunk[Byte]] = scala.Predef.refArrayOps[java.nio.ByteBuffer](frameTranscoder.frameToBuffer(frame)).map[fs2.Chunk[Byte]](((buffer: java.nio.ByteBuffer) =&gt; {
+    val bytes: Array[Byte] = new Array[Byte](buffer.remaining());
+    buffer.get(bytes);
+    fs2.Chunk.array[Byte](bytes)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+  }))((ClassTag.apply[fs2.Chunk[Byte]](classOf[fs2.Chunk]): scala.reflect.ClassTag[fs2.Chunk[Byte]]));
+  fs2.Stream.iterable[[x]fs2.Pure[x], fs2.Chunk[Byte]](scala.Predef.wrapRefArray[fs2.Chunk[Byte]](chunks)).flatMap[[x]fs2.Pure[x], Byte](((x$8: fs2.Chunk[Byte]) =&gt; fs2.Stream.chunk[[x]fs2.Pure[x], Byte](x$8)))(compat.this.NotGiven.default[Nothing])
+}))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          10683
+        </td>
+        <td>
+          6724
+          -
+          6724
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          10430
+        </td>
+        <td>
+          6756
+          -
+          6988
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.ArrayOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.refArrayOps[java.nio.ByteBuffer](frameTranscoder.frameToBuffer(frame)).map[fs2.Chunk[Byte]](((buffer: java.nio.ByteBuffer) =&gt; {
+  val bytes: Array[Byte] = new Array[Byte](buffer.remaining());
+  buffer.get(bytes);
+  fs2.Chunk.array[Byte](bytes)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+}))((ClassTag.apply[fs2.Chunk[Byte]](classOf[fs2.Chunk]): scala.reflect.ClassTag[fs2.Chunk[Byte]]))
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          10145
+        </td>
+        <td>
+          6756
+          -
+          6792
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.FrameTranscoder.frameToBuffer
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          frameTranscoder.frameToBuffer(frame)
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          10350
+        </td>
+        <td>
+          6886
+          -
+          6921
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new Array[Byte](buffer.remaining())
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          10680
+        </td>
+        <td>
+          6902
+          -
+          6920
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.Buffer.remaining
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          buffer.remaining()
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          10185
+        </td>
+        <td>
+          6932
+          -
+          6949
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          buffer.get(bytes)
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          10740
+        </td>
+        <td>
+          6960
+          -
+          6978
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.array[Byte](bytes)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          10960
+        </td>
+        <td>
+          7024
+          -
+          7030
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          scala.LowPriorityImplicits.wrapRefArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.wrapRefArray[fs2.Chunk[Byte]](chunks)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          10131
+        </td>
+        <td>
+          6997
+          -
+          7067
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.iterable[[x]fs2.Pure[x], fs2.Chunk[Byte]](scala.Predef.wrapRefArray[fs2.Chunk[Byte]](chunks)).flatMap[[x]fs2.Pure[x], Byte](((x$8: fs2.Chunk[Byte]) =&gt; fs2.Stream.chunk[[x]fs2.Pure[x], Byte](x$8)))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          10442
+        </td>
+        <td>
+          7050
+          -
+          7050
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          10794
+        </td>
+        <td>
+          7051
+          -
+          7066
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.chunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](x$8)
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          10184
+        </td>
+        <td>
+          7312
+          -
+          8116
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.InvariantOps[[_]F[_], Byte](rest).pull.uncons.flatMap[[x]F[x], org.http4s.websocket.WebSocketFrame, Unit](((x0$1: Option[(fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])]) =&gt; x0$1 match {
+  case (value: (fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])): Some[(fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])]((_1: fs2.Chunk[Byte], _2: fs2.Stream[[_]F[_],Byte]): (fs2.Chunk[Byte], fs2.Stream[[_]F[_],Byte])((chunk @ _), (next @ _))) =&gt; {
+    val buffer: Array[Byte] = scala.Predef.byteArrayOps(acc).++[Byte](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))((ClassTag.Byte: scala.reflect.ClassTag[Byte]));
+    val byteBuffer: java.nio.ByteBuffer = java.nio.ByteBuffer.wrap(buffer);
+    fs2.Pull.eval[F, org.http4s.websocket.WebSocketFrame](F.delay[org.http4s.websocket.WebSocketFrame](frameTranscoder.bufferToFrame(byteBuffer))).flatMap[[x]F[x], org.http4s.websocket.WebSocketFrame, Unit](((value: org.http4s.websocket.WebSocketFrame) =&gt; if (value.!=(null))
+      {
+        val remaining: Array[Byte] = new Array[Byte](byteBuffer.remaining());
+        byteBuffer.get(remaining);
+        fs2.Pull.output1[[x]fs2.Pure[x], org.http4s.websocket.WebSocketFrame](value).&gt;&gt;[[_]F[_], org.http4s.websocket.WebSocketFrame, Unit](go(next, remaining))
+      }
+    else
+      go(next, buffer)))
+  }
+  case scala.None =&gt; fs2.Pull.raiseError[[_]F[_]](WebSocketHelpers.this.EndOfStreamError.apply())(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          10200
+        </td>
+        <td>
+          7405
+          -
+          7424
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.toArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          10744
+        </td>
+        <td>
+          7398
+          -
+          7424
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.ArrayOps.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.byteArrayOps(acc).++[Byte](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          10381
+        </td>
+        <td>
+          7452
+          -
+          7475
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.wrap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.ByteBuffer.wrap(buffer)
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          10619
+        </td>
+        <td>
+          7509
+          -
+          7559
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.delay[org.http4s.websocket.WebSocketFrame](frameTranscoder.bufferToFrame(byteBuffer))
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          10961
+        </td>
+        <td>
+          7517
+          -
+          7558
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.FrameTranscoder.bufferToFrame
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          frameTranscoder.bufferToFrame(byteBuffer)
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          10490
+        </td>
+        <td>
+          7486
+          -
+          7941
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.eval[F, org.http4s.websocket.WebSocketFrame](F.delay[org.http4s.websocket.WebSocketFrame](frameTranscoder.bufferToFrame(byteBuffer))).flatMap[[x]F[x], org.http4s.websocket.WebSocketFrame, Unit](((value: org.http4s.websocket.WebSocketFrame) =&gt; if (value.!=(null))
+  {
+    val remaining: Array[Byte] = new Array[Byte](byteBuffer.remaining());
+    byteBuffer.get(remaining);
+    fs2.Pull.output1[[x]fs2.Pure[x], org.http4s.websocket.WebSocketFrame](value).&gt;&gt;[[_]F[_], org.http4s.websocket.WebSocketFrame, Unit](go(next, remaining))
+  }
+else
+  go(next, buffer)))
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          10383
+        </td>
+        <td>
+          7681
+          -
+          7871
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val remaining: Array[Byte] = new Array[Byte](byteBuffer.remaining());
+  byteBuffer.get(remaining);
+  fs2.Pull.output1[[x]fs2.Pure[x], org.http4s.websocket.WebSocketFrame](value).&gt;&gt;[[_]F[_], org.http4s.websocket.WebSocketFrame, Unit](go(next, remaining))
+}
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          10487
+        </td>
+        <td>
+          7666
+          -
+          7679
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.!=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          value.!=(null)
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          10665
+        </td>
+        <td>
+          7715
+          -
+          7754
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new Array[Byte](byteBuffer.remaining())
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          10135
+        </td>
+        <td>
+          7731
+          -
+          7753
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.Buffer.remaining
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          byteBuffer.remaining()
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          10345
+        </td>
+        <td>
+          7771
+          -
+          7796
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          byteBuffer.get(remaining)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          10205
+        </td>
+        <td>
+          7836
+          -
+          7855
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(next, remaining)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          10773
+        </td>
+        <td>
+          7813
+          -
+          7855
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output1[[x]fs2.Pure[x], org.http4s.websocket.WebSocketFrame](value).&gt;&gt;[[_]F[_], org.http4s.websocket.WebSocketFrame, Unit](go(next, remaining))
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          10945
+        </td>
+        <td>
+          7895
+          -
+          7911
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          go(next, buffer)
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          10651
+        </td>
+        <td>
+          7895
+          -
+          7911
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          go(next, buffer)
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          10666
+        </td>
+        <td>
+          8088
+          -
+          8088
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.RaiseThrowable.fromApplicativeError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          10330
+        </td>
+        <td>
+          8073
+          -
+          8108
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.raiseError[[_]F[_]](WebSocketHelpers.this.EndOfStreamError.apply())(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          10126
+        </td>
+        <td>
+          8089
+          -
+          8107
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.EndOfStreamError.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.EndOfStreamError.apply()
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          10417
+        </td>
+        <td>
+          8122
+          -
+          8159
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.void
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(stream, scala.Array.emptyByteArray).void
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          10949
+        </td>
+        <td>
+          8122
+          -
+          8166
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.StreamPullOps.stream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Pull.StreamPullOps[[_]F[_], org.http4s.websocket.WebSocketFrame](go(stream, scala.Array.emptyByteArray).void).stream
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          10775
+        </td>
+        <td>
+          8133
+          -
+          8153
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Array.emptyByteArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Array.emptyByteArray
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          10130
+        </td>
+        <td>
+          8303
+          -
+          8303
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.recurringHeadersWithMerge
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Connection](headers.this.Connection.headerSemigroupInstance, headers.this.Connection.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          10653
+        </td>
+        <td>
+          8303
+          -
+          8303
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerSemigroupInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Connection.headerSemigroupInstance
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          10701
+        </td>
+        <td>
+          8288
+          -
+          8315
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Connection](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Connection](headers.this.Connection.headerSemigroupInstance, headers.this.Connection.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          10470
+        </td>
+        <td>
+          8303
+          -
+          8303
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Connection.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          10936
+        </td>
+        <td>
+          8372
+          -
+          8378
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          10762
+        </td>
+        <td>
+          8372
+          -
+          8383
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).unit[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          10357
+        </td>
+        <td>
+          8351
+          -
+          8368
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.hasUpgrade
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          header.hasUpgrade
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          10975
+        </td>
+        <td>
+          8400
+          -
+          8421
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[org.http4s.ember.server.internal.WebSocketHelpers.UpgradeRequired.type, Nothing](WebSocketHelpers.this.UpgradeRequired)
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          10420
+        </td>
+        <td>
+          8405
+          -
+          8420
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.UpgradeRequired
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketHelpers.this.UpgradeRequired
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          10475
+        </td>
+        <td>
+          8462
+          -
+          8462
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Upgrade](headers.this.Upgrade.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          10112
+        </td>
+        <td>
+          8447
+          -
+          8471
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Upgrade](Header.this.Select.singleHeaders[org.http4s.headers.Upgrade](headers.this.Upgrade.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          10638
+        </td>
+        <td>
+          8462
+          -
+          8462
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Upgrade.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Upgrade.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          10401
+        </td>
+        <td>
+          8530
+          -
+          8530
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataInstancesForNonEmptyList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataInstancesForNonEmptyList
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          10944
+        </td>
+        <td>
+          8507
+          -
+          8549
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FoldableOps.contains_
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFoldOps[cats.data.NonEmptyList, org.http4s.Protocol](header.values)(data.this.NonEmptyList.catsDataInstancesForNonEmptyList).contains_(WebSocketHelpers.this.webSocketProtocol)(http4s.this.Protocol.catsEqInstance, data.this.NonEmptyList.catsDataInstancesForNonEmptyList)
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          10923
+        </td>
+        <td>
+          8531
+          -
+          8548
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.webSocketProtocol
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.webSocketProtocol
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          10620
+        </td>
+        <td>
+          8553
+          -
+          8559
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          10728
+        </td>
+        <td>
+          8530
+          -
+          8530
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Protocol.catsEqInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.Protocol.catsEqInstance
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          10455
+        </td>
+        <td>
+          8553
+          -
+          8564
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).unit[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          10703
+        </td>
+        <td>
+          8507
+          -
+          8520
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Upgrade.values
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          header.values
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          10344
+        </td>
+        <td>
+          8514
+          -
+          8514
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataInstancesForNonEmptyList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataInstancesForNonEmptyList
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          10706
+        </td>
+        <td>
+          8581
+          -
+          8602
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[org.http4s.ember.server.internal.WebSocketHelpers.UpgradeRequired.type, Nothing](WebSocketHelpers.this.UpgradeRequired)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          10115
+        </td>
+        <td>
+          8586
+          -
+          8601
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.UpgradeRequired
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketHelpers.this.UpgradeRequired
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          10329
+        </td>
+        <td>
+          8643
+          -
+          8643
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Sec-WebSocket-Version.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Sec-WebSocket-Version.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          10895
+        </td>
+        <td>
+          8643
+          -
+          8643
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Sec-WebSocket-Version](headers.this.Sec-WebSocket-Version.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          10721
+        </td>
+        <td>
+          8628
+          -
+          8668
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Sec-WebSocket-Version](Header.this.Select.singleHeaders[org.http4s.headers.Sec-WebSocket-Version](headers.this.Sec-WebSocket-Version.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          10406
+        </td>
+        <td>
+          8722
+          -
+          8747
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.supportedWebSocketVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.supportedWebSocketVersion
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          10947
+        </td>
+        <td>
+          8704
+          -
+          8747
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          header.version.==(WebSocketHelpers.this.supportedWebSocketVersion)
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          10322
+        </td>
+        <td>
+          8751
+          -
+          8762
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).unit[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          10611
+        </td>
+        <td>
+          8751
+          -
+          8757
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          10332
+        </td>
+        <td>
+          8795
+          -
+          8856
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.UnsupportedVersion.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketHelpers.this.UnsupportedVersion.apply(WebSocketHelpers.this.supportedWebSocketVersion, header.version)
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          10101
+        </td>
+        <td>
+          8814
+          -
+          8839
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.supportedWebSocketVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketHelpers.this.supportedWebSocketVersion
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          10711
+        </td>
+        <td>
+          8841
+          -
+          8855
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Sec-WebSocket-Version.version
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          header.version
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          10892
+        </td>
+        <td>
+          8790
+          -
+          8857
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[org.http4s.ember.server.internal.WebSocketHelpers.UnsupportedVersion, Nothing](WebSocketHelpers.this.UnsupportedVersion.apply(WebSocketHelpers.this.supportedWebSocketVersion, header.version))
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          10410
+        </td>
+        <td>
+          8877
+          -
+          8898
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[org.http4s.ember.server.internal.WebSocketHelpers.VersionNotFound.type, Nothing](WebSocketHelpers.this.VersionNotFound)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          10761
+        </td>
+        <td>
+          8882
+          -
+          8897
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.VersionNotFound
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketHelpers.this.VersionNotFound
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          10311
+        </td>
+        <td>
+          8920
+          -
+          8956
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Sec-WebSocket-Key](Header.this.Select.singleHeaders[org.http4s.headers.Sec-WebSocket-Key](headers.this.Sec-WebSocket-Key.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          10614
+        </td>
+        <td>
+          8935
+          -
+          8935
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Sec-WebSocket-Key](headers.this.Sec-WebSocket-Key.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          10982
+        </td>
+        <td>
+          8935
+          -
+          8935
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Sec-WebSocket-Key.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Sec-WebSocket-Key.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          10368
+        </td>
+        <td>
+          8992
+          -
+          9011
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, String](org.http4s.syntax.`package`.all.http4sHeaderSyntax[org.http4s.headers.Sec-WebSocket-Key](header)(headers.this.Sec-WebSocket-Key.headerInstance).value)
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          10713
+        </td>
+        <td>
+          8998
+          -
+          9010
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.syntax.HeaderOps.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.syntax.`package`.all.http4sHeaderSyntax[org.http4s.headers.Sec-WebSocket-Key](header)(headers.this.Sec-WebSocket-Key.headerInstance).value
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          10148
+        </td>
+        <td>
+          8998
+          -
+          8998
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Sec-WebSocket-Key.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Sec-WebSocket-Key.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          10606
+        </td>
+        <td>
+          9031
+          -
+          9048
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[org.http4s.ember.server.internal.WebSocketHelpers.KeyNotFound.type, Nothing](WebSocketHelpers.this.KeyNotFound)
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          10922
+        </td>
+        <td>
+          9036
+          -
+          9047
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.KeyNotFound
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          WebSocketHelpers.this.KeyNotFound
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          10984
+        </td>
+        <td>
+          9101
+          -
+          9101
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.Invariant.catsMonadErrorForEither
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Invariant.catsMonadErrorForEither[Product with org.http4s.ember.server.internal.WebSocketHelpers.ClientHandshakeError with java.io.Serializable]
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          10655
+        </td>
+        <td>
+          9101
+          -
+          9101
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.Semigroupal.catsSemigroupalForEither
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.Semigroupal.catsSemigroupalForEither[Product with org.http4s.ember.server.internal.WebSocketHelpers.ClientHandshakeError with java.io.Serializable]
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          10399
+        </td>
+        <td>
+          9060
+          -
+          9095
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple4.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple4.apply[scala.util.Either[org.http4s.ember.server.internal.WebSocketHelpers.UpgradeRequired.type,Unit], scala.util.Either[org.http4s.ember.server.internal.WebSocketHelpers.UpgradeRequired.type,Unit], scala.util.Either[Product with org.http4s.ember.server.internal.WebSocketHelpers.ClientHandshakeError with java.io.Serializable,Unit], scala.util.Either[org.http4s.ember.server.internal.WebSocketHelpers.KeyNotFound.type,String]](connection, upgrade, version, key)
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          10312
+        </td>
+        <td>
+          9060
+          -
+          9131
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.Tuple4SemigroupalOps.mapN
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxTuple4Semigroupal[[+B]scala.util.Either[Product with org.http4s.ember.server.internal.WebSocketHelpers.ClientHandshakeError with java.io.Serializable,B], Unit, Unit, Unit, String](scala.Tuple4.apply[scala.util.Either[org.http4s.ember.server.internal.WebSocketHelpers.UpgradeRequired.type,Unit], scala.util.Either[org.http4s.ember.server.internal.WebSocketHelpers.UpgradeRequired.type,Unit], scala.util.Either[Product with org.http4s.ember.server.internal.WebSocketHelpers.ClientHandshakeError with java.io.Serializable,Unit], scala.util.Either[org.http4s.ember.server.internal.WebSocketHelpers.KeyNotFound.type,String]](connection, upgrade, version, key)).mapN[String](((x0$1: Unit, x1$1: Unit, x2$1: Unit, x3$1: String) =&gt; scala.Tuple4.apply[Unit, Unit, Unit, String](x0$1, x1$1, x2$1, x3$1) match {
+  case (_1: Unit, _2: Unit, _3: Unit, _4: String): (Unit, Unit, Unit, String)(_, _, _, (key @ _)) =&gt; key
+}))(cats.this.Invariant.catsMonadErrorForEither[Product with org.http4s.ember.server.internal.WebSocketHelpers.ClientHandshakeError with java.io.Serializable], cats.this.Semigroupal.catsSemigroupalForEither[Product with org.http4s.ember.server.internal.WebSocketHelpers.ClientHandshakeError with java.io.Serializable])
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          10688
+        </td>
+        <td>
+          9165
+          -
+          9209
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.view
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.view(org.http4s.websocket.Rfc6455.handshakeMagicBytes)
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          10151
+        </td>
+        <td>
+          9181
+          -
+          9208
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.websocket.Rfc6455.handshakeMagicBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.websocket.Rfc6455.handshakeMagicBytes
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          10314
+        </td>
+        <td>
+          9306
+          -
+          9446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, scodec.bits.ByteVector](cats.syntax.`package`.all.catsSyntaxEither[java.nio.charset.CharacterCodingException, scodec.bits.ByteVector](scodec.bits.ByteVector.encodeAscii(value)).liftTo[F](F))(F).flatMap[scodec.bits.ByteVector](((value: scodec.bits.ByteVector) =&gt; org.http4s.crypto.Hash.apply[F](crypto.this.Hash.forApplicativeThrow[[_]F[_]](F)).digest(org.http4s.crypto.HashAlgorithm.SHA1, value.++(WebSocketHelpers.this.magic))))
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          10371
+        </td>
+        <td>
+          9325
+          -
+          9364
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.EitherOps.liftTo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[java.nio.charset.CharacterCodingException, scodec.bits.ByteVector](scodec.bits.ByteVector.encodeAscii(value)).liftTo[F](F)
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          10963
+        </td>
+        <td>
+          9414
+          -
+          9428
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          value.++(WebSocketHelpers.this.magic)
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          10908
+        </td>
+        <td>
+          9383
+          -
+          9383
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.crypto.HashCompanionPlatform.forApplicativeThrow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          crypto.this.Hash.forApplicativeThrow[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          10405
+        </td>
+        <td>
+          9423
+          -
+          9428
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.magic
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.magic
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          10629
+        </td>
+        <td>
+          9369
+          -
+          9446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.crypto.Hash.digest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.crypto.Hash.apply[F](crypto.this.Hash.forApplicativeThrow[[_]F[_]](F)).digest(org.http4s.crypto.HashAlgorithm.SHA1, value.++(WebSocketHelpers.this.magic))
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          10599
+        </td>
+        <td>
+          9394
+          -
+          9412
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.crypto.HashAlgorithm.SHA1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.crypto.HashAlgorithm.SHA1
+        </td>
+      </tr><tr>
+        <td>
+          264
+        </td>
+        <td>
+          10601
+        </td>
+        <td>
+          9517
+          -
+          9656
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.eval[F, Option[fs2.Chunk[Byte]]](read).flatMap[[x]F[x], Byte](((x0$1: Option[fs2.Chunk[Byte]]) =&gt; x0$1 match {
+  case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((bytes @ _)) =&gt; fs2.Stream.chunk[[x]fs2.Pure[x], Byte](bytes).++[[_]F[_], Byte](WebSocketHelpers.this.readStream[[_]F[_]](read))
+  case scala.None =&gt; fs2.Stream.empty
+}))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          264
+        </td>
+        <td>
+          10909
+        </td>
+        <td>
+          9543
+          -
+          9543
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          266
+        </td>
+        <td>
+          10693
+        </td>
+        <td>
+          9579
+          -
+          9618
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](bytes).++[[_]F[_], Byte](WebSocketHelpers.this.readStream[[_]F[_]](read))
+        </td>
+      </tr><tr>
+        <td>
+          266
+        </td>
+        <td>
+          10100
+        </td>
+        <td>
+          9602
+          -
+          9618
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.WebSocketHelpers.readStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHelpers.this.readStream[[_]F[_]](read)
+        </td>
+      </tr><tr>
+        <td>
+          267
+        </td>
+        <td>
+          10347
+        </td>
+        <td>
+          9638
+          -
+          9650
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.empty
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          10386
+        </td>
+        <td>
+          10713
+          -
+          10744
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          err.getMessage().==(&quot;Broken pipe&quot;)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

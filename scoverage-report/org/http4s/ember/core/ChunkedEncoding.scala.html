@@ -1,0 +1,3281 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ember/core/ChunkedEncoding.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2019 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>/*
+</span>18 <span style=''> * Copyright 2013-2020 http4s.org
+</span>19 <span style=''> *
+</span>20 <span style=''> * SPDX-License-Identifier: Apache-2.0
+</span>21 <span style=''> *
+</span>22 <span style=''> * Based on https://github.com/Spinoco/fs2-http/blob/c8b164b2b319903ca15e33a4f312cded63ea9882/src/main/scala/spinoco/fs2/http/internal/ChunkedEncoding.scala
+</span>23 <span style=''> * Copyright (c) 2017 Spinoco
+</span>24 <span style=''> * See licenses/LICENSE_fs2-http
+</span>25 <span style=''> */
+</span>26 <span style=''>
+</span>27 <span style=''>package org.http4s
+</span>28 <span style=''>package ember.core
+</span>29 <span style=''>
+</span>30 <span style=''>import cats._
+</span>31 <span style=''>import cats.effect.kernel.Deferred
+</span>32 <span style=''>import cats.effect.kernel.Ref
+</span>33 <span style=''>import cats.syntax.all._
+</span>34 <span style=''>import fs2._
+</span>35 <span style=''>import scodec.bits.ByteVector
+</span>36 <span style=''>
+</span>37 <span style=''>import scala.util.control.NonFatal
+</span>38 <span style=''>
+</span>39 <span style=''>import Shared._
+</span>40 <span style=''>
+</span>41 <span style=''>private[ember] object ChunkedEncoding {
+</span>42 <span style=''>
+</span>43 <span style=''>  /** From fs2-http
+</span>44 <span style=''>    * decodes from the HTTP chunked encoding. After last chunk this terminates. Allows to specify max header size, after which this terminates
+</span>45 <span style=''>    * Please see https://en.wikipedia.org/wiki/Chunked_transfer_encoding for details
+</span>46 <span style=''>    */
+</span>47 <span style=''>  def decode[F[_]](
+</span>48 <span style=''>      head: Array[Byte],
+</span>49 <span style=''>      read: F[Option[Chunk[Byte]]],
+</span>50 <span style=''>      maxHeaderSize: Int,
+</span>51 <span style=''>      maxChunkHeaderSize: Int,
+</span>52 <span style=''>      trailers: Deferred[F, Headers],
+</span>53 <span style=''>      rest: Ref[F, Option[Array[Byte]]],
+</span>54 <span style=''>  )(implicit F: MonadThrow[F]): Stream[F, Byte] = {
+</span>55 <span style=''>    // on left reading the header of chunk (acting as buffer)
+</span>56 <span style=''>    // on right reading the chunk itself, and storing remaining bytes of the chunk
+</span>57 <span style=''>    def go(expect: Either[ByteVector, Long], head: ByteVector): Pull[F, Byte, Unit] = {
+</span>58 <span style=''>      val nextBytes =
+</span>59 <span style=''>        if (</span><span style='background: #AEF1AE'>head.nonEmpty</span><span style=''>)
+</span>60 <span style=''>          </span><span style='background: #AEF1AE'>Pull.pure(Some(head))</span><span style=''>
+</span>61 <span style=''>        else
+</span>62 <span style=''>          </span><span style='background: #AEF1AE'>Pull.eval(read).map(_.map(_.toByteVector))</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>      </span><span style='background: #AEF1AE'>nextBytes.flatMap {
+</span>65 <span style=''></span><span style='background: #AEF1AE'>        case None =&gt;
+</span>66 <span style=''></span><span style='background: #AEF1AE'>          Pull.raiseError(EmberException.ReachedEndOfStream())
+</span>67 <span style=''></span><span style='background: #AEF1AE'>
+</span>68 <span style=''></span><span style='background: #AEF1AE'>        case Some(bv) =&gt;
+</span>69 <span style=''></span><span style='background: #AEF1AE'>          expect match {
+</span>70 <span style=''></span><span style='background: #AEF1AE'>            case Left(header) =&gt;
+</span>71 <span style=''></span><span style='background: #AEF1AE'>              val nh = header ++ bv
+</span>72 <span style=''></span><span style='background: #AEF1AE'>              val endOfHeader = nh.indexOfSlice(backslashrbackslashn)
+</span>73 <span style=''></span><span style='background: #AEF1AE'>              if (endOfHeader == 0)
+</span>74 <span style=''></span><span style='background: #AEF1AE'>                // strip any leading crlf on header, as this starts with /r/n
+</span>75 <span style=''></span><span style='background: #AEF1AE'>                go(expect, nh.drop(backslashrbackslashn.size))
+</span>76 <span style=''></span><span style='background: #AEF1AE'>              else if (endOfHeader &lt; 0 &amp;&amp; nh.size &gt; maxChunkHeaderSize)
+</span>77 <span style=''></span><span style='background: #AEF1AE'>                </span><span style='background: #F0ADAD'>Pull.raiseError[F](
+</span>78 <span style=''></span><span style='background: #F0ADAD'>                  EmberException.ChunkedEncodingError(
+</span>79 <span style=''></span><span style='background: #F0ADAD'>                    s&quot;Failed to get Chunk header. Size exceeds max($maxChunkHeaderSize) : ${nh.size} ${nh.decodeUtf8}&quot;
+</span>80 <span style=''></span><span style='background: #F0ADAD'>                  )
+</span>81 <span style=''></span><span style='background: #F0ADAD'>                )</span><span style='background: #AEF1AE'>
+</span>82 <span style=''></span><span style='background: #AEF1AE'>              else if (endOfHeader &lt; 0) go(Left(nh), ByteVector.empty)
+</span>83 <span style=''></span><span style='background: #AEF1AE'>              else {
+</span>84 <span style=''></span><span style='background: #AEF1AE'>                val (hdr, rem) = nh.splitAt(endOfHeader + backslashrbackslashn.size)
+</span>85 <span style=''></span><span style='background: #AEF1AE'>                readChunkedHeader(hdr.dropRight(backslashrbackslashn.size)) match {
+</span>86 <span style=''></span><span style='background: #AEF1AE'>                  case None =&gt;
+</span>87 <span style=''></span><span style='background: #AEF1AE'>                    </span><span style='background: #F0ADAD'>Pull.raiseError[F](
+</span>88 <span style=''></span><span style='background: #F0ADAD'>                      EmberException.ChunkedEncodingError(
+</span>89 <span style=''></span><span style='background: #F0ADAD'>                        s&quot;Failed to parse chunked header : ${hdr.decodeUtf8}&quot;
+</span>90 <span style=''></span><span style='background: #F0ADAD'>                      )
+</span>91 <span style=''></span><span style='background: #F0ADAD'>                    )</span><span style='background: #AEF1AE'>
+</span>92 <span style=''></span><span style='background: #AEF1AE'>                  case Some(0) =&gt;
+</span>93 <span style=''></span><span style='background: #AEF1AE'>                    // Done With Message, Now Parse Trailers
+</span>94 <span style=''></span><span style='background: #AEF1AE'>                    Pull.eval(
+</span>95 <span style=''></span><span style='background: #AEF1AE'>                      parseTrailers[F](maxHeaderSize)(rem.toArray, read)
+</span>96 <span style=''></span><span style='background: #AEF1AE'>                        .flatMap { t =&gt;
+</span>97 <span style=''></span><span style='background: #AEF1AE'>                          trailers.complete(t.headers) &gt;&gt; rest.set(Some(t.rest))
+</span>98 <span style=''></span><span style='background: #AEF1AE'>                        }
+</span>99 <span style=''></span><span style='background: #AEF1AE'>                    ) &gt;&gt; Pull.done
+</span>100 <span style=''></span><span style='background: #AEF1AE'>                  case Some(sz) =&gt; go(Right(sz), rem)
+</span>101 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>102 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>103 <span style=''></span><span style='background: #AEF1AE'>
+</span>104 <span style=''></span><span style='background: #AEF1AE'>            case Right(remains) =&gt;
+</span>105 <span style=''></span><span style='background: #AEF1AE'>              if (remains &gt; bv.size)
+</span>106 <span style=''></span><span style='background: #AEF1AE'>                Pull.output(Chunk.byteVector(bv)) &gt;&gt; go(Right(remains - bv.size), ByteVector.empty)
+</span>107 <span style=''></span><span style='background: #AEF1AE'>              else {
+</span>108 <span style=''></span><span style='background: #AEF1AE'>                val (out, next) = bv.splitAt(remains.toLong)
+</span>109 <span style=''></span><span style='background: #AEF1AE'>                Pull.output(Chunk.byteVector(out)) &gt;&gt; go(Left(ByteVector.empty), next)
+</span>110 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>111 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>112 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>113 <span style=''>    }
+</span>114 <span style=''>
+</span>115 <span style=''>    </span><span style='background: #AEF1AE'>go(Left(ByteVector.empty), ByteVector.view(head)).stream</span><span style=''>
+</span>116 <span style=''>  }
+</span>117 <span style=''>
+</span>118 <span style=''>  final case class Trailers(headers: Headers, rest: Array[Byte])
+</span>119 <span style=''>
+</span>120 <span style=''>  private def parseTrailers[F[_]: MonadThrow](
+</span>121 <span style=''>      maxHeaderSize: Int
+</span>122 <span style=''>  )(buffer: Array[Byte], read: F[Option[Chunk[Byte]]]): F[Trailers] =
+</span>123 <span style=''>    if (</span><span style='background: #AEF1AE'>buffer.startsWith(Shared.backslashrbackslashn.toArray)</span><span style=''>) {
+</span>124 <span style=''>      </span><span style='background: #AEF1AE'>Trailers(Headers.empty, buffer.drop(backslashrbackslashn.size.toInt)).pure[F]</span><span style=''>
+</span>125 <span style=''>    } else </span><span style='background: #AEF1AE'>if (buffer.length &lt; 2) {
+</span>126 <span style=''></span><span style='background: #AEF1AE'>      read.flatMap {
+</span>127 <span style=''></span><span style='background: #AEF1AE'>        case None =&gt;
+</span>128 <span style=''></span><span style='background: #AEF1AE'>          MonadThrow[F].raiseError(EmberException.ReachedEndOfStream())
+</span>129 <span style=''></span><span style='background: #AEF1AE'>        case Some(chunk) =&gt;
+</span>130 <span style=''></span><span style='background: #AEF1AE'>          parseTrailers(maxHeaderSize)(buffer ++ chunk.toArray[Byte], read)
+</span>131 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>132 <span style=''></span><span style='background: #AEF1AE'>    } else {
+</span>133 <span style=''></span><span style='background: #AEF1AE'>      Parser.MessageP
+</span>134 <span style=''></span><span style='background: #AEF1AE'>        .recurseFind(buffer, read, maxHeaderSize)(buffer =&gt;
+</span>135 <span style=''></span><span style='background: #AEF1AE'>          Parser.HeaderP.parseHeaders(buffer, 0, maxHeaderSize)
+</span>136 <span style=''></span><span style='background: #AEF1AE'>        )(_.idx)
+</span>137 <span style=''></span><span style='background: #AEF1AE'>        .map { case (headerP, rest) =&gt; Trailers(headerP.headers, rest) }
+</span>138 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>139 <span style=''>
+</span>140 <span style=''>  private val lastChunk: Chunk[Byte] =
+</span>141 <span style=''>    </span><span style='background: #AEF1AE'>Chunk.byteVector((ByteVector('0') ++ backslashrbackslashn ++ backslashrbackslashn).compact)</span><span style=''>
+</span>142 <span style=''>
+</span>143 <span style=''>  /** Encodes chunk of bytes to http chunked encoding.
+</span>144 <span style=''>    */
+</span>145 <span style=''>  def encode[F[_]]: Pipe[F, Byte, Byte] = {
+</span>146 <span style=''>    def encodeChunk(bv: ByteVector): Chunk[Byte] =
+</span>147 <span style=''>      if (</span><span style='background: #AEF1AE'>bv.isEmpty</span><span style=''>) </span><span style='background: #F0ADAD'>Chunk.empty</span><span style=''>
+</span>148 <span style=''>      else
+</span>149 <span style=''>        </span><span style='background: #AEF1AE'>Chunk.byteVector(
+</span>150 <span style=''></span><span style='background: #AEF1AE'>          ByteVector.view(bv.size.toHexString.toUpperCase.getBytes) ++ backslashrbackslashn ++ bv ++ backslashrbackslashn
+</span>151 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''>
+</span>152 <span style=''>    </span><span style='background: #AEF1AE'>_.mapChunks { ch =&gt;
+</span>153 <span style=''></span><span style='background: #AEF1AE'>      encodeChunk(ch.toByteVector)
+</span>154 <span style=''></span><span style='background: #AEF1AE'>    } ++ Stream.chunk(lastChunk)</span><span style=''>
+</span>155 <span style=''>  }
+</span>156 <span style=''>
+</span>157 <span style=''>  /** yields to size of header in case the chunked header was succesfully parsed, else yields to None */
+</span>158 <span style=''>  private def readChunkedHeader(hdr: ByteVector): Option[Long] =
+</span>159 <span style=''>    </span><span style='background: #AEF1AE'>hdr.decodeUtf8.toOption.flatMap { s =&gt;
+</span>160 <span style=''></span><span style='background: #AEF1AE'>      val parts = s.split(';') // lets ignore any extensions
+</span>161 <span style=''></span><span style='background: #AEF1AE'>      if (parts.isEmpty) </span><span style='background: #F0ADAD'>None</span><span style='background: #AEF1AE'>
+</span>162 <span style=''></span><span style='background: #AEF1AE'>      else
+</span>163 <span style=''></span><span style='background: #AEF1AE'>        try Some(java.lang.Long.parseLong(parts(0).trim, 16))
+</span>164 <span style=''></span><span style='background: #AEF1AE'>        catch { case NonFatal(_) =&gt; </span><span style='background: #F0ADAD'>None</span><span style='background: #AEF1AE'> }
+</span>165 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>166 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          566
+        </td>
+        <td>
+          1974
+          -
+          1987
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          head.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          881
+        </td>
+        <td>
+          1999
+          -
+          2020
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Pull.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.pure[Nothing, Some[scodec.bits.ByteVector]](scala.Some.apply[scodec.bits.ByteVector](head))
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          3288
+        </td>
+        <td>
+          2009
+          -
+          2019
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[scodec.bits.ByteVector](head)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          2473
+        </td>
+        <td>
+          1999
+          -
+          2020
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.pure[Nothing, Some[scodec.bits.ByteVector]](scala.Some.apply[scodec.bits.ByteVector](head))
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          256
+        </td>
+        <td>
+          2064
+          -
+          2085
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.map[scodec.bits.ByteVector](((x$2: fs2.Chunk[Byte]) =&gt; x$2.toByteVector[Byte](scala.this.&lt;:&lt;.refl[Byte])))
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          3616
+        </td>
+        <td>
+          2044
+          -
+          2086
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.eval[F, Option[fs2.Chunk[Byte]]](read).map[Option[scodec.bits.ByteVector]](((x$1: Option[fs2.Chunk[Byte]]) =&gt; x$1.map[scodec.bits.ByteVector](((x$2: fs2.Chunk[Byte]) =&gt; x$2.toByteVector[Byte](scala.this.&lt;:&lt;.refl[Byte])))))
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          1992
+        </td>
+        <td>
+          2070
+          -
+          2084
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.toByteVector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.toByteVector[Byte](scala.this.&lt;:&lt;.refl[Byte])
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          3296
+        </td>
+        <td>
+          2072
+          -
+          2072
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[Byte]
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          2159
+        </td>
+        <td>
+          2044
+          -
+          2086
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Pull.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.eval[F, Option[fs2.Chunk[Byte]]](read).map[Option[scodec.bits.ByteVector]](((x$1: Option[fs2.Chunk[Byte]]) =&gt; x$1.map[scodec.bits.ByteVector](((x$2: fs2.Chunk[Byte]) =&gt; x$2.toByteVector[Byte](scala.this.&lt;:&lt;.refl[Byte])))))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          1780
+        </td>
+        <td>
+          2094
+          -
+          4246
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nextBytes.flatMap[[x]F[x], Byte, Unit](((x0$1: Option[scodec.bits.ByteVector]) =&gt; x0$1 match {
+  case scala.None =&gt; fs2.Pull.raiseError[[_]F[_]](EmberException.ReachedEndOfStream.apply())(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+  case (value: scodec.bits.ByteVector): Some[scodec.bits.ByteVector]((bv @ _)) =&gt; expect match {
+    case (value: scodec.bits.ByteVector): scala.util.Left[scodec.bits.ByteVector,Long]((header @ _)) =&gt; {
+      val nh: scodec.bits.ByteVector = header.++(bv);
+      val endOfHeader: Long = nh.indexOfSlice(Shared.backslashrbackslashn);
+      if (endOfHeader.==(0))
+        go(expect, nh.drop(Shared.backslashrbackslashn.size))
+      else
+        if (endOfHeader.&lt;(0).&amp;&amp;(nh.size.&gt;(maxChunkHeaderSize)))
+          fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to get Chunk header. Size exceeds max(&quot;.+(maxChunkHeaderSize).+(&quot;) : &quot;).+(nh.size).+(&quot; &quot;).+(nh.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+        else
+          if (endOfHeader.&lt;(0))
+            go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](nh), scodec.bits.ByteVector.empty)
+          else
+            {
+              &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$3: (scodec.bits.ByteVector, scodec.bits.ByteVector) = (nh.splitAt(endOfHeader.+(Shared.backslashrbackslashn.size)): (scodec.bits.ByteVector, scodec.bits.ByteVector) @unchecked) match {
+                case (_1: scodec.bits.ByteVector, _2: scodec.bits.ByteVector): (scodec.bits.ByteVector, scodec.bits.ByteVector)((hdr @ _), (rem @ _)) =&gt; scala.Tuple2.apply[scodec.bits.ByteVector, scodec.bits.ByteVector](hdr, rem)
+              };
+              val hdr: scodec.bits.ByteVector = x$3._1;
+              val rem: scodec.bits.ByteVector = x$3._2;
+              ChunkedEncoding.this.readChunkedHeader(hdr.dropRight(Shared.backslashrbackslashn.size)) match {
+                case scala.None =&gt; fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to parse chunked header : &quot;.+(hdr.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+                case (value: Long): Some[Long](0) =&gt; fs2.Pull.eval[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.core.ChunkedEncoding.Trailers](ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(rem.toArray, read)(F))(F).flatMap[Unit](((t: org.http4s.ember.core.ChunkedEncoding.Trailers) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Boolean](trailers.complete(t.headers))(F).&gt;&gt;[Unit](rest.set(scala.Some.apply[Array[Byte]](t.rest)))(F)))).&gt;&gt;[[x]F[x], fs2.INothing, Unit](fs2.Pull.done)
+                case (value: Long): Some[Long]((sz @ _)) =&gt; go(scala.`package`.Right.apply[Nothing, Long](sz), rem)
+              }
+            }
+    }
+    case (value: Long): scala.util.Right[scodec.bits.ByteVector,Long]((remains @ _)) =&gt; if (remains.&gt;(bv.size))
+      fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.byteVector(bv)).&gt;&gt;[[_]F[_], Byte, Unit](go(scala.`package`.Right.apply[Nothing, Long](remains.-(bv.size)), scodec.bits.ByteVector.empty))
+    else
+      {
+        &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$4: (scodec.bits.ByteVector, scodec.bits.ByteVector) = (bv.splitAt(remains.toLong): (scodec.bits.ByteVector, scodec.bits.ByteVector) @unchecked) match {
+          case (_1: scodec.bits.ByteVector, _2: scodec.bits.ByteVector): (scodec.bits.ByteVector, scodec.bits.ByteVector)((out @ _), (next @ _)) =&gt; scala.Tuple2.apply[scodec.bits.ByteVector, scodec.bits.ByteVector](out, next)
+        };
+        val out: scodec.bits.ByteVector = x$4._1;
+        val next: scodec.bits.ByteVector = x$4._2;
+        fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.byteVector(out)).&gt;&gt;[[_]F[_], Byte, Unit](go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](scodec.bits.ByteVector.empty), next))
+      }
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          573
+        </td>
+        <td>
+          2161
+          -
+          2196
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.EmberException.ReachedEndOfStream.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EmberException.ReachedEndOfStream.apply()
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          3237
+        </td>
+        <td>
+          2160
+          -
+          2160
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.RaiseThrowable.fromApplicativeError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          2482
+        </td>
+        <td>
+          2145
+          -
+          2197
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.raiseError[[_]F[_]](EmberException.ReachedEndOfStream.apply())(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          835
+        </td>
+        <td>
+          2305
+          -
+          2317
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          header.++(bv)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          3439
+        </td>
+        <td>
+          2366
+          -
+          2386
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.Shared.backslashrbackslashn
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shared.backslashrbackslashn
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          1997
+        </td>
+        <td>
+          2350
+          -
+          2387
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.indexOfSlice
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nh.indexOfSlice(Shared.backslashrbackslashn)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          454
+        </td>
+        <td>
+          2406
+          -
+          2422
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          endOfHeader.==(0)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          3621
+        </td>
+        <td>
+          2537
+          -
+          2562
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shared.backslashrbackslashn.size
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          552
+        </td>
+        <td>
+          2518
+          -
+          2564
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(expect, nh.drop(Shared.backslashrbackslashn.size))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          2167
+        </td>
+        <td>
+          2529
+          -
+          2563
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.drop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nh.drop(Shared.backslashrbackslashn.size)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          3243
+        </td>
+        <td>
+          2518
+          -
+          2564
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(expect, nh.drop(Shared.backslashrbackslashn.size))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          2364
+        </td>
+        <td>
+          2602
+          -
+          2603
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          3446
+        </td>
+        <td>
+          2588
+          -
+          2635
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          endOfHeader.&lt;(0).&amp;&amp;(nh.size.&gt;(maxChunkHeaderSize))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          841
+        </td>
+        <td>
+          2607
+          -
+          2635
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nh.size.&gt;(maxChunkHeaderSize)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          3514
+        </td>
+        <td>
+          2584
+          -
+          3868
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          if (endOfHeader.&lt;(0).&amp;&amp;(nh.size.&gt;(maxChunkHeaderSize)))
+  fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to get Chunk header. Size exceeds max(&quot;.+(maxChunkHeaderSize).+(&quot;) : &quot;).+(nh.size).+(&quot; &quot;).+(nh.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+else
+  if (endOfHeader.&lt;(0))
+    go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](nh), scodec.bits.ByteVector.empty)
+  else
+    {
+      &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$3: (scodec.bits.ByteVector, scodec.bits.ByteVector) = (nh.splitAt(endOfHeader.+(Shared.backslashrbackslashn.size)): (scodec.bits.ByteVector, scodec.bits.ByteVector) @unchecked) match {
+        case (_1: scodec.bits.ByteVector, _2: scodec.bits.ByteVector): (scodec.bits.ByteVector, scodec.bits.ByteVector)((hdr @ _), (rem @ _)) =&gt; scala.Tuple2.apply[scodec.bits.ByteVector, scodec.bits.ByteVector](hdr, rem)
+      };
+      val hdr: scodec.bits.ByteVector = x$3._1;
+      val rem: scodec.bits.ByteVector = x$3._2;
+      ChunkedEncoding.this.readChunkedHeader(hdr.dropRight(Shared.backslashrbackslashn.size)) match {
+        case scala.None =&gt; fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to parse chunked header : &quot;.+(hdr.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+        case (value: Long): Some[Long](0) =&gt; fs2.Pull.eval[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.core.ChunkedEncoding.Trailers](ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(rem.toArray, read)(F))(F).flatMap[Unit](((t: org.http4s.ember.core.ChunkedEncoding.Trailers) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Boolean](trailers.complete(t.headers))(F).&gt;&gt;[Unit](rest.set(scala.Some.apply[Array[Byte]](t.rest)))(F)))).&gt;&gt;[[x]F[x], fs2.INothing, Unit](fs2.Pull.done)
+        case (value: Long): Some[Long]((sz @ _)) =&gt; go(scala.`package`.Right.apply[Nothing, Long](sz), rem)
+      }
+    }
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          465
+        </td>
+        <td>
+          2671
+          -
+          2671
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.RaiseThrowable.fromApplicativeError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          3596
+        </td>
+        <td>
+          2653
+          -
+          2884
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to get Chunk header. Size exceeds max(&quot;.+(maxChunkHeaderSize).+(&quot;) : &quot;).+(nh.size).+(&quot; &quot;).+(nh.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          2109
+        </td>
+        <td>
+          2653
+          -
+          2884
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to get Chunk header. Size exceeds max(&quot;.+(maxChunkHeaderSize).+(&quot;) : &quot;).+(nh.size).+(&quot; &quot;).+(nh.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          1829
+        </td>
+        <td>
+          2691
+          -
+          2866
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.EmberException.ChunkedEncodingError.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EmberException.ChunkedEncodingError.apply((&quot;Failed to get Chunk header. Size exceeds max(&quot;.+(maxChunkHeaderSize).+(&quot;) : &quot;).+(nh.size).+(&quot; &quot;).+(nh.decodeUtf8): String))
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          1617
+        </td>
+        <td>
+          2938
+          -
+          2954
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.empty
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          561
+        </td>
+        <td>
+          2908
+          -
+          2923
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&lt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          endOfHeader.&lt;(0)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          967
+        </td>
+        <td>
+          2904
+          -
+          3868
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          if (endOfHeader.&lt;(0))
+  go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](nh), scodec.bits.ByteVector.empty)
+else
+  {
+    &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$3: (scodec.bits.ByteVector, scodec.bits.ByteVector) = (nh.splitAt(endOfHeader.+(Shared.backslashrbackslashn.size)): (scodec.bits.ByteVector, scodec.bits.ByteVector) @unchecked) match {
+      case (_1: scodec.bits.ByteVector, _2: scodec.bits.ByteVector): (scodec.bits.ByteVector, scodec.bits.ByteVector)((hdr @ _), (rem @ _)) =&gt; scala.Tuple2.apply[scodec.bits.ByteVector, scodec.bits.ByteVector](hdr, rem)
+    };
+    val hdr: scodec.bits.ByteVector = x$3._1;
+    val rem: scodec.bits.ByteVector = x$3._2;
+    ChunkedEncoding.this.readChunkedHeader(hdr.dropRight(Shared.backslashrbackslashn.size)) match {
+      case scala.None =&gt; fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to parse chunked header : &quot;.+(hdr.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+      case (value: Long): Some[Long](0) =&gt; fs2.Pull.eval[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.core.ChunkedEncoding.Trailers](ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(rem.toArray, read)(F))(F).flatMap[Unit](((t: org.http4s.ember.core.ChunkedEncoding.Trailers) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Boolean](trailers.complete(t.headers))(F).&gt;&gt;[Unit](rest.set(scala.Some.apply[Array[Byte]](t.rest)))(F)))).&gt;&gt;[[x]F[x], fs2.INothing, Unit](fs2.Pull.done)
+      case (value: Long): Some[Long]((sz @ _)) =&gt; go(scala.`package`.Right.apply[Nothing, Long](sz), rem)
+    }
+  }
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          847
+        </td>
+        <td>
+          2925
+          -
+          2955
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](nh), scodec.bits.ByteVector.empty)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          3293
+        </td>
+        <td>
+          2925
+          -
+          2955
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](nh), scodec.bits.ByteVector.empty)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          3101
+        </td>
+        <td>
+          2928
+          -
+          2936
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](nh)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          1710
+        </td>
+        <td>
+          2975
+          -
+          3868
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$3: (scodec.bits.ByteVector, scodec.bits.ByteVector) = (nh.splitAt(endOfHeader.+(Shared.backslashrbackslashn.size)): (scodec.bits.ByteVector, scodec.bits.ByteVector) @unchecked) match {
+    case (_1: scodec.bits.ByteVector, _2: scodec.bits.ByteVector): (scodec.bits.ByteVector, scodec.bits.ByteVector)((hdr @ _), (rem @ _)) =&gt; scala.Tuple2.apply[scodec.bits.ByteVector, scodec.bits.ByteVector](hdr, rem)
+  };
+  val hdr: scodec.bits.ByteVector = x$3._1;
+  val rem: scodec.bits.ByteVector = x$3._2;
+  ChunkedEncoding.this.readChunkedHeader(hdr.dropRight(Shared.backslashrbackslashn.size)) match {
+    case scala.None =&gt; fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to parse chunked header : &quot;.+(hdr.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+    case (value: Long): Some[Long](0) =&gt; fs2.Pull.eval[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.core.ChunkedEncoding.Trailers](ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(rem.toArray, read)(F))(F).flatMap[Unit](((t: org.http4s.ember.core.ChunkedEncoding.Trailers) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Boolean](trailers.complete(t.headers))(F).&gt;&gt;[Unit](rest.set(scala.Some.apply[Array[Byte]](t.rest)))(F)))).&gt;&gt;[[x]F[x], fs2.INothing, Unit](fs2.Pull.done)
+    case (value: Long): Some[Long]((sz @ _)) =&gt; go(scala.`package`.Right.apply[Nothing, Long](sz), rem)
+  }
+}
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          441
+        </td>
+        <td>
+          3003
+          -
+          3003
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$3._2
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          1840
+        </td>
+        <td>
+          2998
+          -
+          2998
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$3._1
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          2113
+        </td>
+        <td>
+          3096
+          -
+          3136
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.dropRight
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hdr.dropRight(Shared.backslashrbackslashn.size)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          519
+        </td>
+        <td>
+          3078
+          -
+          3137
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.readChunkedHeader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ChunkedEncoding.this.readChunkedHeader(hdr.dropRight(Shared.backslashrbackslashn.size))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          3601
+        </td>
+        <td>
+          3110
+          -
+          3135
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shared.backslashrbackslashn.size
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          818
+        </td>
+        <td>
+          3197
+          -
+          3399
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Pull.raiseError[F](EmberException.ChunkedEncodingError.apply((&quot;Failed to parse chunked header : &quot;.+(hdr.decodeUtf8): String)))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          1700
+        </td>
+        <td>
+          3215
+          -
+          3215
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.RaiseThrowable.fromApplicativeError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          3111
+        </td>
+        <td>
+          3239
+          -
+          3377
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.EmberException.ChunkedEncodingError.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EmberException.ChunkedEncodingError.apply((&quot;Failed to parse chunked header : &quot;.+(hdr.decodeUtf8): String))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          3299
+        </td>
+        <td>
+          3548
+          -
+          3598
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.parseTrailers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(rem.toArray, read)(F)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          451
+        </td>
+        <td>
+          3548
+          -
+          3745
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.core.ChunkedEncoding.Trailers](ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(rem.toArray, read)(F))(F).flatMap[Unit](((t: org.http4s.ember.core.ChunkedEncoding.Trailers) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Boolean](trailers.complete(t.headers))(F).&gt;&gt;[Unit](rest.set(scala.Some.apply[Array[Byte]](t.rest)))(F)))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          1783
+        </td>
+        <td>
+          3665
+          -
+          3719
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Boolean](trailers.complete(t.headers))(F).&gt;&gt;[Unit](rest.set(scala.Some.apply[Array[Byte]](t.rest)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          2785
+        </td>
+        <td>
+          3771
+          -
+          3780
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.done
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.done
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          2252
+        </td>
+        <td>
+          3515
+          -
+          3780
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.eval[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.ember.core.ChunkedEncoding.Trailers](ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(rem.toArray, read)(F))(F).flatMap[Unit](((t: org.http4s.ember.core.ChunkedEncoding.Trailers) =&gt; cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Boolean](trailers.complete(t.headers))(F).&gt;&gt;[Unit](rest.set(scala.Some.apply[Array[Byte]](t.rest)))(F)))).&gt;&gt;[[x]F[x], fs2.INothing, Unit](fs2.Pull.done)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          3047
+        </td>
+        <td>
+          3816
+          -
+          3834
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(scala.`package`.Right.apply[Nothing, Long](sz), rem)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          524
+        </td>
+        <td>
+          3819
+          -
+          3828
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, Long](sz)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          462
+        </td>
+        <td>
+          3923
+          -
+          3940
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          remains.&gt;(bv.size)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          1789
+        </td>
+        <td>
+          3933
+          -
+          3940
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bv.size
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          2981
+        </td>
+        <td>
+          3970
+          -
+          3990
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.byteVector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.byteVector(bv)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          747
+        </td>
+        <td>
+          4004
+          -
+          4021
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          remains.-(bv.size)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          2105
+        </td>
+        <td>
+          4014
+          -
+          4021
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bv.size
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          2006
+        </td>
+        <td>
+          3958
+          -
+          4041
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.byteVector(bv)).&gt;&gt;[[_]F[_], Byte, Unit](go(scala.`package`.Right.apply[Nothing, Long](remains.-(bv.size)), scodec.bits.ByteVector.empty))
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          1722
+        </td>
+        <td>
+          4024
+          -
+          4040
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.empty
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          812
+        </td>
+        <td>
+          3995
+          -
+          4041
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(scala.`package`.Right.apply[Nothing, Long](remains.-(bv.size)), scodec.bits.ByteVector.empty)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          3384
+        </td>
+        <td>
+          3958
+          -
+          4041
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.byteVector(bv)).&gt;&gt;[[_]F[_], Byte, Unit](go(scala.`package`.Right.apply[Nothing, Long](remains.-(bv.size)), scodec.bits.ByteVector.empty))
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          3207
+        </td>
+        <td>
+          3998
+          -
+          4022
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, Long](remains.-(bv.size))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          3335
+        </td>
+        <td>
+          4061
+          -
+          4226
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$4: (scodec.bits.ByteVector, scodec.bits.ByteVector) = (bv.splitAt(remains.toLong): (scodec.bits.ByteVector, scodec.bits.ByteVector) @unchecked) match {
+    case (_1: scodec.bits.ByteVector, _2: scodec.bits.ByteVector): (scodec.bits.ByteVector, scodec.bits.ByteVector)((out @ _), (next @ _)) =&gt; scala.Tuple2.apply[scodec.bits.ByteVector, scodec.bits.ByteVector](out, next)
+  };
+  val out: scodec.bits.ByteVector = x$4._1;
+  val next: scodec.bits.ByteVector = x$4._2;
+  fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.byteVector(out)).&gt;&gt;[[_]F[_], Byte, Unit](go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](scodec.bits.ByteVector.empty), next))
+}
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          412
+        </td>
+        <td>
+          4084
+          -
+          4084
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4._1
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          2992
+        </td>
+        <td>
+          4089
+          -
+          4089
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4._2
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          2069
+        </td>
+        <td>
+          4152
+          -
+          4173
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.byteVector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.byteVector(out)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          3211
+        </td>
+        <td>
+          4181
+          -
+          4203
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](scodec.bits.ByteVector.empty)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          91
+        </td>
+        <td>
+          4140
+          -
+          4210
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output[[x]fs2.Pure[x], Byte](fs2.Chunk.byteVector(out)).&gt;&gt;[[_]F[_], Byte, Unit](go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](scodec.bits.ByteVector.empty), next))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          1663
+        </td>
+        <td>
+          4178
+          -
+          4210
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](scodec.bits.ByteVector.empty), next)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          634
+        </td>
+        <td>
+          4186
+          -
+          4202
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.empty
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          2074
+        </td>
+        <td>
+          4285
+          -
+          4306
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.view
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.view(head)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          3043
+        </td>
+        <td>
+          4258
+          -
+          4314
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.StreamPullOps.stream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Pull.StreamPullOps[[_]F[_], Byte](go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](scodec.bits.ByteVector.empty), scodec.bits.ByteVector.view(head))).stream
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          2830
+        </td>
+        <td>
+          4261
+          -
+          4283
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](scodec.bits.ByteVector.empty)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          419
+        </td>
+        <td>
+          4266
+          -
+          4282
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.empty
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          643
+        </td>
+        <td>
+          4258
+          -
+          4307
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(scala.`package`.Left.apply[scodec.bits.ByteVector, Nothing](scodec.bits.ByteVector.empty), scodec.bits.ByteVector.view(head))
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          1670
+        </td>
+        <td>
+          4554
+          -
+          4589
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.toArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shared.backslashrbackslashn.toArray
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          40
+        </td>
+        <td>
+          4536
+          -
+          4590
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.ArrayOps.startsWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.byteArrayOps(buffer).startsWith[Byte](Shared.backslashrbackslashn.toArray)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          3339
+        </td>
+        <td>
+          4600
+          -
+          4677
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.ember.core.ChunkedEncoding.Trailers](ChunkedEncoding.this.Trailers.apply(Headers.empty, scala.Predef.byteArrayOps(buffer).drop(Shared.backslashrbackslashn.size.toInt))).pure[F](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          1786
+        </td>
+        <td>
+          4600
+          -
+          4677
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.ember.core.ChunkedEncoding.Trailers](ChunkedEncoding.this.Trailers.apply(Headers.empty, scala.Predef.byteArrayOps(buffer).drop(Shared.backslashrbackslashn.size.toInt))).pure[F](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          1323
+        </td>
+        <td>
+          4689
+          -
+          5194
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          if (buffer.length.&lt;(2))
+  cats.syntax.`package`.all.toFlatMapOps[F, Option[fs2.Chunk[Byte]]](read)(evidence$1).flatMap[org.http4s.ember.core.ChunkedEncoding.Trailers](((x0$1: Option[fs2.Chunk[Byte]]) =&gt; x0$1 match {
+    case scala.None =&gt; cats.`package`.MonadThrow.apply[F](evidence$1).raiseError[org.http4s.ember.core.ChunkedEncoding.Trailers](EmberException.ReachedEndOfStream.apply())
+    case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((chunk @ _)) =&gt; ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(scala.Predef.byteArrayOps(buffer).++[Byte](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))((ClassTag.Byte: scala.reflect.ClassTag[Byte])), read)(evidence$1)
+  }))
+else
+  cats.syntax.`package`.all.toFunctorOps[F, (org.http4s.ember.core.Parser.HeaderP, Array[Byte])](Parser.MessageP.recurseFind[F, org.http4s.ember.core.Parser.HeaderP](buffer, read, maxHeaderSize)(((buffer: Array[Byte]) =&gt; Parser.HeaderP.parseHeaders[[_]F[_]](buffer, 0, maxHeaderSize)(evidence$1)))(((x$5: org.http4s.ember.core.Parser.HeaderP) =&gt; x$5.idx))(evidence$1))(evidence$1).map[org.http4s.ember.core.ChunkedEncoding.Trailers](((x0$2: (org.http4s.ember.core.Parser.HeaderP, Array[Byte])) =&gt; x0$2 match {
+    case (_1: org.http4s.ember.core.Parser.HeaderP, _2: Array[Byte]): (org.http4s.ember.core.Parser.HeaderP, Array[Byte])((headerP @ _), (rest @ _)) =&gt; ChunkedEncoding.this.Trailers.apply(headerP.headers, rest)
+  }))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          267
+        </td>
+        <td>
+          4693
+          -
+          4710
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          buffer.length.&lt;(2)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          3051
+        </td>
+        <td>
+          4720
+          -
+          4939
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[fs2.Chunk[Byte]]](read)(evidence$1).flatMap[org.http4s.ember.core.ChunkedEncoding.Trailers](((x0$1: Option[fs2.Chunk[Byte]]) =&gt; x0$1 match {
+  case scala.None =&gt; cats.`package`.MonadThrow.apply[F](evidence$1).raiseError[org.http4s.ember.core.ChunkedEncoding.Trailers](EmberException.ReachedEndOfStream.apply())
+  case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((chunk @ _)) =&gt; ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(scala.Predef.byteArrayOps(buffer).++[Byte](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))((ClassTag.Byte: scala.reflect.ClassTag[Byte])), read)(evidence$1)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          1651
+        </td>
+        <td>
+          4720
+          -
+          4939
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[fs2.Chunk[Byte]]](read)(evidence$1).flatMap[org.http4s.ember.core.ChunkedEncoding.Trailers](((x0$1: Option[fs2.Chunk[Byte]]) =&gt; x0$1 match {
+  case scala.None =&gt; cats.`package`.MonadThrow.apply[F](evidence$1).raiseError[org.http4s.ember.core.ChunkedEncoding.Trailers](EmberException.ReachedEndOfStream.apply())
+  case (value: fs2.Chunk[Byte]): Some[fs2.Chunk[Byte]]((chunk @ _)) =&gt; ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(scala.Predef.byteArrayOps(buffer).++[Byte](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))((ClassTag.Byte: scala.reflect.ClassTag[Byte])), read)(evidence$1)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          2836
+        </td>
+        <td>
+          4791
+          -
+          4826
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.EmberException.ReachedEndOfStream.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EmberException.ReachedEndOfStream.apply()
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          2049
+        </td>
+        <td>
+          4766
+          -
+          4827
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.`package`.MonadThrow.apply[F](evidence$1).raiseError[org.http4s.ember.core.ChunkedEncoding.Trailers](EmberException.ReachedEndOfStream.apply())
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          744
+        </td>
+        <td>
+          4866
+          -
+          4931
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.parseTrailers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ChunkedEncoding.this.parseTrailers[F](maxHeaderSize)(scala.Predef.byteArrayOps(buffer).++[Byte](chunk.toArray[Byte]((ClassTag.Byte: scala.reflect.ClassTag[Byte])))((ClassTag.Byte: scala.reflect.ClassTag[Byte])), read)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          48
+        </td>
+        <td>
+          4959
+          -
+          5115
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.Parser.MessageP.recurseFind
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Parser.MessageP.recurseFind[F, org.http4s.ember.core.Parser.HeaderP](buffer, read, maxHeaderSize)(((buffer: Array[Byte]) =&gt; Parser.HeaderP.parseHeaders[[_]F[_]](buffer, 0, maxHeaderSize)(evidence$1)))(((x$5: org.http4s.ember.core.Parser.HeaderP) =&gt; x$5.idx))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          2915
+        </td>
+        <td>
+          4959
+          -
+          5188
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, (org.http4s.ember.core.Parser.HeaderP, Array[Byte])](Parser.MessageP.recurseFind[F, org.http4s.ember.core.Parser.HeaderP](buffer, read, maxHeaderSize)(((buffer: Array[Byte]) =&gt; Parser.HeaderP.parseHeaders[[_]F[_]](buffer, 0, maxHeaderSize)(evidence$1)))(((x$5: org.http4s.ember.core.Parser.HeaderP) =&gt; x$5.idx))(evidence$1))(evidence$1).map[org.http4s.ember.core.ChunkedEncoding.Trailers](((x0$2: (org.http4s.ember.core.Parser.HeaderP, Array[Byte])) =&gt; x0$2 match {
+  case (_1: org.http4s.ember.core.Parser.HeaderP, _2: Array[Byte]): (org.http4s.ember.core.Parser.HeaderP, Array[Byte])((headerP @ _), (rest @ _)) =&gt; ChunkedEncoding.this.Trailers.apply(headerP.headers, rest)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          2002
+        </td>
+        <td>
+          5155
+          -
+          5186
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.Trailers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ChunkedEncoding.this.Trailers.apply(headerP.headers, rest)
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          276
+        </td>
+        <td>
+          4959
+          -
+          5188
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, (org.http4s.ember.core.Parser.HeaderP, Array[Byte])](Parser.MessageP.recurseFind[F, org.http4s.ember.core.Parser.HeaderP](buffer, read, maxHeaderSize)(((buffer: Array[Byte]) =&gt; Parser.HeaderP.parseHeaders[[_]F[_]](buffer, 0, maxHeaderSize)(evidence$1)))(((x$5: org.http4s.ember.core.Parser.HeaderP) =&gt; x$5.idx))(evidence$1))(evidence$1).map[org.http4s.ember.core.ChunkedEncoding.Trailers](((x0$2: (org.http4s.ember.core.Parser.HeaderP, Array[Byte])) =&gt; x0$2 match {
+  case (_1: org.http4s.ember.core.Parser.HeaderP, _2: Array[Byte]): (org.http4s.ember.core.Parser.HeaderP, Array[Byte])((headerP @ _), (rest @ _)) =&gt; ChunkedEncoding.this.Trailers.apply(headerP.headers, rest)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          3347
+        </td>
+        <td>
+          5164
+          -
+          5179
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.Parser.HeaderP.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headerP.headers
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          750
+        </td>
+        <td>
+          5268
+          -
+          5271
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          '0'
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          2009
+        </td>
+        <td>
+          5239
+          -
+          5330
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.byteVector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.byteVector(scodec.bits.ByteVector.apply[Char]('0')(math.this.Numeric.CharIsIntegral).++(Shared.backslashrbackslashn).++(Shared.backslashrbackslashn).compact)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          3471
+        </td>
+        <td>
+          5256
+          -
+          5329
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.compact
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.apply[Char]('0')(math.this.Numeric.CharIsIntegral).++(Shared.backslashrbackslashn).++(Shared.backslashrbackslashn).compact
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          1661
+        </td>
+        <td>
+          5276
+          -
+          5296
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.Shared.backslashrbackslashn
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shared.backslashrbackslashn
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          3251
+        </td>
+        <td>
+          5267
+          -
+          5267
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.math.Numeric.CharIsIntegral
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          math.this.Numeric.CharIsIntegral
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          152
+        </td>
+        <td>
+          5300
+          -
+          5320
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.Shared.backslashrbackslashn
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shared.backslashrbackslashn
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          1494
+        </td>
+        <td>
+          5511
+          -
+          5522
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Chunk.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Chunk.empty[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          473
+        </td>
+        <td>
+          5499
+          -
+          5509
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scodec.bits.ByteVector.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bv.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          2925
+        </td>
+        <td>
+          5511
+          -
+          5522
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.Chunk.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Chunk.empty[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          1973
+        </td>
+        <td>
+          5542
+          -
+          5691
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Chunk.byteVector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.byteVector(scodec.bits.ByteVector.view(scala.Predef.longWrapper(bv.size).toHexString.toUpperCase().getBytes()).++(Shared.backslashrbackslashn).++(bv).++(Shared.backslashrbackslashn))
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          2657
+        </td>
+        <td>
+          5542
+          -
+          5691
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.byteVector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.byteVector(scodec.bits.ByteVector.view(scala.Predef.longWrapper(bv.size).toHexString.toUpperCase().getBytes()).++(Shared.backslashrbackslashn).++(bv).++(Shared.backslashrbackslashn))
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          163
+        </td>
+        <td>
+          5570
+          -
+          5681
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.view(scala.Predef.longWrapper(bv.size).toHexString.toUpperCase().getBytes()).++(Shared.backslashrbackslashn).++(bv).++(Shared.backslashrbackslashn)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          1622
+        </td>
+        <td>
+          5661
+          -
+          5681
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.Shared.backslashrbackslashn
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shared.backslashrbackslashn
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          715
+        </td>
+        <td>
+          5586
+          -
+          5626
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.getBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.longWrapper(bv.size).toHexString.toUpperCase().getBytes()
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          3257
+        </td>
+        <td>
+          5631
+          -
+          5651
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.Shared.backslashrbackslashn
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shared.backslashrbackslashn
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          388
+        </td>
+        <td>
+          5737
+          -
+          5737
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[Byte]
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          1311
+        </td>
+        <td>
+          5722
+          -
+          5750
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.encodeChunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          encodeChunk(ch.toByteVector[Byte](scala.this.&lt;:&lt;.refl[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          2937
+        </td>
+        <td>
+          5734
+          -
+          5749
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.toByteVector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ch.toByteVector[Byte](scala.this.&lt;:&lt;.refl[Byte])
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          579
+        </td>
+        <td>
+          5773
+          -
+          5782
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.ChunkedEncoding.lastChunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ChunkedEncoding.this.lastChunk
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          1627
+        </td>
+        <td>
+          5696
+          -
+          5783
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.mapChunks[Byte](((ch: fs2.Chunk[Byte]) =&gt; encodeChunk(ch.toByteVector[Byte](scala.this.&lt;:&lt;.refl[Byte])))).++[[x]F[x], Byte](fs2.Stream.chunk[[x]fs2.Pure[x], Byte](ChunkedEncoding.this.lastChunk))
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          3218
+        </td>
+        <td>
+          5760
+          -
+          5783
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.chunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](ChunkedEncoding.this.lastChunk)
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          1794
+        </td>
+        <td>
+          5963
+          -
+          6214
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hdr.decodeUtf8.toOption.flatMap[Long](((s: String) =&gt; {
+  val parts: Array[String] = scala.Predef.augmentString(s).split(';');
+  if (scala.Predef.refArrayOps[String](parts).isEmpty)
+    scala.None
+  else
+    try {
+      scala.Some.apply[Long](java.lang.Long.parseLong(parts.apply(0).trim(), 16))
+    } catch {
+      case scala.util.control.NonFatal.unapply(&lt;unapply-selector&gt;) &lt;unapply&gt; (_) =&gt; scala.None
+    }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          174
+        </td>
+        <td>
+          6020
+          -
+          6032
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StringOps.split
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(s).split(';')
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          1856
+        </td>
+        <td>
+          6088
+          -
+          6092
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          351
+        </td>
+        <td>
+          6088
+          -
+          6092
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          2596
+        </td>
+        <td>
+          6073
+          -
+          6086
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.ArrayOps.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.refArrayOps[String](parts).isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          1320
+        </td>
+        <td>
+          6161
+          -
+          6163
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          16
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          1633
+        </td>
+        <td>
+          6116
+          -
+          6165
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](java.lang.Long.parseLong(parts.apply(0).trim(), 16))
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          3248
+        </td>
+        <td>
+          6116
+          -
+          6165
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](java.lang.Long.parseLong(parts.apply(0).trim(), 16))
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          2883
+        </td>
+        <td>
+          6146
+          -
+          6159
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.trim
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          parts.apply(0).trim()
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          2608
+        </td>
+        <td>
+          6112
+          -
+          6208
+        </td>
+        <td>
+          Try
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          try {
+  scala.Some.apply[Long](java.lang.Long.parseLong(parts.apply(0).trim(), 16))
+} catch {
+  case scala.util.control.NonFatal.unapply(&lt;unapply-selector&gt;) &lt;unapply&gt; (_) =&gt; scala.None
+}
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          529
+        </td>
+        <td>
+          6121
+          -
+          6164
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Long.parseLong
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.Long.parseLong(parts.apply(0).trim(), 16)
+        </td>
+      </tr><tr>
+        <td>
+          164
+        </td>
+        <td>
+          12
+        </td>
+        <td>
+          6202
+          -
+          6206
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

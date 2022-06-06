@@ -1,0 +1,864 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/Retry-After.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package headers
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.parse.Parser
+</span>21 <span style=''>import cats.parse.Rfc5234
+</span>22 <span style=''>import org.http4s.util.Renderable._
+</span>23 <span style=''>import org.typelevel.ci._
+</span>24 <span style=''>
+</span>25 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>26 <span style=''>
+</span>27 <span style=''>object `Retry-After` {
+</span>28 <span style=''>  private class RetryAfterImpl(retry: Either[HttpDate, Long]) extends `Retry-After`(retry)
+</span>29 <span style=''>
+</span>30 <span style=''>  def apply(retry: HttpDate): `Retry-After` = </span><span style='background: #AEF1AE'>new RetryAfterImpl(Left(retry))</span><span style=''>
+</span>31 <span style=''>
+</span>32 <span style=''>  def fromLong(retry: Long): ParseResult[`Retry-After`] =
+</span>33 <span style=''>    if (</span><span style='background: #AEF1AE'>retry &gt;= 0</span><span style=''>) </span><span style='background: #AEF1AE'>ParseResult.success(new RetryAfterImpl(Right(retry)))</span><span style=''>
+</span>34 <span style=''>    else
+</span>35 <span style=''>      </span><span style='background: #AEF1AE'>ParseResult.fail(
+</span>36 <span style=''></span><span style='background: #AEF1AE'>        &quot;Invalid retry value&quot;,
+</span>37 <span style=''></span><span style='background: #AEF1AE'>        s&quot;Retry param $retry must be more or equal than 0 seconds&quot;,
+</span>38 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>39 <span style=''>
+</span>40 <span style=''>  def unsafeFromLong(retry: Long): `Retry-After` =
+</span>41 <span style=''>    </span><span style='background: #AEF1AE'>fromLong(retry).fold(throw _, identity)</span><span style=''>
+</span>42 <span style=''>
+</span>43 <span style=''>  def unsafeFromDuration(retry: FiniteDuration): `Retry-After` =
+</span>44 <span style=''>    </span><span style='background: #AEF1AE'>fromLong(retry.toSeconds).fold(throw _, identity)</span><span style=''>
+</span>45 <span style=''>
+</span>46 <span style=''>  def parse(s: String): ParseResult[`Retry-After`] =
+</span>47 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Retry-After header&quot;)(s)</span><span style=''>
+</span>48 <span style=''>
+</span>49 <span style=''>  /* `Retry-After = HTTP-date / delay-seconds` */
+</span>50 <span style=''>  private[http4s] val parser: Parser[`Retry-After`] = {
+</span>51 <span style=''>    import Rfc5234.digit
+</span>52 <span style=''>
+</span>53 <span style=''>    def httpDate = </span><span style='background: #AEF1AE'>HttpDate.parser.map(apply)</span><span style=''>
+</span>54 <span style=''>
+</span>55 <span style=''>    /* delay-seconds  = 1*DIGIT */
+</span>56 <span style=''>    def delaySeconds = </span><span style='background: #AEF1AE'>digit.rep.string.map(s =&gt; unsafeFromLong(s.toLong))</span><span style=''>
+</span>57 <span style=''>
+</span>58 <span style=''>    </span><span style='background: #AEF1AE'>httpDate.orElse(delaySeconds)</span><span style=''>
+</span>59 <span style=''>  }
+</span>60 <span style=''>
+</span>61 <span style=''>  implicit val headerInstance: Header[`Retry-After`, Header.Single] =
+</span>62 <span style=''>    </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>63 <span style=''></span><span style='background: #AEF1AE'>      ci&quot;Retry-After&quot;,
+</span>64 <span style=''></span><span style='background: #AEF1AE'>      _.retry,
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      parse,
+</span>66 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>}
+</span>69 <span style=''>
+</span>70 <span style=''>/** Response header, used by the server to indicate to the user-agent how long it has to wait before
+</span>71 <span style=''>  * it can try again with a follow-up request.
+</span>72 <span style=''>  *
+</span>73 <span style=''>  * [[https://datatracker.ietf.org/doc/html/rfc7231#section-7.1.3 RFC-7231 Section 7.1.3]]
+</span>74 <span style=''>  *
+</span>75 <span style=''>  * @param retry Indicates the retry time, either as a date of expiration or as a number of seconds from the current time
+</span>76 <span style=''>  * until that expiration.
+</span>77 <span style=''>  */
+</span>78 <span style=''>sealed abstract case class `Retry-After`(retry: Either[HttpDate, Long])
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          30
+        </td>
+        <td>
+          15990
+        </td>
+        <td>
+          955
+          -
+          986
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Retry-After.RetryAfterImpl.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Retry-After.this.RetryAfterImpl(scala.`package`.Left.apply[org.http4s.HttpDate, Nothing](retry))
+        </td>
+      </tr><tr>
+        <td>
+          30
+        </td>
+        <td>
+          19362
+        </td>
+        <td>
+          974
+          -
+          985
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[org.http4s.HttpDate, Nothing](retry)
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          14300
+        </td>
+        <td>
+          1086
+          -
+          1118
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Retry-After.RetryAfterImpl.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Retry-After.this.RetryAfterImpl(scala.`package`.Right.apply[Nothing, Long](retry))
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          19207
+        </td>
+        <td>
+          1066
+          -
+          1119
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[org.http4s.headers.Retry-After.RetryAfterImpl](new Retry-After.this.RetryAfterImpl(scala.`package`.Right.apply[Nothing, Long](retry)))
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          22538
+        </td>
+        <td>
+          1054
+          -
+          1064
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          retry.&gt;=(0)
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          18309
+        </td>
+        <td>
+          1105
+          -
+          1117
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, Long](retry)
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          22564
+        </td>
+        <td>
+          1066
+          -
+          1119
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.success[org.http4s.headers.Retry-After.RetryAfterImpl](new Retry-After.this.RetryAfterImpl(scala.`package`.Right.apply[Nothing, Long](retry)))
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          21912
+        </td>
+        <td>
+          1135
+          -
+          1259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          org.http4s.headers.retryaftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid retry value&quot;, (&quot;Retry param &quot;.+(retry).+(&quot; must be more or equal than 0 seconds&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          19376
+        </td>
+        <td>
+          1135
+          -
+          1259
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.fail
+        </td>
+        <td>
+          org.http4s.headers.retryaftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fail(&quot;Invalid retry value&quot;, (&quot;Retry param &quot;.+(retry).+(&quot; must be more or equal than 0 seconds&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          15469
+        </td>
+        <td>
+          1161
+          -
+          1182
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.retryaftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Invalid retry value&quot;
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          18413
+        </td>
+        <td>
+          1316
+          -
+          1355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Retry-After.this.fromLong(retry).fold[org.http4s.headers.Retry-After](((x$1: org.http4s.ParseFailure) =&gt; throw x$1), ((x: org.http4s.headers.Retry-After) =&gt; scala.Predef.identity[org.http4s.headers.Retry-After](x)))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          22399
+        </td>
+        <td>
+          1346
+          -
+          1354
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[org.http4s.headers.Retry-After](x)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          15889
+        </td>
+        <td>
+          1337
+          -
+          1344
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.retryaftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          throw x$1
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          19226
+        </td>
+        <td>
+          1466
+          -
+          1474
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          org.http4s.headers.retryaftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[org.http4s.headers.Retry-After](x)
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          22979
+        </td>
+        <td>
+          1457
+          -
+          1464
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.retryaftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          throw x$2
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          14840
+        </td>
+        <td>
+          1435
+          -
+          1450
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.toSeconds
+        </td>
+        <td>
+          org.http4s.headers.retryaftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          retry.toSeconds
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          15330
+        </td>
+        <td>
+          1426
+          -
+          1475
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.headers.retryaftersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Retry-After.this.fromLong(retry.toSeconds).fold[org.http4s.headers.Retry-After](((x$2: org.http4s.ParseFailure) =&gt; throw x$2), ((x: org.http4s.headers.Retry-After) =&gt; scala.Predef.identity[org.http4s.headers.Retry-After](x)))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          21643
+        </td>
+        <td>
+          1534
+          -
+          1597
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.headers.Retry-After](Retry-After.this.parser, &quot;Invalid Retry-After header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          15903
+        </td>
+        <td>
+          1750
+          -
+          1776
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.parser.map[org.http4s.headers.Retry-After](((retry: org.http4s.HttpDate) =&gt; Retry-After.this.apply(retry)))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          17421
+        </td>
+        <td>
+          1770
+          -
+          1775
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Retry-After.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Retry-After.this.apply(retry)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          22417
+        </td>
+        <td>
+          1877
+          -
+          1885
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toLong
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(s).toLong
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          14581
+        </td>
+        <td>
+          1836
+          -
+          1887
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit.rep.string.map[org.http4s.headers.Retry-After](((s: String) =&gt; Retry-After.this.unsafeFromLong(scala.Predef.augmentString(s).toLong)))
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          18288
+        </td>
+        <td>
+          1862
+          -
+          1886
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Retry-After.unsafeFromLong
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Retry-After.this.unsafeFromLong(scala.Predef.augmentString(s).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          22995
+        </td>
+        <td>
+          1893
+          -
+          1922
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          httpDate.orElse[org.http4s.headers.Retry-After](delaySeconds)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          18301
+        </td>
+        <td>
+          2002
+          -
+          2081
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.createRendered[org.http4s.headers.Retry-After, org.http4s.Header.Single, Either[org.http4s.HttpDate,Long]](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Retry-After&quot;)).ci(), ((x$3: org.http4s.headers.Retry-After) =&gt; x$3.retry), ((s: String) =&gt; Retry-After.this.parse(s)))(util.this.Renderer.eitherRenderer[org.http4s.HttpDate, Long](org.http4s.util.Renderable.renderableInst[org.http4s.HttpDate], util.this.Renderer.longRenderer))
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          22284
+        </td>
+        <td>
+          2023
+          -
+          2023
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Renderer.eitherRenderer
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderer.eitherRenderer[org.http4s.HttpDate, Long](org.http4s.util.Renderable.renderableInst[org.http4s.HttpDate], util.this.Renderer.longRenderer)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          15917
+        </td>
+        <td>
+          2023
+          -
+          2023
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Renderer.longRenderer
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderer.longRenderer
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          17523
+        </td>
+        <td>
+          2023
+          -
+          2023
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.util.Renderable.renderableInst[org.http4s.HttpDate]
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          19111
+        </td>
+        <td>
+          2031
+          -
+          2046
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Retry-After&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          15057
+        </td>
+        <td>
+          2054
+          -
+          2061
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Retry-After.retry
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$3.retry
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          21509
+        </td>
+        <td>
+          2069
+          -
+          2074
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Retry-After.parse
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Retry-After.this.parse(s)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

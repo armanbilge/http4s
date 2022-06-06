@@ -1,0 +1,1155 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ember/server/internal/Shutdown.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2019 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.ember.server.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.effect._
+</span>20 <span style=''>import cats.effect.implicits._
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import fs2.Stream
+</span>23 <span style=''>
+</span>24 <span style=''>import scala.concurrent.duration.Duration
+</span>25 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>26 <span style=''>
+</span>27 <span style=''>private[server] abstract class Shutdown[F[_]] {
+</span>28 <span style=''>  def await: F[Unit]
+</span>29 <span style=''>  def signal: F[Unit]
+</span>30 <span style=''>  def newConnection: F[Unit]
+</span>31 <span style=''>  def removeConnection: F[Unit]
+</span>32 <span style=''>
+</span>33 <span style=''>  def trackConnection: Stream[F, Unit] =
+</span>34 <span style=''>    </span><span style='background: #AEF1AE'>Stream.bracket(newConnection)(_ =&gt; removeConnection)</span><span style=''>
+</span>35 <span style=''>}
+</span>36 <span style=''>
+</span>37 <span style=''>private[server] object Shutdown {
+</span>38 <span style=''>
+</span>39 <span style=''>  def apply[F[_]](timeout: Duration)(implicit F: Temporal[F]): F[Shutdown[F]] =
+</span>40 <span style=''>    timeout match {
+</span>41 <span style=''>      case fi: FiniteDuration =&gt;
+</span>42 <span style=''>        if (</span><span style='background: #AEF1AE'>fi.length == 0</span><span style=''>) </span><span style='background: #F0ADAD'>immediateShutdown</span><span style=''> else </span><span style='background: #AEF1AE'>timedShutdown(timeout)</span><span style=''>
+</span>43 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>timedShutdown(timeout)</span><span style=''>
+</span>44 <span style=''>    }
+</span>45 <span style=''>
+</span>46 <span style=''>  private def timedShutdown[F[_]](timeout: Duration)(implicit F: Temporal[F]): F[Shutdown[F]] = {
+</span>47 <span style=''>    case class State(isShutdown: Boolean, active: Int)
+</span>48 <span style=''>
+</span>49 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>50 <span style=''></span><span style='background: #AEF1AE'>      unblockStart &lt;- Deferred[F, Unit]
+</span>51 <span style=''></span><span style='background: #AEF1AE'>      unblockFinish &lt;- Deferred[F, Unit]
+</span>52 <span style=''></span><span style='background: #AEF1AE'>      state &lt;- Ref.of[F, State](State(false, 0))
+</span>53 <span style=''></span><span style='background: #AEF1AE'>    } yield new Shutdown[F] {
+</span>54 <span style=''></span><span style='background: #AEF1AE'>      override val await: F[Unit] =
+</span>55 <span style=''></span><span style='background: #AEF1AE'>        unblockStart
+</span>56 <span style=''></span><span style='background: #AEF1AE'>          .complete(())
+</span>57 <span style=''></span><span style='background: #AEF1AE'>          .flatMap { _ =&gt;
+</span>58 <span style=''></span><span style='background: #AEF1AE'>            state.modify { case s @ State(_, active) =&gt;
+</span>59 <span style=''></span><span style='background: #AEF1AE'>              val fa = if (active == 0) {
+</span>60 <span style=''></span><span style='background: #AEF1AE'>                F.unit
+</span>61 <span style=''></span><span style='background: #AEF1AE'>              } else {
+</span>62 <span style=''></span><span style='background: #AEF1AE'>                timeout match {
+</span>63 <span style=''></span><span style='background: #AEF1AE'>                  case fi: FiniteDuration =&gt; unblockFinish.get.timeoutTo(fi, F.unit)
+</span>64 <span style=''></span><span style='background: #AEF1AE'>                  case _ =&gt; unblockFinish.get
+</span>65 <span style=''></span><span style='background: #AEF1AE'>                }
+</span>66 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>67 <span style=''></span><span style='background: #AEF1AE'>              s.copy(isShutdown = true) -&gt; fa
+</span>68 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>69 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>70 <span style=''></span><span style='background: #AEF1AE'>          .uncancelable
+</span>71 <span style=''></span><span style='background: #AEF1AE'>          .flatten
+</span>72 <span style=''></span><span style='background: #AEF1AE'>
+</span>73 <span style=''></span><span style='background: #AEF1AE'>      override val signal: F[Unit] =
+</span>74 <span style=''></span><span style='background: #AEF1AE'>        unblockStart.get
+</span>75 <span style=''></span><span style='background: #AEF1AE'>
+</span>76 <span style=''></span><span style='background: #AEF1AE'>      override val newConnection: F[Unit] =
+</span>77 <span style=''></span><span style='background: #AEF1AE'>        state.update { s =&gt;
+</span>78 <span style=''></span><span style='background: #AEF1AE'>          s.copy(active = s.active + 1)
+</span>79 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>80 <span style=''></span><span style='background: #AEF1AE'>
+</span>81 <span style=''></span><span style='background: #AEF1AE'>      override val removeConnection: F[Unit] =
+</span>82 <span style=''></span><span style='background: #AEF1AE'>        state
+</span>83 <span style=''></span><span style='background: #AEF1AE'>          .modify { case s @ State(isShutdown, active) =&gt;
+</span>84 <span style=''></span><span style='background: #AEF1AE'>            val conns = active - 1
+</span>85 <span style=''></span><span style='background: #AEF1AE'>            if (isShutdown &amp;&amp; conns &lt;= 0) {
+</span>86 <span style=''></span><span style='background: #AEF1AE'>              s.copy(active = conns) -&gt; unblockFinish.complete(()).void
+</span>87 <span style=''></span><span style='background: #AEF1AE'>            } else {
+</span>88 <span style=''></span><span style='background: #AEF1AE'>              s.copy(active = conns) -&gt; F.unit
+</span>89 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>90 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>91 <span style=''></span><span style='background: #AEF1AE'>          .flatten
+</span>92 <span style=''></span><span style='background: #AEF1AE'>          .uncancelable
+</span>93 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>94 <span style=''>  }
+</span>95 <span style=''>
+</span>96 <span style=''>  private def immediateShutdown[F[_]](implicit F: Concurrent[F]): F[Shutdown[F]] =
+</span>97 <span style=''>    </span><span style='background: #F0ADAD'>Deferred[F, Unit].map { unblock =&gt;
+</span>98 <span style=''></span><span style='background: #F0ADAD'>      new Shutdown[F] {
+</span>99 <span style=''></span><span style='background: #F0ADAD'>        override val await: F[Unit] = unblock.complete(()).void
+</span>100 <span style=''></span><span style='background: #F0ADAD'>        override val signal: F[Unit] = unblock.get
+</span>101 <span style=''></span><span style='background: #F0ADAD'>        override val newConnection: F[Unit] = F.unit
+</span>102 <span style=''></span><span style='background: #F0ADAD'>        override val removeConnection: F[Unit] = F.unit
+</span>103 <span style=''></span><span style='background: #F0ADAD'>        override val trackConnection: Stream[F, Unit] = Stream.empty
+</span>104 <span style=''></span><span style='background: #F0ADAD'>      }
+</span>105 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>106 <span style=''>
+</span>107 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          10305
+        </td>
+        <td>
+          1037
+          -
+          1050
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.newConnection
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shutdown.this.newConnection
+        </td>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          10882
+        </td>
+        <td>
+          1057
+          -
+          1073
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.removeConnection
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shutdown.this.removeConnection
+        </td>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          10536
+        </td>
+        <td>
+          1022
+          -
+          1074
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.bracket
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.bracket[F, Unit](Shutdown.this.newConnection)(((x$1: Unit) =&gt; Shutdown.this.removeConnection))
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          10918
+        </td>
+        <td>
+          1274
+          -
+          1291
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.immediateShutdown
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Shutdown.this.immediateShutdown[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          10816
+        </td>
+        <td>
+          1297
+          -
+          1319
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.timedShutdown
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shutdown.this.timedShutdown[[_]F[_]](timeout)(F)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          10591
+        </td>
+        <td>
+          1274
+          -
+          1291
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.immediateShutdown
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Shutdown.this.immediateShutdown[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          10217
+        </td>
+        <td>
+          1258
+          -
+          1272
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fi.length.==(0)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          10246
+        </td>
+        <td>
+          1297
+          -
+          1319
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.timedShutdown
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Shutdown.this.timedShutdown[[_]F[_]](timeout)(F)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          10626
+        </td>
+        <td>
+          1336
+          -
+          1358
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.timedShutdown
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Shutdown.this.timedShutdown[[_]F[_]](timeout)(F)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          10232
+        </td>
+        <td>
+          1524
+          -
+          2852
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.kernel.Deferred[F,Unit]](cats.effect.`package`.Deferred.apply[F, Unit](F))(F).flatMap[org.http4s.ember.server.internal.Shutdown[F]](((unblockStart: cats.effect.kernel.Deferred[F,Unit]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.kernel.Deferred[F,Unit]](cats.effect.`package`.Deferred.apply[F, Unit](F))(F).flatMap[org.http4s.ember.server.internal.Shutdown[F]](((unblockFinish: cats.effect.kernel.Deferred[F,Unit]) =&gt; cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Ref[F,State]](cats.effect.`package`.Ref.of[F, State](State.apply(false, 0))(Ref.this.Make.concurrentInstance[[_]F[_]](F)))(F).map[org.http4s.ember.server.internal.Shutdown[F]](((state: cats.effect.kernel.Ref[F,State]) =&gt; {
+  final class $anon extends org.http4s.ember.server.internal.Shutdown[F] {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.ember.server.internal.Shutdown[F]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    private[this] val await: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatten[F, Unit](cats.effect.implicits.monadCancelOps_[F, F[Unit]](cats.syntax.`package`.all.toFlatMapOps[F, Boolean](unblockStart.complete(()))(F).flatMap[F[Unit]](((x$2: Boolean) =&gt; state.modify[F[Unit]](((x0$1: State) =&gt; x0$1 match {
+  case (s @ (isShutdown: Boolean, active: Int): State(_, (active @ _))) =&gt; {
+    val fa: F[Unit] = if (active.==(0))
+      F.unit
+    else
+      timeout match {
+        case (fi @ (_: scala.concurrent.duration.FiniteDuration)) =&gt; cats.effect.implicits.genTemporalOps_[F, Unit](unblockFinish.get).timeoutTo(fi, F.unit)(F)
+        case _ =&gt; unblockFinish.get
+      };
+    scala.Predef.ArrowAssoc[State](s.copy(true, s.copy$default$2)).-&gt;[F[Unit]](fa)
+  }
+}))))).uncancelable(F))(F).flatten(F);
+    override &lt;stable&gt; &lt;accessor&gt; def await: F[Unit] = $anon.this.await;
+    private[this] val signal: F[Unit] = unblockStart.get;
+    override &lt;stable&gt; &lt;accessor&gt; def signal: F[Unit] = $anon.this.signal;
+    private[this] val newConnection: F[Unit] = state.update(((s: State) =&gt; {
+      &lt;artifact&gt; val x$1: Int = s.active.+(1);
+      &lt;artifact&gt; val x$2: Boolean = s.copy$default$1;
+      s.copy(x$2, x$1)
+    }));
+    override &lt;stable&gt; &lt;accessor&gt; def newConnection: F[Unit] = $anon.this.newConnection;
+    private[this] val removeConnection: F[Unit] = cats.effect.implicits.monadCancelOps_[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatten[F, Unit](state.modify[F[Unit]](((x0$2: State) =&gt; x0$2 match {
+  case (s @ (isShutdown: Boolean, active: Int): State((isShutdown @ _), (active @ _))) =&gt; {
+    val conns: Int = active.-(1);
+    if (isShutdown.&amp;&amp;(conns.&lt;=(0)))
+      scala.Predef.ArrowAssoc[State]({
+  &lt;artifact&gt; val x$3: Int = conns;
+  &lt;artifact&gt; val x$4: Boolean = s.copy$default$1;
+  s.copy(x$4, x$3)
+}).-&gt;[F[Unit]](cats.syntax.`package`.all.toFunctorOps[F, Boolean](unblockFinish.complete(()))(F).void)
+    else
+      scala.Predef.ArrowAssoc[State]({
+  &lt;artifact&gt; val x$5: Int = conns;
+  &lt;artifact&gt; val x$6: Boolean = s.copy$default$1;
+  s.copy(x$6, x$5)
+}).-&gt;[F[Unit]](F.unit)
+  }
+})))(F).flatten(F)).uncancelable(F);
+    override &lt;stable&gt; &lt;accessor&gt; def removeConnection: F[Unit] = $anon.this.removeConnection
+  };
+  new $anon()
+}))))))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          10309
+        </td>
+        <td>
+          1552
+          -
+          1569
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Deferred.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Deferred.apply[F, Unit](F)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          10609
+        </td>
+        <td>
+          1576
+          -
+          2852
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.kernel.Deferred[F,Unit]](cats.effect.`package`.Deferred.apply[F, Unit](F))(F).flatMap[org.http4s.ember.server.internal.Shutdown[F]](((unblockFinish: cats.effect.kernel.Deferred[F,Unit]) =&gt; cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Ref[F,State]](cats.effect.`package`.Ref.of[F, State](State.apply(false, 0))(Ref.this.Make.concurrentInstance[[_]F[_]](F)))(F).map[org.http4s.ember.server.internal.Shutdown[F]](((state: cats.effect.kernel.Ref[F,State]) =&gt; {
+  final class $anon extends org.http4s.ember.server.internal.Shutdown[F] {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.ember.server.internal.Shutdown[F]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    private[this] val await: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatten[F, Unit](cats.effect.implicits.monadCancelOps_[F, F[Unit]](cats.syntax.`package`.all.toFlatMapOps[F, Boolean](unblockStart.complete(()))(F).flatMap[F[Unit]](((x$2: Boolean) =&gt; state.modify[F[Unit]](((x0$1: State) =&gt; x0$1 match {
+  case (s @ (isShutdown: Boolean, active: Int): State(_, (active @ _))) =&gt; {
+    val fa: F[Unit] = if (active.==(0))
+      F.unit
+    else
+      timeout match {
+        case (fi @ (_: scala.concurrent.duration.FiniteDuration)) =&gt; cats.effect.implicits.genTemporalOps_[F, Unit](unblockFinish.get).timeoutTo(fi, F.unit)(F)
+        case _ =&gt; unblockFinish.get
+      };
+    scala.Predef.ArrowAssoc[State](s.copy(true, s.copy$default$2)).-&gt;[F[Unit]](fa)
+  }
+}))))).uncancelable(F))(F).flatten(F);
+    override &lt;stable&gt; &lt;accessor&gt; def await: F[Unit] = $anon.this.await;
+    private[this] val signal: F[Unit] = unblockStart.get;
+    override &lt;stable&gt; &lt;accessor&gt; def signal: F[Unit] = $anon.this.signal;
+    private[this] val newConnection: F[Unit] = state.update(((s: State) =&gt; {
+      &lt;artifact&gt; val x$1: Int = s.active.+(1);
+      &lt;artifact&gt; val x$2: Boolean = s.copy$default$1;
+      s.copy(x$2, x$1)
+    }));
+    override &lt;stable&gt; &lt;accessor&gt; def newConnection: F[Unit] = $anon.this.newConnection;
+    private[this] val removeConnection: F[Unit] = cats.effect.implicits.monadCancelOps_[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatten[F, Unit](state.modify[F[Unit]](((x0$2: State) =&gt; x0$2 match {
+  case (s @ (isShutdown: Boolean, active: Int): State((isShutdown @ _), (active @ _))) =&gt; {
+    val conns: Int = active.-(1);
+    if (isShutdown.&amp;&amp;(conns.&lt;=(0)))
+      scala.Predef.ArrowAssoc[State]({
+  &lt;artifact&gt; val x$3: Int = conns;
+  &lt;artifact&gt; val x$4: Boolean = s.copy$default$1;
+  s.copy(x$4, x$3)
+}).-&gt;[F[Unit]](cats.syntax.`package`.all.toFunctorOps[F, Boolean](unblockFinish.complete(()))(F).void)
+    else
+      scala.Predef.ArrowAssoc[State]({
+  &lt;artifact&gt; val x$5: Int = conns;
+  &lt;artifact&gt; val x$6: Boolean = s.copy$default$1;
+  s.copy(x$6, x$5)
+}).-&gt;[F[Unit]](F.unit)
+  }
+})))(F).flatten(F)).uncancelable(F);
+    override &lt;stable&gt; &lt;accessor&gt; def removeConnection: F[Unit] = $anon.this.removeConnection
+  };
+  new $anon()
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          10845
+        </td>
+        <td>
+          1593
+          -
+          1610
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Deferred.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Deferred.apply[F, Unit](F)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10906
+        </td>
+        <td>
+          1617
+          -
+          2852
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Ref[F,State]](cats.effect.`package`.Ref.of[F, State](State.apply(false, 0))(Ref.this.Make.concurrentInstance[[_]F[_]](F)))(F).map[org.http4s.ember.server.internal.Shutdown[F]](((state: cats.effect.kernel.Ref[F,State]) =&gt; {
+  final class $anon extends org.http4s.ember.server.internal.Shutdown[F] {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.ember.server.internal.Shutdown[F]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    private[this] val await: F[Unit] = cats.syntax.`package`.all.catsSyntaxFlatten[F, Unit](cats.effect.implicits.monadCancelOps_[F, F[Unit]](cats.syntax.`package`.all.toFlatMapOps[F, Boolean](unblockStart.complete(()))(F).flatMap[F[Unit]](((x$2: Boolean) =&gt; state.modify[F[Unit]](((x0$1: State) =&gt; x0$1 match {
+  case (s @ (isShutdown: Boolean, active: Int): State(_, (active @ _))) =&gt; {
+    val fa: F[Unit] = if (active.==(0))
+      F.unit
+    else
+      timeout match {
+        case (fi @ (_: scala.concurrent.duration.FiniteDuration)) =&gt; cats.effect.implicits.genTemporalOps_[F, Unit](unblockFinish.get).timeoutTo(fi, F.unit)(F)
+        case _ =&gt; unblockFinish.get
+      };
+    scala.Predef.ArrowAssoc[State](s.copy(true, s.copy$default$2)).-&gt;[F[Unit]](fa)
+  }
+}))))).uncancelable(F))(F).flatten(F);
+    override &lt;stable&gt; &lt;accessor&gt; def await: F[Unit] = $anon.this.await;
+    private[this] val signal: F[Unit] = unblockStart.get;
+    override &lt;stable&gt; &lt;accessor&gt; def signal: F[Unit] = $anon.this.signal;
+    private[this] val newConnection: F[Unit] = state.update(((s: State) =&gt; {
+      &lt;artifact&gt; val x$1: Int = s.active.+(1);
+      &lt;artifact&gt; val x$2: Boolean = s.copy$default$1;
+      s.copy(x$2, x$1)
+    }));
+    override &lt;stable&gt; &lt;accessor&gt; def newConnection: F[Unit] = $anon.this.newConnection;
+    private[this] val removeConnection: F[Unit] = cats.effect.implicits.monadCancelOps_[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatten[F, Unit](state.modify[F[Unit]](((x0$2: State) =&gt; x0$2 match {
+  case (s @ (isShutdown: Boolean, active: Int): State((isShutdown @ _), (active @ _))) =&gt; {
+    val conns: Int = active.-(1);
+    if (isShutdown.&amp;&amp;(conns.&lt;=(0)))
+      scala.Predef.ArrowAssoc[State]({
+  &lt;artifact&gt; val x$3: Int = conns;
+  &lt;artifact&gt; val x$4: Boolean = s.copy$default$1;
+  s.copy(x$4, x$3)
+}).-&gt;[F[Unit]](cats.syntax.`package`.all.toFunctorOps[F, Boolean](unblockFinish.complete(()))(F).void)
+    else
+      scala.Predef.ArrowAssoc[State]({
+  &lt;artifact&gt; val x$5: Int = conns;
+  &lt;artifact&gt; val x$6: Boolean = s.copy$default$1;
+  s.copy(x$6, x$5)
+}).-&gt;[F[Unit]](F.unit)
+  }
+})))(F).flatten(F)).uncancelable(F);
+    override &lt;stable&gt; &lt;accessor&gt; def removeConnection: F[Unit] = $anon.this.removeConnection
+  };
+  new $anon()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10160
+        </td>
+        <td>
+          1642
+          -
+          1642
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Ref.MakeInstances.concurrentInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Ref.this.Make.concurrentInstance[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10901
+        </td>
+        <td>
+          1626
+          -
+          1659
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Ref.of
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Ref.of[F, State](State.apply(false, 0))(Ref.this.Make.concurrentInstance[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          10521
+        </td>
+        <td>
+          1643
+          -
+          1658
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.State.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          State.apply(false, 0)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          10214
+        </td>
+        <td>
+          1672
+          -
+          1675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          10597
+        </td>
+        <td>
+          1734
+          -
+          2252
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlattenOps.flatten
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatten[F, Unit](cats.effect.implicits.monadCancelOps_[F, F[Unit]](cats.syntax.`package`.all.toFlatMapOps[F, Boolean](unblockStart.complete(()))(F).flatMap[F[Unit]](((x$2: Boolean) =&gt; state.modify[F[Unit]](((x0$1: State) =&gt; x0$1 match {
+  case (s @ (isShutdown: Boolean, active: Int): State(_, (active @ _))) =&gt; {
+    val fa: F[Unit] = if (active.==(0))
+      F.unit
+    else
+      timeout match {
+        case (fi @ (_: scala.concurrent.duration.FiniteDuration)) =&gt; cats.effect.implicits.genTemporalOps_[F, Unit](unblockFinish.get).timeoutTo(fi, F.unit)(F)
+        case _ =&gt; unblockFinish.get
+      };
+    scala.Predef.ArrowAssoc[State](s.copy(true, s.copy$default$2)).-&gt;[F[Unit]](fa)
+  }
+}))))).uncancelable(F))(F).flatten(F)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          10229
+        </td>
+        <td>
+          2299
+          -
+          2315
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.DeferredSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          unblockStart.get
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          10848
+        </td>
+        <td>
+          2369
+          -
+          2438
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          state.update(((s: State) =&gt; {
+  &lt;artifact&gt; val x$1: Int = s.active.+(1);
+  &lt;artifact&gt; val x$2: Boolean = s.copy$default$1;
+  s.copy(x$2, x$1)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          10795
+        </td>
+        <td>
+          2415
+          -
+          2427
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          s.active.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          10460
+        </td>
+        <td>
+          2401
+          -
+          2401
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.State.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          s.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          10291
+        </td>
+        <td>
+          2399
+          -
+          2428
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.State.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          s.copy(x$2, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          10509
+        </td>
+        <td>
+          2495
+          -
+          2846
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.syntax.MonadCancelOps_.uncancelable
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.implicits.monadCancelOps_[F, Unit](cats.syntax.`package`.all.catsSyntaxFlatten[F, Unit](state.modify[F[Unit]](((x0$2: State) =&gt; x0$2 match {
+  case (s @ (isShutdown: Boolean, active: Int): State((isShutdown @ _), (active @ _))) =&gt; {
+    val conns: Int = active.-(1);
+    if (isShutdown.&amp;&amp;(conns.&lt;=(0)))
+      scala.Predef.ArrowAssoc[State]({
+  &lt;artifact&gt; val x$3: Int = conns;
+  &lt;artifact&gt; val x$4: Boolean = s.copy$default$1;
+  s.copy(x$4, x$3)
+}).-&gt;[F[Unit]](cats.syntax.`package`.all.toFunctorOps[F, Boolean](unblockFinish.complete(()))(F).void)
+    else
+      scala.Predef.ArrowAssoc[State]({
+  &lt;artifact&gt; val x$5: Int = conns;
+  &lt;artifact&gt; val x$6: Boolean = s.copy$default$1;
+  s.copy(x$6, x$5)
+}).-&gt;[F[Unit]](F.unit)
+  }
+})))(F).flatten(F)).uncancelable(F)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          10236
+        </td>
+        <td>
+          2945
+          -
+          3310
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Deferred[F,Unit]](cats.effect.`package`.Deferred.apply[F, Unit](F))(F).map[org.http4s.ember.server.internal.Shutdown[F]](((unblock: cats.effect.kernel.Deferred[F,Unit]) =&gt; {
+  final class $anon extends org.http4s.ember.server.internal.Shutdown[F] {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.ember.server.internal.Shutdown[F]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    private[this] val await: F[Unit] = cats.syntax.`package`.all.toFunctorOps[F, Boolean](unblock.complete(()))(F).void;
+    override &lt;stable&gt; &lt;accessor&gt; def await: F[Unit] = $anon.this.await;
+    private[this] val signal: F[Unit] = unblock.get;
+    override &lt;stable&gt; &lt;accessor&gt; def signal: F[Unit] = $anon.this.signal;
+    private[this] val newConnection: F[Unit] = F.unit;
+    override &lt;stable&gt; &lt;accessor&gt; def newConnection: F[Unit] = $anon.this.newConnection;
+    private[this] val removeConnection: F[Unit] = F.unit;
+    override &lt;stable&gt; &lt;accessor&gt; def removeConnection: F[Unit] = $anon.this.removeConnection;
+    private[this] val trackConnection: fs2.Stream[F,Unit] = fs2.Stream.empty;
+    override &lt;stable&gt; &lt;accessor&gt; def trackConnection: fs2.Stream[F,Unit] = $anon.this.trackConnection
+  };
+  new $anon()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          10797
+        </td>
+        <td>
+          2945
+          -
+          2962
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Deferred.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Deferred.apply[F, Unit](F)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          10556
+        </td>
+        <td>
+          2986
+          -
+          2989
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.server.internal.Shutdown.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          10294
+        </td>
+        <td>
+          3042
+          -
+          3067
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Functor.Ops.void
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, Boolean](unblock.complete(()))(F).void
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          10494
+        </td>
+        <td>
+          3042
+          -
+          3062
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.DeferredSink.complete
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          unblock.complete(())
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          10889
+        </td>
+        <td>
+          3107
+          -
+          3118
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.DeferredSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          unblock.get
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          10514
+        </td>
+        <td>
+          3165
+          -
+          3171
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          10215
+        </td>
+        <td>
+          3221
+          -
+          3227
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          10777
+        </td>
+        <td>
+          3284
+          -
+          3296
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Stream.empty
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

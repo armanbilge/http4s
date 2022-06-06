@@ -1,0 +1,554 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/Media.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.MonadThrow
+</span>20 <span style=''>import fs2.RaiseThrowable
+</span>21 <span style=''>import fs2.Stream
+</span>22 <span style=''>import fs2.text.decodeWithCharset
+</span>23 <span style=''>import org.http4s.Charset.`UTF-8`
+</span>24 <span style=''>import org.http4s.headers._
+</span>25 <span style=''>
+</span>26 <span style=''>trait Media[F[_]] {
+</span>27 <span style=''>  def body: EntityBody[F]
+</span>28 <span style=''>  def headers: Headers
+</span>29 <span style=''>  def covary[F2[x] &gt;: F[x]]: Media[F2]
+</span>30 <span style=''>
+</span>31 <span style=''>  final def bodyText(implicit
+</span>32 <span style=''>      RT: RaiseThrowable[F],
+</span>33 <span style=''>      defaultCharset: Charset = `UTF-8`,
+</span>34 <span style=''>  ): Stream[F, String] = {
+</span>35 <span style=''>    val cs = </span><span style='background: #AEF1AE'>charset.getOrElse(defaultCharset).nioCharset</span><span style=''>
+</span>36 <span style=''>    </span><span style='background: #AEF1AE'>body.through(decodeWithCharset(cs))</span><span style=''>
+</span>37 <span style=''>  }
+</span>38 <span style=''>
+</span>39 <span style=''>  final def contentType: Option[`Content-Type`] =
+</span>40 <span style=''>    </span><span style='background: #AEF1AE'>headers.get[`Content-Type`]</span><span style=''>
+</span>41 <span style=''>
+</span>42 <span style=''>  final def contentLength: Option[Long] =
+</span>43 <span style=''>    </span><span style='background: #AEF1AE'>headers.get[`Content-Length`].map(_.length)</span><span style=''>
+</span>44 <span style=''>
+</span>45 <span style=''>  final def charset: Option[Charset] =
+</span>46 <span style=''>    </span><span style='background: #AEF1AE'>contentType.flatMap(_.charset)</span><span style=''>
+</span>47 <span style=''>
+</span>48 <span style=''>  // Decoding methods
+</span>49 <span style=''>
+</span>50 <span style=''>  /** Decode the [[Media]] to the specified type
+</span>51 <span style=''>    *
+</span>52 <span style=''>    * @param decoder [[EntityDecoder]] used to decode the [[Media]]
+</span>53 <span style=''>    * @tparam T type of the result
+</span>54 <span style=''>    * @return the effect which will generate the `DecodeResult[T]`
+</span>55 <span style=''>    */
+</span>56 <span style=''>  final def attemptAs[T](implicit decoder: EntityDecoder[F, T]): DecodeResult[F, T] =
+</span>57 <span style=''>    </span><span style='background: #AEF1AE'>decoder.decode(this, strict = false)</span><span style=''>
+</span>58 <span style=''>
+</span>59 <span style=''>  /** Decode the [[Media]] to the specified type
+</span>60 <span style=''>    *
+</span>61 <span style=''>    * If no valid [[Status]] has been described, allow Ok
+</span>62 <span style=''>    *
+</span>63 <span style=''>    * @param decoder [[EntityDecoder]] used to decode the [[Media]]
+</span>64 <span style=''>    * @tparam A type of the result
+</span>65 <span style=''>    * @return the effect which will generate the A
+</span>66 <span style=''>    */
+</span>67 <span style=''>  final def as[A](implicit F: MonadThrow[F], decoder: EntityDecoder[F, A]): F[A] =
+</span>68 <span style=''>    </span><span style='background: #AEF1AE'>F.rethrow(attemptAs.value)</span><span style=''>
+</span>69 <span style=''>}
+</span>70 <span style=''>
+</span>71 <span style=''>object Media {
+</span>72 <span style=''>  def apply[F[_]](b: EntityBody[F], h: Headers): Media[F] =
+</span>73 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Media[F] {
+</span>74 <span style=''>      def body: EntityBody[F] = b
+</span>75 <span style=''>
+</span>76 <span style=''>      def headers: Headers = h
+</span>77 <span style=''>
+</span>78 <span style=''>      override def covary[F2[x] &gt;: F[x]]: Media[F2] = </span><span style='background: #F0ADAD'>this.asInstanceOf[Media[F2]]</span><span style=''>
+</span>79 <span style=''>    }
+</span>80 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          18356
+        </td>
+        <td>
+          1028
+          -
+          1072
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Charset.nioCharset
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberunixsocketsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Media.this.charset.getOrElse[org.http4s.Charset](defaultCharset).nioCharset
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          22936
+        </td>
+        <td>
+          1077
+          -
+          1112
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.through
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberunixsocketsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Media.this.body.through[[x]F[x], String](fs2.text.decodeWithCharset[[_]F[_]](cs)(RT))
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          14651
+        </td>
+        <td>
+          1090
+          -
+          1111
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.text.decodeWithCharset
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.ember.server.emberunixsocketsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.text.decodeWithCharset[[_]F[_]](cs)(RT)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          19174
+        </td>
+        <td>
+          1183
+          -
+          1183
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          15124
+        </td>
+        <td>
+          1183
+          -
+          1183
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          21583
+        </td>
+        <td>
+          1172
+          -
+          1199
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Media.this.headers.get[org.http4s.headers.Content-Type](Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          17877
+        </td>
+        <td>
+          1258
+          -
+          1258
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          org.http4s.staticfilesuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          22360
+        </td>
+        <td>
+          1281
+          -
+          1289
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.length
+        </td>
+        <td>
+          org.http4s.staticfilesuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.length
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          18370
+        </td>
+        <td>
+          1247
+          -
+          1290
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          org.http4s.staticfilesuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Media.this.headers.get[org.http4s.headers.Content-Length](Header.this.Select.singleHeaders[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance)).map[Long](((x$1: org.http4s.headers.Content-Length) =&gt; x$1.length))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          15861
+        </td>
+        <td>
+          1258
+          -
+          1258
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.staticfilesuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Length](headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          22626
+        </td>
+        <td>
+          1335
+          -
+          1365
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          Media.this.contentType.flatMap[org.http4s.Charset](((x$2: org.http4s.headers.Content-Type) =&gt; x$2.charset))
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          14526
+        </td>
+        <td>
+          1355
+          -
+          1364
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.charset
+        </td>
+        <td>
+          org.http4s.urlformspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.charset
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          15015
+        </td>
+        <td>
+          1712
+          -
+          1748
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decode
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.entitydecodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.circesensitivedataentitydecoderspec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          decoder.decode(this, false)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          19067
+        </td>
+        <td>
+          1742
+          -
+          1747
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.entitydecodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.circesensitivedataentitydecoderspec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          17463
+        </td>
+        <td>
+          2117
+          -
+          2143
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.MonadError.rethrow
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.entitydecodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.rethrow[A, org.http4s.DecodeFailure](Media.this.attemptAs[A](decoder).value)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          21604
+        </td>
+        <td>
+          2127
+          -
+          2142
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.EitherT.value
+        </td>
+        <td>
+          org.http4s.server.middleware.urlformliftersuite,org.http4s.entitydecodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Media.this.attemptAs[A](decoder).value
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          22469
+        </td>
+        <td>
+          2226
+          -
+          2229
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Media.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          15566
+        </td>
+        <td>
+          2362
+          -
+          2390
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.asInstanceOf[org.http4s.Media[F2]]
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

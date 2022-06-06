@@ -1,0 +1,3232 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ember/client/internal/ClientHelpers.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2019 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.ember.client.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import _root_.fs2.io.net.SocketGroup
+</span>20 <span style=''>import _root_.fs2.io.net.tls._
+</span>21 <span style=''>import _root_.org.http4s.ember.core.Encoder
+</span>22 <span style=''>import _root_.org.http4s.ember.core.Parser
+</span>23 <span style=''>import _root_.org.http4s.ember.core.Util._
+</span>24 <span style=''>import cats._
+</span>25 <span style=''>import cats.data.NonEmptyList
+</span>26 <span style=''>import cats.effect.kernel.Async
+</span>27 <span style=''>import cats.effect.kernel.Clock
+</span>28 <span style=''>import cats.effect.kernel.Concurrent
+</span>29 <span style=''>import cats.effect.kernel.Ref
+</span>30 <span style=''>import cats.effect.kernel.Resource
+</span>31 <span style=''>import cats.effect.kernel.Sync
+</span>32 <span style=''>import cats.syntax.all._
+</span>33 <span style=''>import com.comcast.ip4s.Host
+</span>34 <span style=''>import com.comcast.ip4s.Port
+</span>35 <span style=''>import com.comcast.ip4s.SocketAddress
+</span>36 <span style=''>import fs2.io.ClosedChannelException
+</span>37 <span style=''>import fs2.io.net._
+</span>38 <span style=''>import org.http4s._
+</span>39 <span style=''>import org.http4s.client.RequestKey
+</span>40 <span style=''>import org.http4s.client.middleware._
+</span>41 <span style=''>import org.http4s.ember.client._
+</span>42 <span style=''>import org.http4s.ember.core.EmberException
+</span>43 <span style=''>import org.http4s.headers.Connection
+</span>44 <span style=''>import org.http4s.headers.Date
+</span>45 <span style=''>import org.http4s.headers.`User-Agent`
+</span>46 <span style=''>import org.typelevel.ci._
+</span>47 <span style=''>import org.typelevel.keypool._
+</span>48 <span style=''>
+</span>49 <span style=''>import java.io.IOException
+</span>50 <span style=''>import scala.concurrent.duration._
+</span>51 <span style=''>
+</span>52 <span style=''>private[client] object ClientHelpers extends ClientHelpersPlatform {
+</span>53 <span style=''>  def requestToSocketWithKey[F[_]: Sync](
+</span>54 <span style=''>      request: Request[F],
+</span>55 <span style=''>      tlsContextOpt: Option[TLSContext[F]],
+</span>56 <span style=''>      enableEndpointValidation: Boolean,
+</span>57 <span style=''>      sg: SocketGroup[F],
+</span>58 <span style=''>      additionalSocketOptions: List[SocketOption],
+</span>59 <span style=''>  ): Resource[F, RequestKeySocket[F]] = {
+</span>60 <span style=''>    val requestKey = </span><span style='background: #F0ADAD'>RequestKey.fromRequest(request)</span><span style=''>
+</span>61 <span style=''>    </span><span style='background: #F0ADAD'>requestKeyToSocketWithKey[F](
+</span>62 <span style=''></span><span style='background: #F0ADAD'>      requestKey,
+</span>63 <span style=''></span><span style='background: #F0ADAD'>      tlsContextOpt,
+</span>64 <span style=''></span><span style='background: #F0ADAD'>      enableEndpointValidation,
+</span>65 <span style=''></span><span style='background: #F0ADAD'>      sg,
+</span>66 <span style=''></span><span style='background: #F0ADAD'>      additionalSocketOptions,
+</span>67 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>68 <span style=''>  }
+</span>69 <span style=''>
+</span>70 <span style=''>  def unixSocket[F[_]: Async](
+</span>71 <span style=''>      request: Request[F],
+</span>72 <span style=''>      unixSockets: fs2.io.net.unixsocket.UnixSockets[F],
+</span>73 <span style=''>      address: fs2.io.net.unixsocket.UnixSocketAddress,
+</span>74 <span style=''>      tlsContextOpt: Option[TLSContext[F]],
+</span>75 <span style=''>  ): Resource[F, RequestKeySocket[F]] = {
+</span>76 <span style=''>    val requestKey = </span><span style='background: #AEF1AE'>RequestKey.fromRequest(request)</span><span style=''>
+</span>77 <span style=''>    </span><span style='background: #AEF1AE'>elevateSocket(
+</span>78 <span style=''></span><span style='background: #AEF1AE'>      requestKey,
+</span>79 <span style=''></span><span style='background: #AEF1AE'>      unixSockets.client(address),
+</span>80 <span style=''></span><span style='background: #AEF1AE'>      tlsContextOpt,
+</span>81 <span style=''></span><span style='background: #AEF1AE'>      false,
+</span>82 <span style=''></span><span style='background: #AEF1AE'>      None,
+</span>83 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>84 <span style=''>  }
+</span>85 <span style=''>
+</span>86 <span style=''>  def requestKeyToSocketWithKey[F[_]: Sync](
+</span>87 <span style=''>      requestKey: RequestKey,
+</span>88 <span style=''>      tlsContextOpt: Option[TLSContext[F]],
+</span>89 <span style=''>      enableEndpointValidation: Boolean,
+</span>90 <span style=''>      sg: SocketGroup[F],
+</span>91 <span style=''>      additionalSocketOptions: List[SocketOption],
+</span>92 <span style=''>  ): Resource[F, RequestKeySocket[F]] =
+</span>93 <span style=''>    </span><span style='background: #AEF1AE'>Resource
+</span>94 <span style=''></span><span style='background: #AEF1AE'>      .eval(getAddress(requestKey))
+</span>95 <span style=''></span><span style='background: #AEF1AE'>      .flatMap { address =&gt;
+</span>96 <span style=''></span><span style='background: #AEF1AE'>        val s = sg.client(address, options = additionalSocketOptions)
+</span>97 <span style=''></span><span style='background: #AEF1AE'>        elevateSocket(
+</span>98 <span style=''></span><span style='background: #AEF1AE'>          requestKey: RequestKey,
+</span>99 <span style=''></span><span style='background: #AEF1AE'>          s: Resource[F, Socket[F]],
+</span>100 <span style=''></span><span style='background: #AEF1AE'>          tlsContextOpt: Option[TLSContext[F]],
+</span>101 <span style=''></span><span style='background: #AEF1AE'>          enableEndpointValidation: Boolean,
+</span>102 <span style=''></span><span style='background: #AEF1AE'>          Some(address),
+</span>103 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>104 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>105 <span style=''>
+</span>106 <span style=''>  def elevateSocket[F[_]: Sync](
+</span>107 <span style=''>      requestKey: RequestKey,
+</span>108 <span style=''>      initSocket: Resource[F, Socket[F]],
+</span>109 <span style=''>      tlsContextOpt: Option[TLSContext[F]],
+</span>110 <span style=''>      enableEndpointValidation: Boolean,
+</span>111 <span style=''>      optionNames: Option[SocketAddress[Host]],
+</span>112 <span style=''>  ): Resource[F, RequestKeySocket[F]] =
+</span>113 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>114 <span style=''></span><span style='background: #AEF1AE'>      iSocket &lt;- initSocket
+</span>115 <span style=''></span><span style='background: #AEF1AE'>      socket &lt;- {
+</span>116 <span style=''></span><span style='background: #AEF1AE'>        if (requestKey.scheme === Uri.Scheme.https) {
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          tlsContextOpt.fold[Resource[F, Socket[F]]] {
+</span>118 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>ApplicativeThrow[Resource[F, *]].raiseError(
+</span>119 <span style=''></span><span style='background: #F0ADAD'>              new Throwable(&quot;EmberClient Not Configured for Https&quot;)
+</span>120 <span style=''></span><span style='background: #F0ADAD'>            )</span><span style='background: #AEF1AE'>
+</span>121 <span style=''></span><span style='background: #AEF1AE'>          } { tlsContext =&gt;
+</span>122 <span style=''></span><span style='background: #AEF1AE'>            tlsContext
+</span>123 <span style=''></span><span style='background: #AEF1AE'>              .clientBuilder(iSocket)
+</span>124 <span style=''></span><span style='background: #AEF1AE'>              .withParameters(mkTLSParameters(optionNames, enableEndpointValidation))
+</span>125 <span style=''></span><span style='background: #AEF1AE'>              .build
+</span>126 <span style=''></span><span style='background: #AEF1AE'>              .widen[Socket[F]]
+</span>127 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>128 <span style=''></span><span style='background: #AEF1AE'>        } else iSocket.pure[Resource[F, *]]
+</span>129 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>130 <span style=''></span><span style='background: #AEF1AE'>    } yield RequestKeySocket(socket, requestKey)</span><span style=''>
+</span>131 <span style=''>
+</span>132 <span style=''>  def request[F[_]: Async](
+</span>133 <span style=''>      request: Request[F],
+</span>134 <span style=''>      connection: EmberConnection[F],
+</span>135 <span style=''>      chunkSize: Int,
+</span>136 <span style=''>      maxResponseHeaderSize: Int,
+</span>137 <span style=''>      idleTimeout: Duration,
+</span>138 <span style=''>      timeout: Duration,
+</span>139 <span style=''>      userAgent: Option[`User-Agent`],
+</span>140 <span style=''>  ): F[(Response[F], F[Option[Array[Byte]]])] = </span><span style='background: #AEF1AE'>{
+</span>141 <span style=''></span><span style='background: #AEF1AE'>
+</span>142 <span style=''></span><span style='background: #AEF1AE'>    def writeRequestToSocket(req: Request[F], socket: Socket[F]): F[Unit] =
+</span>143 <span style=''></span><span style='background: #AEF1AE'>      Encoder
+</span>144 <span style=''></span><span style='background: #AEF1AE'>        .reqToBytes(req)
+</span>145 <span style=''></span><span style='background: #AEF1AE'>        .through(_.chunks.foreach(c =&gt; timeoutMaybe(socket.write(c), idleTimeout)))
+</span>146 <span style=''></span><span style='background: #AEF1AE'>        .compile
+</span>147 <span style=''></span><span style='background: #AEF1AE'>        .drain
+</span>148 <span style=''></span><span style='background: #AEF1AE'>
+</span>149 <span style=''></span><span style='background: #AEF1AE'>    def writeRead(req: Request[F]): F[(Response[F], F[Option[Array[Byte]]])] =
+</span>150 <span style=''></span><span style='background: #AEF1AE'>      writeRequestToSocket(req, connection.keySocket.socket) &gt;&gt;
+</span>151 <span style=''></span><span style='background: #AEF1AE'>        connection.nextBytes.getAndSet(Array.emptyByteArray).flatMap { head =&gt;
+</span>152 <span style=''></span><span style='background: #AEF1AE'>          val parse = Parser.Response.parser(maxResponseHeaderSize)(
+</span>153 <span style=''></span><span style='background: #AEF1AE'>            head,
+</span>154 <span style=''></span><span style='background: #AEF1AE'>            timeoutMaybe(connection.keySocket.socket.read(chunkSize), idleTimeout),
+</span>155 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>156 <span style=''></span><span style='background: #AEF1AE'>          timeoutToMaybe(
+</span>157 <span style=''></span><span style='background: #AEF1AE'>            parse,
+</span>158 <span style=''></span><span style='background: #AEF1AE'>            timeout,
+</span>159 <span style=''></span><span style='background: #AEF1AE'>            Defer[F].defer(
+</span>160 <span style=''></span><span style='background: #AEF1AE'>              ApplicativeThrow[F].raiseError(
+</span>161 <span style=''></span><span style='background: #AEF1AE'>                new java.util.concurrent.TimeoutException(
+</span>162 <span style=''></span><span style='background: #AEF1AE'>                  s&quot;Timed Out on EmberClient Header Receive Timeout: $timeout&quot;
+</span>163 <span style=''></span><span style='background: #AEF1AE'>                )
+</span>164 <span style=''></span><span style='background: #AEF1AE'>              )
+</span>165 <span style=''></span><span style='background: #AEF1AE'>            ),
+</span>166 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>167 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>168 <span style=''></span><span style='background: #AEF1AE'>
+</span>169 <span style=''></span><span style='background: #AEF1AE'>    for {
+</span>170 <span style=''></span><span style='background: #AEF1AE'>      processedReq &lt;- preprocessRequest(request, userAgent)
+</span>171 <span style=''></span><span style='background: #AEF1AE'>      res &lt;- writeRead(processedReq)
+</span>172 <span style=''></span><span style='background: #AEF1AE'>    } yield res
+</span>173 <span style=''></span><span style='background: #AEF1AE'>  }.adaptError { case e: EmberException.EmptyStream =&gt;
+</span>174 <span style=''></span><span style='background: #AEF1AE'>    new ClosedChannelException() {
+</span>175 <span style=''></span><span style='background: #AEF1AE'>      initCause(e)
+</span>176 <span style=''></span><span style='background: #AEF1AE'>
+</span>177 <span style=''></span><span style='background: #AEF1AE'>      override def getMessage(): String =
+</span>178 <span style=''></span><span style='background: #AEF1AE'>        &quot;Remote Disconnect: Received zero bytes after sending request&quot;
+</span>179 <span style=''></span><span style='background: #AEF1AE'>    }
+</span>180 <span style=''></span><span style='background: #AEF1AE'>  }</span><span style=''>
+</span>181 <span style=''>
+</span>182 <span style=''>  private[internal] def preprocessRequest[F[_]: Monad: Clock](
+</span>183 <span style=''>      req: Request[F],
+</span>184 <span style=''>      userAgent: Option[`User-Agent`],
+</span>185 <span style=''>  ): F[Request[F]] = {
+</span>186 <span style=''>    val connection = </span><span style='background: #AEF1AE'>req.headers
+</span>187 <span style=''></span><span style='background: #AEF1AE'>      .get[Connection]
+</span>188 <span style=''></span><span style='background: #AEF1AE'>      .fold(Connection(NonEmptyList.of(ci&quot;keep-alive&quot;)))(identity)</span><span style=''>
+</span>189 <span style=''>    val userAgentHeader: Option[`User-Agent`] = </span><span style='background: #AEF1AE'>req.headers.get[`User-Agent`].orElse(userAgent)</span><span style=''>
+</span>190 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>191 <span style=''></span><span style='background: #AEF1AE'>      date &lt;- req.headers.get[Date].fold(HttpDate.current[F].map(Date(_)))(_.pure[F])
+</span>192 <span style=''></span><span style='background: #AEF1AE'>    } yield req
+</span>193 <span style=''></span><span style='background: #AEF1AE'>      .putHeaders(date, connection)
+</span>194 <span style=''></span><span style='background: #AEF1AE'>      .putHeaders(userAgentHeader)</span><span style=''>
+</span>195 <span style=''>  }
+</span>196 <span style=''>
+</span>197 <span style=''>  private[ember] def postProcessResponse[F[_]](
+</span>198 <span style=''>      req: Request[F],
+</span>199 <span style=''>      resp: Response[F],
+</span>200 <span style=''>      drain: F[Option[Array[Byte]]],
+</span>201 <span style=''>      nextBytes: Ref[F, Array[Byte]],
+</span>202 <span style=''>      canBeReused: Ref[F, Reusable],
+</span>203 <span style=''>  )(implicit F: Concurrent[F]): F[Unit] =
+</span>204 <span style=''>    </span><span style='background: #AEF1AE'>drain.flatMap {
+</span>205 <span style=''></span><span style='background: #AEF1AE'>      case Some(bytes) =&gt;
+</span>206 <span style=''></span><span style='background: #AEF1AE'>        val requestClose = connectionFor(req.httpVersion, req.headers).hasClose
+</span>207 <span style=''></span><span style='background: #AEF1AE'>        val responseClose = connectionFor(resp.httpVersion, resp.headers).hasClose
+</span>208 <span style=''></span><span style='background: #AEF1AE'>
+</span>209 <span style=''></span><span style='background: #AEF1AE'>        if (requestClose || responseClose) F.unit
+</span>210 <span style=''></span><span style='background: #AEF1AE'>        else nextBytes.set(bytes) &gt;&gt; canBeReused.set(Reusable.Reuse)
+</span>211 <span style=''></span><span style='background: #AEF1AE'>      case None =&gt; F.unit
+</span>212 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>213 <span style=''>
+</span>214 <span style=''>  // https://github.com/http4s/http4s/blob/main/blaze-client/src/main/scala/org/http4s/client/blaze/Http1Support.scala#L86
+</span>215 <span style=''>  private def getAddress[F[_]: Sync](requestKey: RequestKey): F[SocketAddress[Host]] =
+</span>216 <span style=''>    requestKey match {
+</span>217 <span style=''>      case RequestKey(s, auth) =&gt;
+</span>218 <span style=''>        val port = </span><span style='background: #AEF1AE'>auth.port.getOrElse(if (</span><span style='background: #F0ADAD'>s == Uri.Scheme.https</span><span style='background: #AEF1AE'>) </span><span style='background: #F0ADAD'>443</span><span style='background: #AEF1AE'> else </span><span style='background: #F0ADAD'>80</span><span style='background: #AEF1AE'>)</span><span style=''>
+</span>219 <span style=''>        val host = </span><span style='background: #AEF1AE'>auth.host.value</span><span style=''>
+</span>220 <span style=''>        </span><span style='background: #AEF1AE'>Sync[F].delay(
+</span>221 <span style=''></span><span style='background: #AEF1AE'>          SocketAddress[Host](Host.fromString(host).get, Port.fromInt(port).get)
+</span>222 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''> // FIXME
+</span>223 <span style=''>    }
+</span>224 <span style=''>
+</span>225 <span style=''>  // Assumes that the request doesn't have fancy finalizers besides shutting down the pool
+</span>226 <span style=''>  private[client] def getValidManaged[F[_]: Sync](
+</span>227 <span style=''>      pool: KeyPool[F, RequestKey, EmberConnection[F]],
+</span>228 <span style=''>      request: Request[F],
+</span>229 <span style=''>  ): Resource[F, Managed[F, EmberConnection[F]]] =
+</span>230 <span style=''>    </span><span style='background: #AEF1AE'>pool.take(RequestKey.fromRequest(request)).flatMap { managed =&gt;
+</span>231 <span style=''></span><span style='background: #AEF1AE'>      Resource
+</span>232 <span style=''></span><span style='background: #AEF1AE'>        .eval(managed.value.keySocket.socket.isOpen)
+</span>233 <span style=''></span><span style='background: #AEF1AE'>        .ifM(
+</span>234 <span style=''></span><span style='background: #AEF1AE'>          managed.pure[Resource[F, *]],
+</span>235 <span style=''></span><span style='background: #AEF1AE'>          // Already Closed,
+</span>236 <span style=''></span><span style='background: #AEF1AE'>          // The Resource Scopes Aren't doing us anything
+</span>237 <span style=''></span><span style='background: #AEF1AE'>          // if we have max removed from pool we will need to revisit
+</span>238 <span style=''></span><span style='background: #AEF1AE'>          if (</span><span style='background: #F0ADAD'>managed.isReused</span><span style='background: #AEF1AE'>) {
+</span>239 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>Resource.eval(managed.canBeReused.set(Reusable.DontReuse)) &gt;&gt;
+</span>240 <span style=''></span><span style='background: #F0ADAD'>              getValidManaged(pool, request)</span><span style='background: #AEF1AE'>
+</span>241 <span style=''></span><span style='background: #AEF1AE'>          } else
+</span>242 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>Resource.eval(
+</span>243 <span style=''></span><span style='background: #F0ADAD'>              Sync[F].raiseError(
+</span>244 <span style=''></span><span style='background: #F0ADAD'>                new fs2.io.net.SocketException(&quot;Fresh connection from pool was not open&quot;)
+</span>245 <span style=''></span><span style='background: #F0ADAD'>              )
+</span>246 <span style=''></span><span style='background: #F0ADAD'>            )</span><span style='background: #AEF1AE'>,
+</span>247 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>248 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>249 <span style=''>
+</span>250 <span style=''>  private[ember] object RetryLogic {
+</span>251 <span style=''>    private val retryNow = </span><span style='background: #AEF1AE'>0.seconds.some</span><span style=''>
+</span>252 <span style=''>    def retryUntilFresh[F[_]]: RetryPolicy[F] = { (req, result, retries) =&gt;
+</span>253 <span style=''>      if (</span><span style='background: #AEF1AE'>emberDeadFromPoolPolicy(req, result) &amp;&amp; retries &lt;= 2</span><span style=''>) </span><span style='background: #AEF1AE'>retryNow</span><span style=''>
+</span>254 <span style=''>      else </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>255 <span style=''>    }
+</span>256 <span style=''>
+</span>257 <span style=''>    def emberDeadFromPoolPolicy[F[_]](
+</span>258 <span style=''>        req: Request[F],
+</span>259 <span style=''>        result: Either[Throwable, Response[F]],
+</span>260 <span style=''>    ): Boolean =
+</span>261 <span style=''>      </span><span style='background: #AEF1AE'>req.isIdempotent &amp;&amp; isRetryableError(result)</span><span style=''>
+</span>262 <span style=''>
+</span>263 <span style=''>    def isRetryableError[F[_]](result: Either[Throwable, Response[F]]): Boolean =
+</span>264 <span style=''>      result match {
+</span>265 <span style=''>        case Right(_) =&gt; </span><span style='background: #AEF1AE'>false</span><span style=''>
+</span>266 <span style=''>        case Left(_: ClosedChannelException) =&gt; </span><span style='background: #F0ADAD'>true</span><span style=''>
+</span>267 <span style=''>        case Left(ex: IOException) =&gt;
+</span>268 <span style=''>          val msg = </span><span style='background: #AEF1AE'>ex.getMessage()</span><span style=''>
+</span>269 <span style=''>          </span><span style='background: #AEF1AE'>msg == &quot;Connection reset by peer&quot; || msg == &quot;Broken pipe&quot;</span><span style=''>
+</span>270 <span style=''>        case _ =&gt; </span><span style='background: #AEF1AE'>false</span><span style=''>
+</span>271 <span style=''>      }
+</span>272 <span style=''>  }
+</span>273 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          12841
+        </td>
+        <td>
+          2016
+          -
+          2047
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.RequestKey.fromRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.client.RequestKey.fromRequest[[_]F[_]](request)
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          12538
+        </td>
+        <td>
+          2052
+          -
+          2199
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpers.requestKeyToSocketWithKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ClientHelpers.this.requestKeyToSocketWithKey[F](requestKey, tlsContextOpt, enableEndpointValidation, sg, additionalSocketOptions)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          12274
+        </td>
+        <td>
+          2483
+          -
+          2514
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.RequestKey.fromRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.client.RequestKey.fromRequest[[_]F[_]](request)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          12852
+        </td>
+        <td>
+          2519
+          -
+          2638
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpers.elevateSocket
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ClientHelpers.this.elevateSocket[[_]F[_]](requestKey, unixSockets.client(address), tlsContextOpt, false, scala.None)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          12593
+        </td>
+        <td>
+          2946
+          -
+          2968
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpers.getAddress
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ClientHelpers.this.getAddress[[_]F[_]](requestKey)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          12499
+        </td>
+        <td>
+          2925
+          -
+          3297
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.kernel.Resource.eval[F, com.comcast.ip4s.SocketAddress[com.comcast.ip4s.Host]](ClientHelpers.this.getAddress[[_]F[_]](requestKey)(evidence$3)).flatMap[org.http4s.ember.client.RequestKeySocket[[_]F[_]]](((address: com.comcast.ip4s.SocketAddress[com.comcast.ip4s.Host]) =&gt; {
+  val s: cats.effect.kernel.Resource[F,fs2.io.net.Socket[F]] = sg.client(address, additionalSocketOptions);
+  ClientHelpers.this.elevateSocket[[_]F[_]]((requestKey: org.http4s.client.RequestKey), (s: cats.effect.kernel.Resource[F,fs2.io.net.Socket[F]]), (tlsContextOpt: Option[fs2.io.net.tls.TLSContext[F]]), (enableEndpointValidation: Boolean), scala.Some.apply[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.Host]](address))(evidence$3)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          12335
+        </td>
+        <td>
+          3014
+          -
+          3067
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.net.SocketGroup.client
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sg.client(address, additionalSocketOptions)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          12777
+        </td>
+        <td>
+          3076
+          -
+          3289
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpers.elevateSocket
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ClientHelpers.this.elevateSocket[[_]F[_]]((requestKey: org.http4s.client.RequestKey), (s: cats.effect.kernel.Resource[F,fs2.io.net.Socket[F]]), (tlsContextOpt: Option[fs2.io.net.tls.TLSContext[F]]), (enableEndpointValidation: Boolean), scala.Some.apply[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.Host]](address))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          12382
+        </td>
+        <td>
+          3581
+          -
+          4221
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          initSocket.flatMap[org.http4s.ember.client.RequestKeySocket[[_]F[_]]](((iSocket: fs2.io.net.Socket[F]) =&gt; if (cats.syntax.`package`.all.catsSyntaxEq[org.http4s.Uri.Scheme](requestKey.scheme)(Uri.this.Scheme.http4sOrderForScheme).===(org.http4s.Uri.Scheme.https))
+  tlsContextOpt.fold[cats.effect.kernel.Resource[F,fs2.io.net.Socket[F]]](cats.`package`.ApplicativeThrow.apply[[β$0$]cats.effect.kernel.Resource[F,β$0$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).raiseError[Nothing](new scala.`package`.Throwable(&quot;EmberClient Not Configured for Https&quot;)))(((tlsContext: fs2.io.net.tls.TLSContext[F]) =&gt; cats.syntax.`package`.all.toFunctorOps[[+A]cats.effect.kernel.Resource[F,A], fs2.io.net.tls.TLSSocket[F]](tlsContext.clientBuilder(iSocket).withParameters(ClientHelpers.this.mkTLSParameters(optionNames, enableEndpointValidation)).build)(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).widen[fs2.io.net.Socket[F]]))
+else
+  cats.syntax.`package`.all.catsSyntaxApplicativeId[fs2.io.net.Socket[F]](iSocket).pure[[β$1$]cats.effect.kernel.Resource[F,β$1$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).map[org.http4s.ember.client.RequestKeySocket[[_]F[_]]](((socket: fs2.io.net.Socket[F]) =&gt; org.http4s.ember.client.RequestKeySocket.apply[[_]F[_]](socket, requestKey)))))
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          12518
+        </td>
+        <td>
+          3621
+          -
+          4221
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          if (cats.syntax.`package`.all.catsSyntaxEq[org.http4s.Uri.Scheme](requestKey.scheme)(Uri.this.Scheme.http4sOrderForScheme).===(org.http4s.Uri.Scheme.https))
+  tlsContextOpt.fold[cats.effect.kernel.Resource[F,fs2.io.net.Socket[F]]](cats.`package`.ApplicativeThrow.apply[[β$0$]cats.effect.kernel.Resource[F,β$0$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).raiseError[Nothing](new scala.`package`.Throwable(&quot;EmberClient Not Configured for Https&quot;)))(((tlsContext: fs2.io.net.tls.TLSContext[F]) =&gt; cats.syntax.`package`.all.toFunctorOps[[+A]cats.effect.kernel.Resource[F,A], fs2.io.net.tls.TLSSocket[F]](tlsContext.clientBuilder(iSocket).withParameters(ClientHelpers.this.mkTLSParameters(optionNames, enableEndpointValidation)).build)(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).widen[fs2.io.net.Socket[F]]))
+else
+  cats.syntax.`package`.all.catsSyntaxApplicativeId[fs2.io.net.Socket[F]](iSocket).pure[[β$1$]cats.effect.kernel.Resource[F,β$1$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).map[org.http4s.ember.client.RequestKeySocket[[_]F[_]]](((socket: fs2.io.net.Socket[F]) =&gt; org.http4s.ember.client.RequestKeySocket.apply[[_]F[_]](socket, requestKey)))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          12276
+        </td>
+        <td>
+          3645
+          -
+          3683
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EqOps.===
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEq[org.http4s.Uri.Scheme](requestKey.scheme)(Uri.this.Scheme.http4sOrderForScheme).===(org.http4s.Uri.Scheme.https)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          12539
+        </td>
+        <td>
+          3667
+          -
+          3683
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme.https
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Scheme.https
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          12829
+        </td>
+        <td>
+          3656
+          -
+          3656
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme.http4sOrderForScheme
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.this.Scheme.http4sOrderForScheme
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          12362
+        </td>
+        <td>
+          3645
+          -
+          3662
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.RequestKey.scheme
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          requestKey.scheme
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          12885
+        </td>
+        <td>
+          3770
+          -
+          3770
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances1.catsEffectSyncForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          12295
+        </td>
+        <td>
+          3754
+          -
+          3880
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.`package`.ApplicativeThrow.apply[[β$0$]cats.effect.kernel.Resource[F,β$0$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).raiseError[Nothing](new scala.`package`.Throwable(&quot;EmberClient Not Configured for Https&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          12596
+        </td>
+        <td>
+          3813
+          -
+          3866
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new scala.`package`.Throwable(&quot;EmberClient Not Configured for Https&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          12266
+        </td>
+        <td>
+          3697
+          -
+          4120
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          tlsContextOpt.fold[cats.effect.kernel.Resource[F,fs2.io.net.Socket[F]]](cats.`package`.ApplicativeThrow.apply[[β$0$]cats.effect.kernel.Resource[F,β$0$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).raiseError[Nothing](new scala.`package`.Throwable(&quot;EmberClient Not Configured for Https&quot;)))(((tlsContext: fs2.io.net.tls.TLSContext[F]) =&gt; cats.syntax.`package`.all.toFunctorOps[[+A]cats.effect.kernel.Resource[F,A], fs2.io.net.tls.TLSSocket[F]](tlsContext.clientBuilder(iSocket).withParameters(ClientHelpers.this.mkTLSParameters(optionNames, enableEndpointValidation)).build)(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).widen[fs2.io.net.Socket[F]]))
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          12543
+        </td>
+        <td>
+          3697
+          -
+          4120
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          tlsContextOpt.fold[cats.effect.kernel.Resource[F,fs2.io.net.Socket[F]]](cats.`package`.ApplicativeThrow.apply[[β$0$]cats.effect.kernel.Resource[F,β$0$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).raiseError[Nothing](new scala.`package`.Throwable(&quot;EmberClient Not Configured for Https&quot;)))(((tlsContext: fs2.io.net.tls.TLSContext[F]) =&gt; cats.syntax.`package`.all.toFunctorOps[[+A]cats.effect.kernel.Resource[F,A], fs2.io.net.tls.TLSSocket[F]](tlsContext.clientBuilder(iSocket).withParameters(ClientHelpers.this.mkTLSParameters(optionNames, enableEndpointValidation)).build)(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).widen[fs2.io.net.Socket[F]]))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          12778
+        </td>
+        <td>
+          4000
+          -
+          4054
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpersPlatform.mkTLSParameters
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ClientHelpers.this.mkTLSParameters(optionNames, enableEndpointValidation)
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          12500
+        </td>
+        <td>
+          3921
+          -
+          4076
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.net.tls.TLSContext.SocketBuilder.build
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          tlsContext.clientBuilder(iSocket).withParameters(ClientHelpers.this.mkTLSParameters(optionNames, enableEndpointValidation)).build
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          12380
+        </td>
+        <td>
+          4071
+          -
+          4071
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances1.catsEffectSyncForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          12832
+        </td>
+        <td>
+          3921
+          -
+          4108
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.Functor.Ops.widen
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[[+A]cats.effect.kernel.Resource[F,A], fs2.io.net.tls.TLSSocket[F]](tlsContext.clientBuilder(iSocket).withParameters(ClientHelpers.this.mkTLSParameters(optionNames, enableEndpointValidation)).build)(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)).widen[fs2.io.net.Socket[F]]
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          12712
+        </td>
+        <td>
+          4148
+          -
+          4148
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances1.catsEffectSyncForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          12296
+        </td>
+        <td>
+          4136
+          -
+          4164
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[fs2.io.net.Socket[F]](iSocket).pure[[β$1$]cats.effect.kernel.Resource[F,β$1$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4))
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          12616
+        </td>
+        <td>
+          4136
+          -
+          4164
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[fs2.io.net.Socket[F]](iSocket).pure[[β$1$]cats.effect.kernel.Resource[F,β$1$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$4))
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          12782
+        </td>
+        <td>
+          4185
+          -
+          4221
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.client.RequestKeySocket.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.client.RequestKeySocket.apply[[_]F[_]](socket, requestKey)
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          12824
+        </td>
+        <td>
+          4513
+          -
+          5858
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.MonadErrorOps.adaptError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxMonadError[F, Throwable, (org.http4s.Response[F], F[Option[Array[Byte]]])]({
+  def writeRequestToSocket(req: org.http4s.Request[F], socket: fs2.io.net.Socket[F]): F[Unit] = org.http4s.ember.core.Encoder.reqToBytes[[_]F[_]](req, org.http4s.ember.core.Encoder.reqToBytes$default$2[Nothing])(evidence$5).through[[x]F[x], fs2.INothing](((x$1: fs2.Stream[[_]F[_],Byte]) =&gt; x$1.chunks.foreach[[x]F[x]](((c: fs2.Chunk[Byte]) =&gt; org.http4s.ember.core.Util.timeoutMaybe[F, Unit](socket.write(c), idleTimeout)(evidence$5))))).compile[[x]F[x], [x]F[x], fs2.INothing](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$5))).drain;
+  def writeRead(req: org.http4s.Request[F]): F[(org.http4s.Response[F], F[Option[Array[Byte]]])] = cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](writeRequestToSocket(req, connection.keySocket.socket))(evidence$5).&gt;&gt;[(org.http4s.Response[F], org.http4s.ember.core.Drain[F])](cats.syntax.`package`.all.toFlatMapOps[F, Array[Byte]](connection.nextBytes.getAndSet(scala.Array.emptyByteArray))(evidence$5).flatMap[(org.http4s.Response[F], org.http4s.ember.core.Drain[F])](((head: Array[Byte]) =&gt; {
+    val parse: F[(org.http4s.Response[F], org.http4s.ember.core.Drain[F])] = org.http4s.ember.core.Parser.Response.parser[F](maxResponseHeaderSize)(head, org.http4s.ember.core.Util.timeoutMaybe[F, Option[fs2.Chunk[Byte]]](connection.keySocket.socket.read(chunkSize), idleTimeout)(evidence$5))(evidence$5);
+    org.http4s.ember.core.Util.timeoutToMaybe[F, (org.http4s.Response[F], org.http4s.ember.core.Drain[F])](parse, timeout, cats.Defer.apply[F](evidence$5).defer[(org.http4s.Response[F], F[Option[Array[Byte]]])](cats.`package`.ApplicativeThrow.apply[F](evidence$5).raiseError[(org.http4s.Response[F], F[Option[Array[Byte]]])](new java.util.concurrent.TimeoutException((&quot;Timed Out on EmberClient Header Receive Timeout: &quot;.+(timeout): String)))))(evidence$5)
+  })))(evidence$5);
+  cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Request[[_]F[_]]](ClientHelpers.this.preprocessRequest[[_]F[_]](request, userAgent)(evidence$5, evidence$5))(evidence$5).flatMap[(org.http4s.Response[F], F[Option[Array[Byte]]])](((processedReq: org.http4s.Request[[_]F[_]]) =&gt; writeRead(processedReq)))
+})(evidence$5).adaptError(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,Throwable] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; Throwable&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: Throwable](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (e @ (_: org.http4s.ember.core.EmberException.EmptyStream)) =&gt; {
+        final class $anon extends fs2.io.`package`.ClosedChannelException {
+          def &lt;init&gt;(): &lt;$anon: fs2.io.ClosedChannelException&gt; = {
+            $anon.super.&lt;init&gt;();
+            ()
+          };
+          $anon.this.initCause(e);
+          override def getMessage(): String = &quot;Remote Disconnect: Received zero bytes after sending request&quot;
+        };
+        new $anon()
+      }
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (e @ (_: org.http4s.ember.core.EmberException.EmptyStream)) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,Throwable]))(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          12269
+        </td>
+        <td>
+          6051
+          -
+          6051
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerInstance
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Connection.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          12529
+        </td>
+        <td>
+          6051
+          -
+          6051
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerSemigroupInstance
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Connection.headerSemigroupInstance
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          12749
+        </td>
+        <td>
+          6051
+          -
+          6051
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.recurringHeadersWithMerge
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Connection](headers.this.Connection.headerSemigroupInstance, headers.this.Connection.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          12237
+        </td>
+        <td>
+          6029
+          -
+          6130
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Connection](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Connection](headers.this.Connection.headerSemigroupInstance, headers.this.Connection.headerInstance)).fold[org.http4s.headers.Connection](org.http4s.headers.Connection.apply(cats.data.NonEmptyList.of[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;keep-alive&quot;)).ci())))(((x: org.http4s.headers.Connection) =&gt; scala.Predef.identity[org.http4s.headers.Connection](x)))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          12520
+        </td>
+        <td>
+          6121
+          -
+          6129
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[org.http4s.headers.Connection](x)
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          12618
+        </td>
+        <td>
+          6103
+          -
+          6117
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;keep-alive&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          12334
+        </td>
+        <td>
+          6087
+          -
+          6118
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.of
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.of[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;keep-alive&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          12767
+        </td>
+        <td>
+          6076
+          -
+          6119
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Connection.apply
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Connection.apply(cats.data.NonEmptyList.of[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;keep-alive&quot;)).ci()))
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          12828
+        </td>
+        <td>
+          6179
+          -
+          6226
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.User-Agent](Header.this.Select.singleHeaders[org.http4s.headers.User-Agent](headers.this.User-Agent.headerInstance)).orElse[org.http4s.headers.User-Agent](userAgent)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          12751
+        </td>
+        <td>
+          6278
+          -
+          6297
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.HttpDate.current
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.HttpDate.current[F](evidence$6, evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          12323
+        </td>
+        <td>
+          6278
+          -
+          6310
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.HttpDate](org.http4s.HttpDate.current[F](evidence$6, evidence$7))(evidence$6).map[org.http4s.headers.Date](((x$2: org.http4s.HttpDate) =&gt; org.http4s.headers.Date.apply(x$2)))
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          12508
+        </td>
+        <td>
+          6251
+          -
+          6322
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Date](Header.this.Select.singleHeaders[org.http4s.headers.Date](headers.this.Date.headerInstance)).fold[F[org.http4s.headers.Date]](cats.syntax.`package`.all.toFunctorOps[F, org.http4s.HttpDate](org.http4s.HttpDate.current[F](evidence$6, evidence$7))(evidence$6).map[org.http4s.headers.Date](((x$2: org.http4s.HttpDate) =&gt; org.http4s.headers.Date.apply(x$2))))(((x$3: org.http4s.headers.Date) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.headers.Date](x$3).pure[F](evidence$6)))
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          12585
+        </td>
+        <td>
+          6302
+          -
+          6309
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Date.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Date.apply(x$2)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          12570
+        </td>
+        <td>
+          6266
+          -
+          6266
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Date.headerInstance
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Date.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          12193
+        </td>
+        <td>
+          6231
+          -
+          6409
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.headers.Date](req.headers.get[org.http4s.headers.Date](Header.this.Select.singleHeaders[org.http4s.headers.Date](headers.this.Date.headerInstance)).fold[F[org.http4s.headers.Date]](cats.syntax.`package`.all.toFunctorOps[F, org.http4s.HttpDate](org.http4s.HttpDate.current[F](evidence$6, evidence$7))(evidence$6).map[org.http4s.headers.Date](((x$2: org.http4s.HttpDate) =&gt; org.http4s.headers.Date.apply(x$2))))(((x$3: org.http4s.headers.Date) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.headers.Date](x$3).pure[F](evidence$6))))(evidence$6).map[org.http4s.Request[F]](((date: org.http4s.headers.Date) =&gt; req.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](date)(headers.this.Date.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](connection)(headers.this.Connection.headerInstance)).putHeaders(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.User-Agent](userAgentHeader)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.User-Agent) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.User-Agent](h)(headers.this.User-Agent.headerInstance))))))
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          12800
+        </td>
+        <td>
+          6312
+          -
+          6321
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.headers.Date](x$3).pure[F](evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          12282
+        </td>
+        <td>
+          6266
+          -
+          6266
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Date](headers.this.Date.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          12240
+        </td>
+        <td>
+          6357
+          -
+          6357
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Date.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Date.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          12559
+        </td>
+        <td>
+          6363
+          -
+          6363
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Connection.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          12831
+        </td>
+        <td>
+          6357
+          -
+          6361
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](date)(headers.this.Date.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          193
+        </td>
+        <td>
+          12265
+        </td>
+        <td>
+          6363
+          -
+          6373
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](connection)(headers.this.Connection.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          12494
+        </td>
+        <td>
+          6335
+          -
+          6409
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](date)(headers.this.Date.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](connection)(headers.this.Connection.headerInstance)).putHeaders(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.User-Agent](userAgentHeader)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.User-Agent) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.User-Agent](h)(headers.this.User-Agent.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          12763
+        </td>
+        <td>
+          6393
+          -
+          6408
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.foldablesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.User-Agent](userAgentHeader)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.User-Agent) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.User-Agent](h)(headers.this.User-Agent.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          12586
+        </td>
+        <td>
+          6393
+          -
+          6393
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.User-Agent.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.User-Agent.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          12326
+        </td>
+        <td>
+          6393
+          -
+          6393
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.User-Agent](h)(headers.this.User-Agent.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          12737
+        </td>
+        <td>
+          6393
+          -
+          6393
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForOption
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          12720
+        </td>
+        <td>
+          6669
+          -
+          7025
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[Array[Byte]]](drain)(F).flatMap[Unit](((x0$1: Option[Array[Byte]]) =&gt; x0$1 match {
+  case (value: Array[Byte]): Some[Array[Byte]]((bytes @ _)) =&gt; {
+    val requestClose: Boolean = org.http4s.ember.core.Util.connectionFor(req.httpVersion, req.headers).hasClose;
+    val responseClose: Boolean = org.http4s.ember.core.Util.connectionFor(resp.httpVersion, resp.headers).hasClose;
+    if (requestClose.||(responseClose))
+      F.unit
+    else
+      cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](nextBytes.set(bytes))(F).&gt;&gt;[Unit](canBeReused.set(org.typelevel.keypool.Reusable.Reuse))(F)
+  }
+  case scala.None =&gt; F.unit
+}))
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          12252
+        </td>
+        <td>
+          6738
+          -
+          6790
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.hasClose
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.Util.connectionFor(req.httpVersion, req.headers).hasClose
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          12562
+        </td>
+        <td>
+          6769
+          -
+          6780
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          12815
+        </td>
+        <td>
+          6752
+          -
+          6767
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.httpVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.httpVersion
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          12443
+        </td>
+        <td>
+          6851
+          -
+          6863
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.headers
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          12718
+        </td>
+        <td>
+          6833
+          -
+          6849
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.httpVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.httpVersion
+        </td>
+      </tr><tr>
+        <td>
+          207
+        </td>
+        <td>
+          12308
+        </td>
+        <td>
+          6819
+          -
+          6873
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.hasClose
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ember.core.Util.connectionFor(resp.httpVersion, resp.headers).hasClose
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          12482
+        </td>
+        <td>
+          6918
+          -
+          6924
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          12236
+        </td>
+        <td>
+          6918
+          -
+          6924
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          12765
+        </td>
+        <td>
+          6887
+          -
+          6916
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          requestClose.||(responseClose)
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          12574
+        </td>
+        <td>
+          6938
+          -
+          6993
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](nextBytes.set(bytes))(F).&gt;&gt;[Unit](canBeReused.set(org.typelevel.keypool.Reusable.Reuse))(F)
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          12818
+        </td>
+        <td>
+          6938
+          -
+          6993
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[F, Unit](nextBytes.set(bytes))(F).&gt;&gt;[Unit](canBeReused.set(org.typelevel.keypool.Reusable.Reuse))(F)
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          12253
+        </td>
+        <td>
+          7013
+          -
+          7019
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          12703
+        </td>
+        <td>
+          7369
+          -
+          7371
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          80
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          12524
+        </td>
+        <td>
+          7313
+          -
+          7372
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          auth.port.getOrElse[Int](if (s.==(org.http4s.Uri.Scheme.https))
+  443
+else
+  80)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          12311
+        </td>
+        <td>
+          7337
+          -
+          7358
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          s.==(org.http4s.Uri.Scheme.https)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          12239
+        </td>
+        <td>
+          7369
+          -
+          7371
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          80
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          12469
+        </td>
+        <td>
+          7342
+          -
+          7358
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme.https
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Uri.Scheme.https
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          12486
+        </td>
+        <td>
+          7360
+          -
+          7363
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          443
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          12806
+        </td>
+        <td>
+          7360
+          -
+          7363
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          443
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          12258
+        </td>
+        <td>
+          7392
+          -
+          7407
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Host.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          auth.host.value
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          12756
+        </td>
+        <td>
+          7416
+          -
+          7521
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.kernel.Sync.apply[F](evidence$8).delay[com.comcast.ip4s.SocketAddress[com.comcast.ip4s.Host]](com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.Host](com.comcast.ip4s.Host.fromString(host).get, com.comcast.ip4s.Port.fromInt(port).get))
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          12470
+        </td>
+        <td>
+          7488
+          -
+          7510
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.Port.fromInt(port).get
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          12735
+        </td>
+        <td>
+          7461
+          -
+          7486
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.Host.fromString(host).get
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          12304
+        </td>
+        <td>
+          7441
+          -
+          7511
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.comcast.ip4s.SocketAddress.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.SocketAddress.apply[com.comcast.ip4s.Host](com.comcast.ip4s.Host.fromString(host).get, com.comcast.ip4s.Port.fromInt(port).get)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          12547
+        </td>
+        <td>
+          7818
+          -
+          8528
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          pool.take(org.http4s.client.RequestKey.fromRequest[[_]F[_]](request)).flatMap[org.typelevel.keypool.Managed[F,org.http4s.ember.client.EmberConnection[F]]](((managed: org.typelevel.keypool.Managed[F,org.http4s.ember.client.EmberConnection[F]]) =&gt; cats.syntax.`package`.all.catsSyntaxIfM[[+A]cats.effect.kernel.Resource[F,A]](cats.effect.kernel.Resource.eval[F, Boolean](managed.value.keySocket.socket.isOpen))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)).ifM[org.typelevel.keypool.Managed[F,org.http4s.ember.client.EmberConnection[F]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.typelevel.keypool.Managed[F,org.http4s.ember.client.EmberConnection[F]]](managed).pure[[β$2$]cats.effect.kernel.Resource[F,β$2$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)), if (managed.isReused)
+  cats.syntax.`package`.all.catsSyntaxFlatMapOps[[+A]cats.effect.kernel.Resource[F,A], Unit](cats.effect.kernel.Resource.eval[F, Unit](managed.canBeReused.set(org.typelevel.keypool.Reusable.DontReuse)))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)).&gt;&gt;[org.typelevel.keypool.Managed[[_]F[_],org.http4s.ember.client.EmberConnection[[_]F[_]]]](ClientHelpers.this.getValidManaged[[_]F[_]](pool, request)(evidence$9))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9))
+else
+  cats.effect.kernel.Resource.eval[F, Nothing](cats.effect.kernel.Sync.apply[F](evidence$9).raiseError[Nothing](new fs2.io.net.`package`.SocketException(&quot;Fresh connection from pool was not open&quot;))))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9))))
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          12489
+        </td>
+        <td>
+          7828
+          -
+          7859
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.RequestKey.fromRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.client.RequestKey.fromRequest[[_]F[_]](request)
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          12542
+        </td>
+        <td>
+          7910
+          -
+          7910
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances1.catsEffectSyncForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          12220
+        </td>
+        <td>
+          7911
+          -
+          7948
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.net.Socket.isOpen
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          managed.value.keySocket.socket.isOpen
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          12704
+        </td>
+        <td>
+          7888
+          -
+          7949
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.eval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.kernel.Resource.eval[F, Boolean](managed.value.keySocket.socket.isOpen)
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          12210
+        </td>
+        <td>
+          7962
+          -
+          7962
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances1.catsEffectSyncForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          233
+        </td>
+        <td>
+          12673
+        </td>
+        <td>
+          7888
+          -
+          8522
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.IfMOps.ifM
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxIfM[[+A]cats.effect.kernel.Resource[F,A]](cats.effect.kernel.Resource.eval[F, Boolean](managed.value.keySocket.socket.isOpen))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)).ifM[org.typelevel.keypool.Managed[F,org.http4s.ember.client.EmberConnection[F]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[org.typelevel.keypool.Managed[F,org.http4s.ember.client.EmberConnection[F]]](managed).pure[[β$2$]cats.effect.kernel.Resource[F,β$2$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)), if (managed.isReused)
+  cats.syntax.`package`.all.catsSyntaxFlatMapOps[[+A]cats.effect.kernel.Resource[F,A], Unit](cats.effect.kernel.Resource.eval[F, Unit](managed.canBeReused.set(org.typelevel.keypool.Reusable.DontReuse)))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)).&gt;&gt;[org.typelevel.keypool.Managed[[_]F[_],org.http4s.ember.client.EmberConnection[[_]F[_]]]](ClientHelpers.this.getValidManaged[[_]F[_]](pool, request)(evidence$9))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9))
+else
+  cats.effect.kernel.Resource.eval[F, Nothing](cats.effect.kernel.Sync.apply[F](evidence$9).raiseError[Nothing](new fs2.io.net.`package`.SocketException(&quot;Fresh connection from pool was not open&quot;))))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9))
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          12243
+        </td>
+        <td>
+          7986
+          -
+          7986
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances1.catsEffectSyncForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          12738
+        </td>
+        <td>
+          7974
+          -
+          8002
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.typelevel.keypool.Managed[F,org.http4s.ember.client.EmberConnection[F]]](managed).pure[[β$2$]cats.effect.kernel.Resource[F,β$2$]](kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9))
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          12459
+        </td>
+        <td>
+          8175
+          -
+          8191
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.keypool.Managed.isReused
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          managed.isReused
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          12545
+        </td>
+        <td>
+          8266
+          -
+          8266
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances1.catsEffectSyncForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          12278
+        </td>
+        <td>
+          8207
+          -
+          8313
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[[+A]cats.effect.kernel.Resource[F,A], Unit](cats.effect.kernel.Resource.eval[F, Unit](managed.canBeReused.set(org.typelevel.keypool.Reusable.DontReuse)))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)).&gt;&gt;[org.typelevel.keypool.Managed[[_]F[_],org.http4s.ember.client.EmberConnection[[_]F[_]]]](ClientHelpers.this.getValidManaged[[_]F[_]](pool, request)(evidence$9))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          12723
+        </td>
+        <td>
+          8207
+          -
+          8313
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.FlatMapOps.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxFlatMapOps[[+A]cats.effect.kernel.Resource[F,A], Unit](cats.effect.kernel.Resource.eval[F, Unit](managed.canBeReused.set(org.typelevel.keypool.Reusable.DontReuse)))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)).&gt;&gt;[org.typelevel.keypool.Managed[[_]F[_],org.http4s.ember.client.EmberConnection[[_]F[_]]]](ClientHelpers.this.getValidManaged[[_]F[_]](pool, request)(evidence$9))(kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          12794
+        </td>
+        <td>
+          8221
+          -
+          8264
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.RefSink.set
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          managed.canBeReused.set(org.typelevel.keypool.Reusable.DontReuse)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          12501
+        </td>
+        <td>
+          8207
+          -
+          8265
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.eval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.kernel.Resource.eval[F, Unit](managed.canBeReused.set(org.typelevel.keypool.Reusable.DontReuse))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          12223
+        </td>
+        <td>
+          8220
+          -
+          8220
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.ResourceHOInstances1.catsEffectSyncForResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          kernel.this.Resource.catsEffectSyncForResource[[_]F[_]](evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          12306
+        </td>
+        <td>
+          8245
+          -
+          8263
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.keypool.Reusable.DontReuse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.typelevel.keypool.Reusable.DontReuse
+        </td>
+      </tr><tr>
+        <td>
+          240
+        </td>
+        <td>
+          12672
+        </td>
+        <td>
+          8283
+          -
+          8313
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpers.getValidManaged
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ClientHelpers.this.getValidManaged[[_]F[_]](pool, request)(evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          12784
+        </td>
+        <td>
+          8343
+          -
+          8511
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.eval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.kernel.Resource.eval[F, Nothing](cats.effect.kernel.Sync.apply[F](evidence$9).raiseError[Nothing](new fs2.io.net.`package`.SocketException(&quot;Fresh connection from pool was not open&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          12484
+        </td>
+        <td>
+          8343
+          -
+          8511
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.effect.kernel.Resource.eval
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.kernel.Resource.eval[F, Nothing](cats.effect.kernel.Sync.apply[F](evidence$9).raiseError[Nothing](new fs2.io.net.`package`.SocketException(&quot;Fresh connection from pool was not open&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          12168
+        </td>
+        <td>
+          8372
+          -
+          8497
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.kernel.Sync.apply[F](evidence$9).raiseError[Nothing](new fs2.io.net.`package`.SocketException(&quot;Fresh connection from pool was not open&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          12461
+        </td>
+        <td>
+          8408
+          -
+          8481
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.SocketException.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new fs2.io.net.`package`.SocketException(&quot;Fresh connection from pool was not open&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          251
+        </td>
+        <td>
+          12290
+        </td>
+        <td>
+          8594
+          -
+          8595
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          251
+        </td>
+        <td>
+          12444
+        </td>
+        <td>
+          8594
+          -
+          8608
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.OptionIdOps.some
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOptionId[scala.concurrent.duration.FiniteDuration](scala.concurrent.duration.`package`.DurationInt(0).seconds).some
+        </td>
+      </tr><tr>
+        <td>
+          251
+        </td>
+        <td>
+          12713
+        </td>
+        <td>
+          8594
+          -
+          8603
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.DurationConversions.seconds
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.concurrent.duration.`package`.DurationInt(0).seconds
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          12786
+        </td>
+        <td>
+          8695
+          -
+          8747
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RetryLogic.this.emberDeadFromPoolPolicy[[_]F[_]](req, result).&amp;&amp;(retries.&lt;=(2))
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          12200
+        </td>
+        <td>
+          8749
+          -
+          8757
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpers.RetryLogic.retryNow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RetryLogic.this.retryNow
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          12522
+        </td>
+        <td>
+          8749
+          -
+          8757
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpers.RetryLogic.retryNow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RetryLogic.this.retryNow
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          12169
+        </td>
+        <td>
+          8735
+          -
+          8747
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          retries.&lt;=(2)
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          12533
+        </td>
+        <td>
+          8769
+          -
+          8773
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          12675
+        </td>
+        <td>
+          8769
+          -
+          8773
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          261
+        </td>
+        <td>
+          12754
+        </td>
+        <td>
+          8916
+          -
+          8960
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.isIdempotent.&amp;&amp;(RetryLogic.this.isRetryableError[[_]F[_]](result))
+        </td>
+      </tr><tr>
+        <td>
+          261
+        </td>
+        <td>
+          12242
+        </td>
+        <td>
+          8936
+          -
+          8960
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ember.client.internal.ClientHelpers.RetryLogic.isRetryableError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          RetryLogic.this.isRetryableError[[_]F[_]](result)
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          12457
+        </td>
+        <td>
+          9090
+          -
+          9095
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          266
+        </td>
+        <td>
+          12170
+        </td>
+        <td>
+          9144
+          -
+          9148
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          268
+        </td>
+        <td>
+          12801
+        </td>
+        <td>
+          9207
+          -
+          9222
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getMessage
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ex.getMessage()
+        </td>
+      </tr><tr>
+        <td>
+          269
+        </td>
+        <td>
+          12192
+        </td>
+        <td>
+          9270
+          -
+          9290
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          msg.==(&quot;Broken pipe&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          269
+        </td>
+        <td>
+          12697
+        </td>
+        <td>
+          9233
+          -
+          9290
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          msg.==(&quot;Connection reset by peer&quot;).||(msg.==(&quot;Broken pipe&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          269
+        </td>
+        <td>
+          12472
+        </td>
+        <td>
+          9240
+          -
+          9266
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Connection reset by peer&quot;
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          12409
+        </td>
+        <td>
+          9309
+          -
+          9314
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,2550 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/websocket/WebSocketHandshake.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.websocket
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.effect.SyncIO
+</span>20 <span style=''>import org.http4s.crypto.Hash
+</span>21 <span style=''>import org.http4s.crypto.HashAlgorithm
+</span>22 <span style=''>import scodec.bits.ByteVector
+</span>23 <span style=''>
+</span>24 <span style=''>import java.nio.charset.StandardCharsets._
+</span>25 <span style=''>import java.util.Base64
+</span>26 <span style=''>import scala.util.Random
+</span>27 <span style=''>
+</span>28 <span style=''>@deprecated(
+</span>29 <span style=''>  &quot;Retained for binary compatibility. Side-effecting. Only used by blaze-server.&quot;,
+</span>30 <span style=''>  &quot;0.23.13&quot;,
+</span>31 <span style=''>)
+</span>32 <span style=''>private[http4s] object WebSocketHandshake {
+</span>33 <span style=''>
+</span>34 <span style=''>  /** Creates a new [[ClientHandshaker]] */
+</span>35 <span style=''>  def clientHandshaker(host: String): ClientHandshaker = </span><span style='background: #AEF1AE'>new ClientHandshaker(host)</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  /** Provides the initial headers and a 16 byte Base64 encoded random key for websocket connections */
+</span>38 <span style=''>  class ClientHandshaker(host: String) {
+</span>39 <span style=''>
+</span>40 <span style=''>    /** Randomly generated 16-byte key in Base64 encoded form */
+</span>41 <span style=''>    val key: String = {
+</span>42 <span style=''>      val bytes = </span><span style='background: #AEF1AE'>new Array[Byte](16)</span><span style=''>
+</span>43 <span style=''>      </span><span style='background: #AEF1AE'>Random.nextBytes(bytes)</span><span style=''>
+</span>44 <span style=''>      </span><span style='background: #AEF1AE'>Base64.getEncoder.encodeToString(bytes)</span><span style=''>
+</span>45 <span style=''>    }
+</span>46 <span style=''>
+</span>47 <span style=''>    /** Initial headers to send to the server */
+</span>48 <span style=''>    val initHeaders: List[(String, String)] =
+</span>49 <span style=''>      (&quot;Host&quot;, host) </span><span style='background: #AEF1AE'>:: (&quot;Sec-WebSocket-Key&quot;, key) :: clientBaseHeaders</span><span style=''>
+</span>50 <span style=''>
+</span>51 <span style=''>    /** Check if the server response is a websocket handshake response */
+</span>52 <span style=''>    def checkResponse(headers: Iterable[(String, String)]): Either[String, Unit] =
+</span>53 <span style=''>      if (
+</span>54 <span style=''>        </span><span style='background: #AEF1AE'>!headers.exists { case (k, v) =&gt;
+</span>55 <span style=''></span><span style='background: #AEF1AE'>          k.equalsIgnoreCase(&quot;Connection&quot;) &amp;&amp; valueContains(&quot;Upgrade&quot;, v)
+</span>56 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>57 <span style=''>      )
+</span>58 <span style=''>        </span><span style='background: #F0ADAD'>Left(&quot;Bad Connection header&quot;)</span><span style=''>
+</span>59 <span style=''>      else </span><span style='background: #AEF1AE'>if (
+</span>60 <span style=''></span><span style='background: #AEF1AE'>        !headers.exists { case (k, v) =&gt;
+</span>61 <span style=''></span><span style='background: #AEF1AE'>          k.equalsIgnoreCase(&quot;Upgrade&quot;) &amp;&amp; v.equalsIgnoreCase(&quot;websocket&quot;)
+</span>62 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>63 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>64 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>Left(&quot;Bad Upgrade header&quot;)</span><span style='background: #AEF1AE'>
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      else
+</span>66 <span style=''></span><span style='background: #AEF1AE'>        headers
+</span>67 <span style=''></span><span style='background: #AEF1AE'>          .find { case (k, _) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Accept&quot;) }
+</span>68 <span style=''></span><span style='background: #AEF1AE'>          .map {
+</span>69 <span style=''></span><span style='background: #AEF1AE'>            case (_, v) if genAcceptKey(key) == v =&gt; Right(())
+</span>70 <span style=''></span><span style='background: #AEF1AE'>            case (_, v) =&gt; </span><span style='background: #F0ADAD'>Left(s&quot;Invalid key: $v&quot;)</span><span style='background: #AEF1AE'>
+</span>71 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>72 <span style=''></span><span style='background: #AEF1AE'>          .getOrElse(</span><span style='background: #F0ADAD'>Left(&quot;Missing Sec-WebSocket-Accept header&quot;)</span><span style='background: #AEF1AE'>)</span><span style=''>
+</span>73 <span style=''>  }
+</span>74 <span style=''>
+</span>75 <span style=''>  /** Checks the headers received from the client and if they are valid, generates response headers */
+</span>76 <span style=''>  def serverHandshake(
+</span>77 <span style=''>      headers: Iterable[(String, String)]
+</span>78 <span style=''>  ): Either[(Int, String), collection.Seq[(String, String)]] =
+</span>79 <span style=''>    if (</span><span style='background: #AEF1AE'>!headers.exists { case (k, _) =&gt; k.equalsIgnoreCase(&quot;Host&quot;) }</span><span style=''>)
+</span>80 <span style=''>      </span><span style='background: #F0ADAD'>Left((-1, &quot;Missing Host Header&quot;))</span><span style=''>
+</span>81 <span style=''>    else </span><span style='background: #AEF1AE'>if (
+</span>82 <span style=''></span><span style='background: #AEF1AE'>      !headers.exists { case (k, v) =&gt;
+</span>83 <span style=''></span><span style='background: #AEF1AE'>        k.equalsIgnoreCase(&quot;Connection&quot;) &amp;&amp; valueContains(&quot;Upgrade&quot;, v)
+</span>84 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>85 <span style=''></span><span style='background: #AEF1AE'>    )
+</span>86 <span style=''></span><span style='background: #AEF1AE'>      </span><span style='background: #F0ADAD'>Left((-1, &quot;Bad Connection header&quot;))</span><span style='background: #AEF1AE'>
+</span>87 <span style=''></span><span style='background: #AEF1AE'>    else if (
+</span>88 <span style=''></span><span style='background: #AEF1AE'>      !headers.exists { case (k, v) =&gt;
+</span>89 <span style=''></span><span style='background: #AEF1AE'>        k.equalsIgnoreCase(&quot;Upgrade&quot;) &amp;&amp; v.equalsIgnoreCase(&quot;websocket&quot;)
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>91 <span style=''></span><span style='background: #AEF1AE'>    )
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      </span><span style='background: #F0ADAD'>Left((-1, &quot;Bad Upgrade header&quot;))</span><span style='background: #AEF1AE'>
+</span>93 <span style=''></span><span style='background: #AEF1AE'>    else if (
+</span>94 <span style=''></span><span style='background: #AEF1AE'>      !headers.exists { case (k, v) =&gt;
+</span>95 <span style=''></span><span style='background: #AEF1AE'>        k.equalsIgnoreCase(&quot;Sec-WebSocket-Version&quot;) &amp;&amp; valueContains(&quot;13&quot;, v)
+</span>96 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>97 <span style=''></span><span style='background: #AEF1AE'>    )
+</span>98 <span style=''></span><span style='background: #AEF1AE'>      </span><span style='background: #F0ADAD'>Left((-1, &quot;Bad Websocket Version header&quot;))</span><span style='background: #AEF1AE'>
+</span>99 <span style=''></span><span style='background: #AEF1AE'>    // we are past most of the 'just need them' headers
+</span>100 <span style=''></span><span style='background: #AEF1AE'>    else
+</span>101 <span style=''></span><span style='background: #AEF1AE'>      headers
+</span>102 <span style=''></span><span style='background: #AEF1AE'>        .find { case (k, v) =&gt;
+</span>103 <span style=''></span><span style='background: #AEF1AE'>          k.equalsIgnoreCase(&quot;Sec-WebSocket-Key&quot;) &amp;&amp; decodeLen(v) == 16
+</span>104 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>105 <span style=''></span><span style='background: #AEF1AE'>        .map { case (_, v) =&gt;
+</span>106 <span style=''></span><span style='background: #AEF1AE'>          val respHeaders = collection.Seq(
+</span>107 <span style=''></span><span style='background: #AEF1AE'>            (&quot;Upgrade&quot;, &quot;websocket&quot;),
+</span>108 <span style=''></span><span style='background: #AEF1AE'>            (&quot;Connection&quot;, &quot;Upgrade&quot;),
+</span>109 <span style=''></span><span style='background: #AEF1AE'>            (&quot;Sec-WebSocket-Accept&quot;, genAcceptKey(v)),
+</span>110 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>111 <span style=''></span><span style='background: #AEF1AE'>
+</span>112 <span style=''></span><span style='background: #AEF1AE'>          Right(respHeaders)
+</span>113 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>114 <span style=''></span><span style='background: #AEF1AE'>        .getOrElse(</span><span style='background: #F0ADAD'>Left((-1, &quot;Bad Sec-WebSocket-Key header&quot;))</span><span style='background: #AEF1AE'>)</span><span style=''>
+</span>115 <span style=''>
+</span>116 <span style=''>  /** Check if the headers contain an 'Upgrade: websocket' header */
+</span>117 <span style=''>  def isWebSocketRequest(headers: Iterable[(String, String)]): Boolean =
+</span>118 <span style=''>    </span><span style='background: #F0ADAD'>headers.exists { case (k, v) =&gt;
+</span>119 <span style=''></span><span style='background: #F0ADAD'>      k.equalsIgnoreCase(&quot;Upgrade&quot;) &amp;&amp; v.equalsIgnoreCase(&quot;websocket&quot;)
+</span>120 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>121 <span style=''>
+</span>122 <span style=''>  private def decodeLen(key: String): Int = </span><span style='background: #AEF1AE'>Base64.getDecoder.decode(key).length</span><span style=''>
+</span>123 <span style=''>
+</span>124 <span style=''>  private def genAcceptKey(str: String): String = </span><span style='background: #AEF1AE'>(for {
+</span>125 <span style=''></span><span style='background: #AEF1AE'>    data &lt;- SyncIO.fromEither(ByteVector.encodeAscii(str))
+</span>126 <span style=''></span><span style='background: #AEF1AE'>    digest &lt;- Hash[SyncIO].digest(HashAlgorithm.SHA1, data ++ magicString)
+</span>127 <span style=''></span><span style='background: #AEF1AE'>  } yield digest.toBase64).unsafeRunSync()</span><span style=''>
+</span>128 <span style=''>
+</span>129 <span style=''>  private[websocket] def valueContains(key: String, value: String): Boolean = {
+</span>130 <span style=''>    val parts = </span><span style='background: #AEF1AE'>value.split(&quot;,&quot;).map(_.trim)</span><span style=''>
+</span>131 <span style=''>    </span><span style='background: #AEF1AE'>parts.foldLeft(false)((b, s) =&gt;
+</span>132 <span style=''></span><span style='background: #AEF1AE'>      b || {
+</span>133 <span style=''></span><span style='background: #AEF1AE'>        s.equalsIgnoreCase(key) ||
+</span>134 <span style=''></span><span style='background: #AEF1AE'>        s.length &gt; 1 &amp;&amp;
+</span>135 <span style=''></span><span style='background: #AEF1AE'>        s.startsWith(&quot;\&quot;&quot;) &amp;&amp;
+</span>136 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>s.endsWith(&quot;\&quot;&quot;)</span><span style='background: #AEF1AE'> &amp;&amp;
+</span>137 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>s.substring(1, s.length - 1).equalsIgnoreCase(key)</span><span style='background: #AEF1AE'>
+</span>138 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>139 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>140 <span style=''>  }
+</span>141 <span style=''>
+</span>142 <span style=''>  private val magicString =
+</span>143 <span style=''>    </span><span style='background: #AEF1AE'>ByteVector.view(&quot;258EAFA5-E914-47DA-95CA-C5AB0DC85B11&quot;.getBytes(US_ASCII))</span><span style=''>
+</span>144 <span style=''>
+</span>145 <span style=''>  private val clientBaseHeaders = </span><span style='background: #AEF1AE'>List(
+</span>146 <span style=''></span><span style='background: #AEF1AE'>    (&quot;Connection&quot;, &quot;Upgrade&quot;),
+</span>147 <span style=''></span><span style='background: #AEF1AE'>    (&quot;Upgrade&quot;, &quot;websocket&quot;),
+</span>148 <span style=''></span><span style='background: #AEF1AE'>    (&quot;Sec-WebSocket-Version&quot;, &quot;13&quot;),
+</span>149 <span style=''></span><span style='background: #AEF1AE'>  )</span><span style=''>
+</span>150 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          22937
+        </td>
+        <td>
+          1101
+          -
+          1127
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketHandshake.ClientHandshaker.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          new WebSocketHandshake.this.ClientHandshaker(host)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          18937
+        </td>
+        <td>
+          1382
+          -
+          1401
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          new Array[Byte](16)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          15312
+        </td>
+        <td>
+          1408
+          -
+          1431
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Random.nextBytes
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.util.Random.nextBytes(bytes)
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          21622
+        </td>
+        <td>
+          1438
+          -
+          1477
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.Base64.Encoder.encodeToString
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          java.util.Base64.getEncoder().encodeToString(bytes)
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          17781
+        </td>
+        <td>
+          1601
+          -
+          1651
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.::
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: (String, String) = scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Key&quot;, ClientHandshaker.this.key);
+  WebSocketHandshake.this.clientBaseHeaders.::[(String, String)](rassoc$1)
+}.::[(String, String)](rassoc$2)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          14562
+        </td>
+        <td>
+          1829
+          -
+          1945
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.exists(((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Connection&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;Upgrade&quot;, v))
+})).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          22107
+        </td>
+        <td>
+          1908
+          -
+          1935
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketHandshake.valueContains
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHandshake.this.valueContains(&quot;Upgrade&quot;, v)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          15587
+        </td>
+        <td>
+          1891
+          -
+          1903
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Connection&quot;
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          18270
+        </td>
+        <td>
+          1872
+          -
+          1935
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          k.equalsIgnoreCase(&quot;Connection&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;Upgrade&quot;, v))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          22955
+        </td>
+        <td>
+          1962
+          -
+          1991
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[String, Nothing](&quot;Bad Connection header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          18817
+        </td>
+        <td>
+          1962
+          -
+          1991
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[String, Nothing](&quot;Bad Connection header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          22021
+        </td>
+        <td>
+          2003
+          -
+          2491
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          if (headers.exists(((x0$2: (String, String)) =&gt; x0$2 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+})).unary_!)
+  scala.`package`.Left.apply[String, Nothing](&quot;Bad Upgrade header&quot;)
+else
+  headers.find(((x0$3: (String, String)) =&gt; x0$3 match {
+  case (_1: String, _2: String): (String, String)((k @ _), _) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Accept&quot;)
+})).map[scala.util.Either[String,Unit]](((x0$4: (String, String)) =&gt; x0$4 match {
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) if WebSocketHandshake.this.genAcceptKey(ClientHandshaker.this.key).==(v) =&gt; scala.`package`.Right.apply[Nothing, Unit](())
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) =&gt; scala.`package`.Left.apply[String, Nothing]((&quot;Invalid key: &quot;.+(v): String))
+})).getOrElse[scala.util.Either[String,Unit]](scala.`package`.Left.apply[String, Nothing](&quot;Missing Sec-WebSocket-Accept header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          15611
+        </td>
+        <td>
+          2016
+          -
+          2133
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.exists(((x0$2: (String, String)) =&gt; x0$2 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+})).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          21490
+        </td>
+        <td>
+          2092
+          -
+          2123
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.equalsIgnoreCase
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          v.equalsIgnoreCase(&quot;websocket&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          15017
+        </td>
+        <td>
+          2078
+          -
+          2087
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Upgrade&quot;
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          17797
+        </td>
+        <td>
+          2059
+          -
+          2123
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          18663
+        </td>
+        <td>
+          2150
+          -
+          2176
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[String, Nothing](&quot;Bad Upgrade header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          22003
+        </td>
+        <td>
+          2150
+          -
+          2176
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[String, Nothing](&quot;Bad Upgrade header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          14424
+        </td>
+        <td>
+          2237
+          -
+          2279
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.equalsIgnoreCase
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          k.equalsIgnoreCase(&quot;Sec-WebSocket-Accept&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          18839
+        </td>
+        <td>
+          2352
+          -
+          2361
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, Unit](())
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          20719
+        </td>
+        <td>
+          2326
+          -
+          2348
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHandshake.this.genAcceptKey(ClientHandshaker.this.key).==(v)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          15284
+        </td>
+        <td>
+          2389
+          -
+          2413
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[String, Nothing]((&quot;Invalid key: &quot;.+(v): String))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          16110
+        </td>
+        <td>
+          2196
+          -
+          2491
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.find(((x0$3: (String, String)) =&gt; x0$3 match {
+  case (_1: String, _2: String): (String, String)((k @ _), _) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Accept&quot;)
+})).map[scala.util.Either[String,Unit]](((x0$4: (String, String)) =&gt; x0$4 match {
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) if WebSocketHandshake.this.genAcceptKey(ClientHandshaker.this.key).==(v) =&gt; scala.`package`.Right.apply[Nothing, Unit](())
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) =&gt; scala.`package`.Left.apply[String, Nothing]((&quot;Invalid key: &quot;.+(v): String))
+})).getOrElse[scala.util.Either[String,Unit]](scala.`package`.Left.apply[String, Nothing](&quot;Missing Sec-WebSocket-Accept header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          21862
+        </td>
+        <td>
+          2447
+          -
+          2490
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[String, Nothing](&quot;Missing Sec-WebSocket-Accept header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          17815
+        </td>
+        <td>
+          2196
+          -
+          2491
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.find(((x0$3: (String, String)) =&gt; x0$3 match {
+  case (_1: String, _2: String): (String, String)((k @ _), _) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Accept&quot;)
+})).map[scala.util.Either[String,Unit]](((x0$4: (String, String)) =&gt; x0$4 match {
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) if WebSocketHandshake.this.genAcceptKey(ClientHandshaker.this.key).==(v) =&gt; scala.`package`.Right.apply[Nothing, Unit](())
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) =&gt; scala.`package`.Left.apply[String, Nothing]((&quot;Invalid key: &quot;.+(v): String))
+})).getOrElse[scala.util.Either[String,Unit]](scala.`package`.Left.apply[String, Nothing](&quot;Missing Sec-WebSocket-Accept header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          14784
+        </td>
+        <td>
+          2736
+          -
+          2797
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.exists(((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), _) =&gt; k.equalsIgnoreCase(&quot;Host&quot;)
+})).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          18536
+        </td>
+        <td>
+          2769
+          -
+          2795
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.equalsIgnoreCase
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          k.equalsIgnoreCase(&quot;Host&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          19337
+        </td>
+        <td>
+          2805
+          -
+          2838
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Missing Host Header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          20740
+        </td>
+        <td>
+          2810
+          -
+          2837
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Tuple2.apply[Int, String](-1, &quot;Missing Host Header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          15303
+        </td>
+        <td>
+          2805
+          -
+          2838
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Missing Host Header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          17903
+        </td>
+        <td>
+          2848
+          -
+          3905
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          if (headers.exists(((x0$2: (String, String)) =&gt; x0$2 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Connection&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;Upgrade&quot;, v))
+})).unary_!)
+  scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Connection header&quot;))
+else
+  if (headers.exists(((x0$3: (String, String)) =&gt; x0$3 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+})).unary_!)
+    scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Upgrade header&quot;))
+  else
+    if (headers.exists(((x0$4: (String, String)) =&gt; x0$4 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Version&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;13&quot;, v))
+})).unary_!)
+      scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Websocket Version header&quot;))
+    else
+      headers.find(((x0$5: (String, String)) =&gt; x0$5 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Key&quot;).&amp;&amp;(WebSocketHandshake.this.decodeLen(v).==(16))
+})).map[scala.util.Right[Nothing,scala.collection.Seq[(String, String)]]](((x0$6: (String, String)) =&gt; x0$6 match {
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) =&gt; {
+    val respHeaders: scala.collection.Seq[(String, String)] = scala.collection.Seq.apply[(String, String)](scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;), scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;), scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Accept&quot;, WebSocketHandshake.this.genAcceptKey(v)));
+    scala.`package`.Right.apply[Nothing, scala.collection.Seq[(String, String)]](respHeaders)
+  }
+})).getOrElse[scala.util.Either[(Int, String),scala.collection.Seq[(String, String)]]](scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Sec-WebSocket-Key header&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          22543
+        </td>
+        <td>
+          2859
+          -
+          2971
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.exists(((x0$2: (String, String)) =&gt; x0$2 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Connection&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;Upgrade&quot;, v))
+})).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          21753
+        </td>
+        <td>
+          2919
+          -
+          2931
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Connection&quot;
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          17771
+        </td>
+        <td>
+          2936
+          -
+          2963
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketHandshake.valueContains
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHandshake.this.valueContains(&quot;Upgrade&quot;, v)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          13652
+        </td>
+        <td>
+          2900
+          -
+          2963
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          k.equalsIgnoreCase(&quot;Connection&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;Upgrade&quot;, v))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          18553
+        </td>
+        <td>
+          2989
+          -
+          3018
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Tuple2.apply[Int, String](-1, &quot;Bad Connection header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          20962
+        </td>
+        <td>
+          2984
+          -
+          3019
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Connection header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          14803
+        </td>
+        <td>
+          2984
+          -
+          3019
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Connection header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          21765
+        </td>
+        <td>
+          3029
+          -
+          3905
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          if (headers.exists(((x0$3: (String, String)) =&gt; x0$3 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+})).unary_!)
+  scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Upgrade header&quot;))
+else
+  if (headers.exists(((x0$4: (String, String)) =&gt; x0$4 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Version&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;13&quot;, v))
+})).unary_!)
+    scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Websocket Version header&quot;))
+  else
+    headers.find(((x0$5: (String, String)) =&gt; x0$5 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Key&quot;).&amp;&amp;(WebSocketHandshake.this.decodeLen(v).==(16))
+})).map[scala.util.Right[Nothing,scala.collection.Seq[(String, String)]]](((x0$6: (String, String)) =&gt; x0$6 match {
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) =&gt; {
+    val respHeaders: scala.collection.Seq[(String, String)] = scala.collection.Seq.apply[(String, String)](scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;), scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;), scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Accept&quot;, WebSocketHandshake.this.genAcceptKey(v)));
+    scala.`package`.Right.apply[Nothing, scala.collection.Seq[(String, String)]](respHeaders)
+  }
+})).getOrElse[scala.util.Either[(Int, String),scala.collection.Seq[(String, String)]]](scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Sec-WebSocket-Key header&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          17791
+        </td>
+        <td>
+          3040
+          -
+          3153
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.exists(((x0$3: (String, String)) =&gt; x0$3 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+})).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          21768
+        </td>
+        <td>
+          3081
+          -
+          3145
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          15168
+        </td>
+        <td>
+          3114
+          -
+          3145
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.equalsIgnoreCase
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          v.equalsIgnoreCase(&quot;websocket&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          18724
+        </td>
+        <td>
+          3100
+          -
+          3109
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Upgrade&quot;
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          22261
+        </td>
+        <td>
+          3166
+          -
+          3198
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Upgrade header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          18573
+        </td>
+        <td>
+          3166
+          -
+          3198
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Upgrade header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          13862
+        </td>
+        <td>
+          3171
+          -
+          3197
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Tuple2.apply[Int, String](-1, &quot;Bad Upgrade header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          15468
+        </td>
+        <td>
+          3208
+          -
+          3905
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          if (headers.exists(((x0$4: (String, String)) =&gt; x0$4 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Version&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;13&quot;, v))
+})).unary_!)
+  scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Websocket Version header&quot;))
+else
+  headers.find(((x0$5: (String, String)) =&gt; x0$5 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Key&quot;).&amp;&amp;(WebSocketHandshake.this.decodeLen(v).==(16))
+})).map[scala.util.Right[Nothing,scala.collection.Seq[(String, String)]]](((x0$6: (String, String)) =&gt; x0$6 match {
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) =&gt; {
+    val respHeaders: scala.collection.Seq[(String, String)] = scala.collection.Seq.apply[(String, String)](scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;), scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;), scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Accept&quot;, WebSocketHandshake.this.genAcceptKey(v)));
+    scala.`package`.Right.apply[Nothing, scala.collection.Seq[(String, String)]](respHeaders)
+  }
+})).getOrElse[scala.util.Either[(Int, String),scala.collection.Seq[(String, String)]]](scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Sec-WebSocket-Key header&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          15186
+        </td>
+        <td>
+          3219
+          -
+          3337
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.exists(((x0$4: (String, String)) =&gt; x0$4 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Version&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;13&quot;, v))
+})).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          14414
+        </td>
+        <td>
+          3279
+          -
+          3302
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Sec-WebSocket-Version&quot;
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          18954
+        </td>
+        <td>
+          3260
+          -
+          3329
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          k.equalsIgnoreCase(&quot;Sec-WebSocket-Version&quot;).&amp;&amp;(WebSocketHandshake.this.valueContains(&quot;13&quot;, v))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          20977
+        </td>
+        <td>
+          3307
+          -
+          3329
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketHandshake.valueContains
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHandshake.this.valueContains(&quot;13&quot;, v)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          21789
+        </td>
+        <td>
+          3355
+          -
+          3391
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Tuple2.apply[Int, String](-1, &quot;Bad Websocket Version header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          13878
+        </td>
+        <td>
+          3350
+          -
+          3392
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Websocket Version header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          17658
+        </td>
+        <td>
+          3350
+          -
+          3392
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Websocket Version header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          14432
+        </td>
+        <td>
+          3513
+          -
+          3574
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          k.equalsIgnoreCase(&quot;Sec-WebSocket-Key&quot;).&amp;&amp;(WebSocketHandshake.this.decodeLen(v).==(16))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          18439
+        </td>
+        <td>
+          3556
+          -
+          3574
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHandshake.this.decodeLen(v).==(16)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          22512
+        </td>
+        <td>
+          3532
+          -
+          3551
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Sec-WebSocket-Key&quot;
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          13776
+        </td>
+        <td>
+          3643
+          -
+          3802
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqFactory.Delegate.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.Seq.apply[(String, String)](scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;), scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;), scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Accept&quot;, WebSocketHandshake.this.genAcceptKey(v)))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          20869
+        </td>
+        <td>
+          3671
+          -
+          3695
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          16853
+        </td>
+        <td>
+          3709
+          -
+          3734
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          17680
+        </td>
+        <td>
+          3748
+          -
+          3789
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Accept&quot;, WebSocketHandshake.this.genAcceptKey(v))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          21749
+        </td>
+        <td>
+          3773
+          -
+          3788
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.websocket.WebSocketHandshake.genAcceptKey
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          WebSocketHandshake.this.genAcceptKey(v)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          14930
+        </td>
+        <td>
+          3749
+          -
+          3771
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Sec-WebSocket-Accept&quot;
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          22536
+        </td>
+        <td>
+          3814
+          -
+          3832
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, scala.collection.Seq[(String, String)]](respHeaders)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          17372
+        </td>
+        <td>
+          3464
+          -
+          3905
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.find(((x0$5: (String, String)) =&gt; x0$5 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Key&quot;).&amp;&amp;(WebSocketHandshake.this.decodeLen(v).==(16))
+})).map[scala.util.Right[Nothing,scala.collection.Seq[(String, String)]]](((x0$6: (String, String)) =&gt; x0$6 match {
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) =&gt; {
+    val respHeaders: scala.collection.Seq[(String, String)] = scala.collection.Seq.apply[(String, String)](scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;), scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;), scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Accept&quot;, WebSocketHandshake.this.genAcceptKey(v)));
+    scala.`package`.Right.apply[Nothing, scala.collection.Seq[(String, String)]](respHeaders)
+  }
+})).getOrElse[scala.util.Either[(Int, String),scala.collection.Seq[(String, String)]]](scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Sec-WebSocket-Key header&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          14682
+        </td>
+        <td>
+          3862
+          -
+          3904
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Sec-WebSocket-Key header&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          20887
+        </td>
+        <td>
+          3464
+          -
+          3905
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.find(((x0$5: (String, String)) =&gt; x0$5 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Sec-WebSocket-Key&quot;).&amp;&amp;(WebSocketHandshake.this.decodeLen(v).==(16))
+})).map[scala.util.Right[Nothing,scala.collection.Seq[(String, String)]]](((x0$6: (String, String)) =&gt; x0$6 match {
+  case (_1: String, _2: String): (String, String)(_, (v @ _)) =&gt; {
+    val respHeaders: scala.collection.Seq[(String, String)] = scala.collection.Seq.apply[(String, String)](scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;), scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;), scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Accept&quot;, WebSocketHandshake.this.genAcceptKey(v)));
+    scala.`package`.Right.apply[Nothing, scala.collection.Seq[(String, String)]](respHeaders)
+  }
+})).getOrElse[scala.util.Either[(Int, String),scala.collection.Seq[(String, String)]]](scala.`package`.Left.apply[(Int, String), Nothing](scala.Tuple2.apply[Int, String](-1, &quot;Bad Sec-WebSocket-Key header&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          18168
+        </td>
+        <td>
+          3867
+          -
+          3903
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Tuple2.apply[Int, String](-1, &quot;Bad Sec-WebSocket-Key header&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          14697
+        </td>
+        <td>
+          4053
+          -
+          4161
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.exists(((x0$1: (String, String)) =&gt; x0$1 match {
+  case (_1: String, _2: String): (String, String)((k @ _), (v @ _)) =&gt; k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          18412
+        </td>
+        <td>
+          4091
+          -
+          4155
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          k.equalsIgnoreCase(&quot;Upgrade&quot;).&amp;&amp;(v.equalsIgnoreCase(&quot;websocket&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          14159
+        </td>
+        <td>
+          4110
+          -
+          4119
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;Upgrade&quot;
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          21916
+        </td>
+        <td>
+          4124
+          -
+          4155
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.equalsIgnoreCase
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          v.equalsIgnoreCase(&quot;websocket&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          21086
+        </td>
+        <td>
+          4207
+          -
+          4243
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Array.length
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          java.util.Base64.getDecoder().decode(key).length
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          17391
+        </td>
+        <td>
+          4295
+          -
+          4478
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.SyncIO.fromEither[scodec.bits.ByteVector](scodec.bits.ByteVector.encodeAscii(str)).flatMap[String](((data: scodec.bits.ByteVector) =&gt; org.http4s.crypto.Hash.apply[cats.effect.SyncIO](crypto.this.Hash.forApplicativeThrow[[+A]cats.effect.SyncIO[A]](effect.this.SyncIO.syncForSyncIO)).digest(org.http4s.crypto.HashAlgorithm.SHA1, data.++(WebSocketHandshake.this.magicString)).map[String](((digest: scodec.bits.ByteVector) =&gt; digest.toBase64)))).unsafeRunSync()
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          17919
+        </td>
+        <td>
+          4576
+          -
+          4604
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.ArrayOps.map
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.refArrayOps[String](value.split(&quot;,&quot;)).map[String](((x$1: String) =&gt; x$1.trim()))((ClassTag.apply[String](classOf[java.lang.String]): scala.reflect.ClassTag[String]))
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          14842
+        </td>
+        <td>
+          4576
+          -
+          4592
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.split
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          value.split(&quot;,&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          21642
+        </td>
+        <td>
+          4597
+          -
+          4603
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.trim
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.trim()
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          17814
+        </td>
+        <td>
+          4609
+          -
+          4843
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.ArrayOps.foldLeft
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.refArrayOps[String](parts).foldLeft[Boolean](false)(((b: Boolean, s: String) =&gt; b.||(s.equalsIgnoreCase(key).||(s.length().&gt;(1).&amp;&amp;(s.startsWith(&quot;\&quot;&quot;)).&amp;&amp;(s.endsWith(&quot;\&quot;&quot;)).&amp;&amp;(s.substring(1, s.length().-(1)).equalsIgnoreCase(key))))))
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          13874
+        </td>
+        <td>
+          4624
+          -
+          4629
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          132
+        </td>
+        <td>
+          21660
+        </td>
+        <td>
+          4647
+          -
+          4837
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          b.||(s.equalsIgnoreCase(key).||(s.length().&gt;(1).&amp;&amp;(s.startsWith(&quot;\&quot;&quot;)).&amp;&amp;(s.endsWith(&quot;\&quot;&quot;)).&amp;&amp;(s.substring(1, s.length().-(1)).equalsIgnoreCase(key))))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          15349
+        </td>
+        <td>
+          4662
+          -
+          4829
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          s.equalsIgnoreCase(key).||(s.length().&gt;(1).&amp;&amp;(s.startsWith(&quot;\&quot;&quot;)).&amp;&amp;(s.endsWith(&quot;\&quot;&quot;)).&amp;&amp;(s.substring(1, s.length().-(1)).equalsIgnoreCase(key)))
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          20613
+        </td>
+        <td>
+          4708
+          -
+          4709
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          1
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          18433
+        </td>
+        <td>
+          4721
+          -
+          4739
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.startsWith
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          s.startsWith(&quot;\&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          14580
+        </td>
+        <td>
+          4751
+          -
+          4767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.endsWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          s.endsWith(&quot;\&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          17088
+        </td>
+        <td>
+          4697
+          -
+          4829
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          s.length().&gt;(1).&amp;&amp;(s.startsWith(&quot;\&quot;&quot;)).&amp;&amp;(s.endsWith(&quot;\&quot;&quot;)).&amp;&amp;(s.substring(1, s.length().-(1)).equalsIgnoreCase(key))
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          20861
+        </td>
+        <td>
+          4779
+          -
+          4829
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.equalsIgnoreCase
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          s.substring(1, s.length().-(1)).equalsIgnoreCase(key)
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          20306
+        </td>
+        <td>
+          4945
+          -
+          4953
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.US_ASCII
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.charset.StandardCharsets.US_ASCII
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          18299
+        </td>
+        <td>
+          4897
+          -
+          4954
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.getBytes
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;258EAFA5-E914-47DA-95CA-C5AB0DC85B11&quot;.getBytes(java.nio.charset.StandardCharsets.US_ASCII)
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          13765
+        </td>
+        <td>
+          4897
+          -
+          4935
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;258EAFA5-E914-47DA-95CA-C5AB0DC85B11&quot;
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          14598
+        </td>
+        <td>
+          4881
+          -
+          4955
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.view
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.view(&quot;258EAFA5-E914-47DA-95CA-C5AB0DC85B11&quot;.getBytes(java.nio.charset.StandardCharsets.US_ASCII))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          21526
+        </td>
+        <td>
+          4991
+          -
+          5098
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[(String, String)](scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;), scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;), scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Version&quot;, &quot;13&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          20881
+        </td>
+        <td>
+          5001
+          -
+          5026
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, String](&quot;Connection&quot;, &quot;Upgrade&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          16982
+        </td>
+        <td>
+          5032
+          -
+          5056
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, String](&quot;Upgrade&quot;, &quot;websocket&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          12959
+        </td>
+        <td>
+          5062
+          -
+          5093
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          org.http4s.websocket.websockethandshakespec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[String, String](&quot;Sec-WebSocket-Version&quot;, &quot;13&quot;)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

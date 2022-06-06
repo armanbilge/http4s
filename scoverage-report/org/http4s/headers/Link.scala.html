@@ -1,0 +1,2226 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/Link.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.headers
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data.NonEmptyList
+</span>20 <span style=''>import cats.parse.Parser
+</span>21 <span style=''>import cats.parse.Parser0
+</span>22 <span style=''>import org.http4s.Header
+</span>23 <span style=''>import org.http4s._
+</span>24 <span style=''>import org.http4s.internal.parsing.Rfc7230.headerRep1
+</span>25 <span style=''>import org.http4s.internal.parsing.Rfc7230.ows
+</span>26 <span style=''>import org.http4s.internal.parsing.Rfc7230.quotedString
+</span>27 <span style=''>import org.http4s.internal.parsing.Rfc7230.token
+</span>28 <span style=''>import org.typelevel.ci._
+</span>29 <span style=''>
+</span>30 <span style=''>import java.nio.charset.StandardCharsets
+</span>31 <span style=''>
+</span>32 <span style=''>object Link {
+</span>33 <span style=''>
+</span>34 <span style=''>  def apply(head: LinkValue, tail: LinkValue*): Link =
+</span>35 <span style=''>    </span><span style='background: #AEF1AE'>apply(NonEmptyList(head, tail.toList))</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  def parse(s: String): ParseResult[Link] =
+</span>38 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Link header&quot;)(s)</span><span style=''>
+</span>39 <span style=''>
+</span>40 <span style=''>  private[http4s] val parser: Parser[Link] = {
+</span>41 <span style=''>    import cats.parse.Parser._
+</span>42 <span style=''>
+</span>43 <span style=''>    sealed trait LinkParam
+</span>44 <span style=''>    final case class Rel(value: String) extends LinkParam
+</span>45 <span style=''>    final case class Rev(value: String) extends LinkParam
+</span>46 <span style=''>    final case class Title(value: String) extends LinkParam
+</span>47 <span style=''>    final case class Type(value: MediaRange) extends LinkParam
+</span>48 <span style=''>
+</span>49 <span style=''>    // https://datatracker.ietf.org/doc/html/rfc3986#section-4.1
+</span>50 <span style=''>    val linkValue: Parser0[LinkValue] =
+</span>51 <span style=''>      </span><span style='background: #AEF1AE'>Uri.Parser.uriReference(StandardCharsets.UTF_8).map { uri =&gt;
+</span>52 <span style=''></span><span style='background: #AEF1AE'>        headers.LinkValue(uri)
+</span>53 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>54 <span style=''>
+</span>55 <span style=''>    val linkParam: Parser0[LinkParam] = {
+</span>56 <span style=''>      val relParser = </span><span style='background: #AEF1AE'>(string(&quot;rel=&quot;) *&gt; token.orElse(quotedString))
+</span>57 <span style=''></span><span style='background: #AEF1AE'>        .map { rel =&gt;
+</span>58 <span style=''></span><span style='background: #AEF1AE'>          Rel(rel)
+</span>59 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>60 <span style=''>
+</span>61 <span style=''>      val revParser = </span><span style='background: #AEF1AE'>(string(&quot;rev=&quot;) *&gt; token.orElse(quotedString)).map { rev =&gt;
+</span>62 <span style=''></span><span style='background: #AEF1AE'>        Rev(rev)
+</span>63 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>64 <span style=''>
+</span>65 <span style=''>      val titleParser = </span><span style='background: #AEF1AE'>(string(&quot;title=&quot;) *&gt; token.orElse(quotedString)).map { title =&gt;
+</span>66 <span style=''></span><span style='background: #AEF1AE'>        Title(title)
+</span>67 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>      val typeParser = {
+</span>70 <span style=''>        val mediaRange = </span><span style='background: #AEF1AE'>string(&quot;type=&quot;) *&gt; MediaRange.parser.orElse(
+</span>71 <span style=''></span><span style='background: #AEF1AE'>          string(&quot;\&quot;&quot;) *&gt; MediaRange.parser &lt;* string(&quot;\&quot;&quot;)
+</span>72 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''>
+</span>73 <span style=''>        </span><span style='background: #AEF1AE'>mediaRange.map(tpe =&gt; Type(tpe))</span><span style=''>
+</span>74 <span style=''>      }
+</span>75 <span style=''>
+</span>76 <span style=''>      </span><span style='background: #AEF1AE'>relParser.orElse(revParser).orElse(titleParser).orElse(typeParser)</span><span style=''>
+</span>77 <span style=''>    }
+</span>78 <span style=''>
+</span>79 <span style=''>    val linkValueWithAttr: Parser[LinkValue] =
+</span>80 <span style=''>      </span><span style='background: #AEF1AE'>((char('&lt;') *&gt; linkValue &lt;* char('&gt;')) ~ (char(';') *&gt; ows *&gt; linkParam).rep0).map {
+</span>81 <span style=''></span><span style='background: #AEF1AE'>        case (linkValue, linkParams) =&gt;
+</span>82 <span style=''></span><span style='background: #AEF1AE'>          linkParams.foldLeft(linkValue) { case (lv, lp) =&gt;
+</span>83 <span style=''></span><span style='background: #AEF1AE'>            lp match {
+</span>84 <span style=''></span><span style='background: #AEF1AE'>              case Rel(rel) =&gt;
+</span>85 <span style=''></span><span style='background: #AEF1AE'>                if (lv.rel.isDefined) lv else lv.copy(rel = Some(rel))
+</span>86 <span style=''></span><span style='background: #AEF1AE'>              case Rev(rev) =&gt; lv.copy(rev = Some(rev))
+</span>87 <span style=''></span><span style='background: #AEF1AE'>              case Title(title) =&gt; lv.copy(title = Some(title))
+</span>88 <span style=''></span><span style='background: #AEF1AE'>              case Type(tpe) =&gt; lv.copy(`type` = Some(tpe))
+</span>89 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>90 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>91 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>92 <span style=''>
+</span>93 <span style=''>    </span><span style='background: #AEF1AE'>headerRep1(linkValueWithAttr).map(links =&gt; Link(links.head, links.tail: _*))</span><span style=''>
+</span>94 <span style=''>  }
+</span>95 <span style=''>
+</span>96 <span style=''>  implicit val headerInstance: Header[Link, Header.Recurring] =
+</span>97 <span style=''>    </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>98 <span style=''></span><span style='background: #AEF1AE'>      ci&quot;Link&quot;,
+</span>99 <span style=''></span><span style='background: #AEF1AE'>      _.values,
+</span>100 <span style=''></span><span style='background: #AEF1AE'>      </span><span style='background: #F0ADAD'>parse</span><span style='background: #AEF1AE'>,
+</span>101 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>102 <span style=''>
+</span>103 <span style=''>  implicit val headerSemigroupInstance: cats.Semigroup[Link] =
+</span>104 <span style=''>    (a, b) =&gt; </span><span style='background: #F0ADAD'>Link(a.values.concatNel(b.values))</span><span style=''>
+</span>105 <span style=''>}
+</span>106 <span style=''>
+</span>107 <span style=''>final case class Link(values: NonEmptyList[LinkValue])
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          15210
+        </td>
+        <td>
+          1098
+          -
+          1136
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Link.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Link.this.apply(cats.data.NonEmptyList.apply[org.http4s.headers.LinkValue](head, tail.toList))
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          20648
+        </td>
+        <td>
+          1123
+          -
+          1134
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          tail.toList
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          19125
+        </td>
+        <td>
+          1104
+          -
+          1135
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.apply[org.http4s.headers.LinkValue](head, tail.toList)
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          21523
+        </td>
+        <td>
+          1186
+          -
+          1242
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ParseResult.fromParser[org.http4s.headers.Link](Link.this.parser, &quot;Invalid Link header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          19014
+        </td>
+        <td>
+          1701
+          -
+          1800
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser0.map
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Parser.uriReference(java.nio.charset.StandardCharsets.UTF_8).map[org.http4s.headers.LinkValue](((uri: org.http4s.Uri) =&gt; org.http4s.headers.LinkValue.apply(uri, org.http4s.headers.LinkValue.apply$default$2, org.http4s.headers.LinkValue.apply$default$3, org.http4s.headers.LinkValue.apply$default$4, org.http4s.headers.LinkValue.apply$default$5)))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          17976
+        </td>
+        <td>
+          1725
+          -
+          1747
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          18191
+        </td>
+        <td>
+          1778
+          -
+          1778
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.apply$default$4
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.LinkValue.apply$default$4
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          15813
+        </td>
+        <td>
+          1778
+          -
+          1778
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.apply$default$2
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.LinkValue.apply$default$2
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          20663
+        </td>
+        <td>
+          1770
+          -
+          1792
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.LinkValue.apply(uri, org.http4s.headers.LinkValue.apply$default$2, org.http4s.headers.LinkValue.apply$default$3, org.http4s.headers.LinkValue.apply$default$4, org.http4s.headers.LinkValue.apply$default$5)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          14460
+        </td>
+        <td>
+          1778
+          -
+          1778
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.apply$default$5
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.LinkValue.apply$default$5
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          22298
+        </td>
+        <td>
+          1778
+          -
+          1778
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.apply$default$3
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.LinkValue.apply$default$3
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          15228
+        </td>
+        <td>
+          1874
+          -
+          1880
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;rel=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          17707
+        </td>
+        <td>
+          1885
+          -
+          1911
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          21396
+        </td>
+        <td>
+          1898
+          -
+          1910
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          22185
+        </td>
+        <td>
+          1866
+          -
+          1963
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;rel=&quot;).*&gt;[String](org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)).map[Rel](((rel: String) =&gt; Rel.apply(rel)))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          15828
+        </td>
+        <td>
+          1945
+          -
+          1953
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Link.Rel.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rel.apply(rel)
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          18203
+        </td>
+        <td>
+          1995
+          -
+          2001
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;rev=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          14870
+        </td>
+        <td>
+          1987
+          -
+          2071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;rev=&quot;).*&gt;[String](org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)).map[Rev](((rev: String) =&gt; Rev.apply(rev)))
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          21261
+        </td>
+        <td>
+          2006
+          -
+          2032
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          14481
+        </td>
+        <td>
+          2019
+          -
+          2031
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          19034
+        </td>
+        <td>
+          2055
+          -
+          2063
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Link.Rev.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rev.apply(rev)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          21411
+        </td>
+        <td>
+          2105
+          -
+          2113
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;title=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          18109
+        </td>
+        <td>
+          2097
+          -
+          2189
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;title=&quot;).*&gt;[String](org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)).map[Title](((title: String) =&gt; Title.apply(title)))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          17726
+        </td>
+        <td>
+          2131
+          -
+          2143
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          14185
+        </td>
+        <td>
+          2118
+          -
+          2144
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          22205
+        </td>
+        <td>
+          2169
+          -
+          2181
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Link.Title.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Title.apply(title)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          13552
+        </td>
+        <td>
+          2241
+          -
+          2355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;type=&quot;).*&gt;[org.http4s.MediaRange](org.http4s.MediaRange.parser.orElse[org.http4s.MediaRange](cats.parse.Parser.string(&quot;\&quot;&quot;).*&gt;[org.http4s.MediaRange](org.http4s.MediaRange.parser).&lt;*[Unit](cats.parse.Parser.string(&quot;\&quot;&quot;))))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          17969
+        </td>
+        <td>
+          2260
+          -
+          2355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.MediaRange.parser.orElse[org.http4s.MediaRange](cats.parse.Parser.string(&quot;\&quot;&quot;).*&gt;[org.http4s.MediaRange](org.http4s.MediaRange.parser).&lt;*[Unit](cats.parse.Parser.string(&quot;\&quot;&quot;)))
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          14343
+        </td>
+        <td>
+          2248
+          -
+          2255
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;type=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          20638
+        </td>
+        <td>
+          2303
+          -
+          2307
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;\&quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          21427
+        </td>
+        <td>
+          2296
+          -
+          2345
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;\&quot;&quot;).*&gt;[org.http4s.MediaRange](org.http4s.MediaRange.parser).&lt;*[Unit](cats.parse.Parser.string(&quot;\&quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          14886
+        </td>
+        <td>
+          2333
+          -
+          2345
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;\&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          19245
+        </td>
+        <td>
+          2312
+          -
+          2329
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.MediaRange.parser
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.MediaRange.parser
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          22163
+        </td>
+        <td>
+          2386
+          -
+          2395
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Link.Type.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Type.apply(tpe)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          18124
+        </td>
+        <td>
+          2364
+          -
+          2396
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          mediaRange.map[Type](((tpe: org.http4s.MediaRange) =&gt; Type.apply(tpe)))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          14360
+        </td>
+        <td>
+          2412
+          -
+          2478
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          relParser.orElse[Product with LinkParam with java.io.Serializable](revParser).orElse[Product with LinkParam with java.io.Serializable](titleParser).orElse[Product with LinkParam with java.io.Serializable](typeParser)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          20281
+        </td>
+        <td>
+          2539
+          -
+          3062
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('&lt;').*&gt;[org.http4s.headers.LinkValue](linkValue).&lt;*[Unit](cats.parse.Parser.char('&gt;')).~[List[LinkParam]](cats.parse.Parser.char(';').*&gt;[Unit](org.http4s.internal.parsing.Rfc7230.ows).*&gt;[LinkParam](linkParam).rep0).map[org.http4s.headers.LinkValue](((x0$1: (org.http4s.headers.LinkValue, List[LinkParam])) =&gt; x0$1 match {
+  case (_1: org.http4s.headers.LinkValue, _2: List[LinkParam]): (org.http4s.headers.LinkValue, List[LinkParam])((linkValue @ _), (linkParams @ _)) =&gt; linkParams.foldLeft[org.http4s.headers.LinkValue](linkValue)(((x0$2: org.http4s.headers.LinkValue, x1$1: LinkParam) =&gt; scala.Tuple2.apply[org.http4s.headers.LinkValue, LinkParam](x0$2, x1$1) match {
+    case (_1: org.http4s.headers.LinkValue, _2: LinkParam): (org.http4s.headers.LinkValue, LinkParam)((lv @ _), (lp @ _)) =&gt; lp match {
+      case (value: String): Rel((rel @ _)) =&gt; if (lv.rel.isDefined)
+        lv
+      else
+        {
+          &lt;artifact&gt; val x$1: Some[String] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[String](rel);
+          &lt;artifact&gt; val x$2: org.http4s.Uri = lv.copy$default$1;
+          &lt;artifact&gt; val x$3: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$3;
+          &lt;artifact&gt; val x$4: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$4;
+          &lt;artifact&gt; val x$5: Option[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$5;
+          lv.copy(x$2, x$1, x$3, x$4, x$5)
+        }
+      case (value: String): Rev((rev @ _)) =&gt; {
+        &lt;artifact&gt; val x$6: Some[String] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[String](rev);
+        &lt;artifact&gt; val x$7: org.http4s.Uri = lv.copy$default$1;
+        &lt;artifact&gt; val x$8: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$2;
+        &lt;artifact&gt; val x$9: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$4;
+        &lt;artifact&gt; val x$10: Option[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$5;
+        lv.copy(x$7, x$8, x$6, x$9, x$10)
+      }
+      case (value: String): Title((title @ _)) =&gt; {
+        &lt;artifact&gt; val x$11: Some[String] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[String](title);
+        &lt;artifact&gt; val x$12: org.http4s.Uri = lv.copy$default$1;
+        &lt;artifact&gt; val x$13: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$2;
+        &lt;artifact&gt; val x$14: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$3;
+        &lt;artifact&gt; val x$15: Option[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$5;
+        lv.copy(x$12, x$13, x$14, x$11, x$15)
+      }
+      case (value: org.http4s.MediaRange): Type((tpe @ _)) =&gt; {
+        &lt;artifact&gt; val x$16: Some[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[org.http4s.MediaRange](tpe);
+        &lt;artifact&gt; val x$17: org.http4s.Uri = lv.copy$default$1;
+        &lt;artifact&gt; val x$18: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$2;
+        &lt;artifact&gt; val x$19: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$3;
+        &lt;artifact&gt; val x$20: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$4;
+        lv.copy(x$17, x$18, x$19, x$20, x$16)
+      }
+    }
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          15077
+        </td>
+        <td>
+          2586
+          -
+          2589
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ';'
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          16787
+        </td>
+        <td>
+          2567
+          -
+          2576
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('&gt;')
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          21150
+        </td>
+        <td>
+          2546
+          -
+          2549
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          '&lt;'
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          17983
+        </td>
+        <td>
+          2580
+          -
+          2616
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep0
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(';').*&gt;[Unit](org.http4s.internal.parsing.Rfc7230.ows).*&gt;[LinkParam](linkParam).rep0
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          21321
+        </td>
+        <td>
+          2594
+          -
+          2597
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          14063
+        </td>
+        <td>
+          2674
+          -
+          3054
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          linkParams.foldLeft[org.http4s.headers.LinkValue](linkValue)(((x0$2: org.http4s.headers.LinkValue, x1$1: LinkParam) =&gt; scala.Tuple2.apply[org.http4s.headers.LinkValue, LinkParam](x0$2, x1$1) match {
+  case (_1: org.http4s.headers.LinkValue, _2: LinkParam): (org.http4s.headers.LinkValue, LinkParam)((lv @ _), (lp @ _)) =&gt; lp match {
+    case (value: String): Rel((rel @ _)) =&gt; if (lv.rel.isDefined)
+      lv
+    else
+      {
+        &lt;artifact&gt; val x$1: Some[String] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[String](rel);
+        &lt;artifact&gt; val x$2: org.http4s.Uri = lv.copy$default$1;
+        &lt;artifact&gt; val x$3: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$3;
+        &lt;artifact&gt; val x$4: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$4;
+        &lt;artifact&gt; val x$5: Option[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$5;
+        lv.copy(x$2, x$1, x$3, x$4, x$5)
+      }
+    case (value: String): Rev((rev @ _)) =&gt; {
+      &lt;artifact&gt; val x$6: Some[String] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[String](rev);
+      &lt;artifact&gt; val x$7: org.http4s.Uri = lv.copy$default$1;
+      &lt;artifact&gt; val x$8: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$2;
+      &lt;artifact&gt; val x$9: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$4;
+      &lt;artifact&gt; val x$10: Option[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$5;
+      lv.copy(x$7, x$8, x$6, x$9, x$10)
+    }
+    case (value: String): Title((title @ _)) =&gt; {
+      &lt;artifact&gt; val x$11: Some[String] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[String](title);
+      &lt;artifact&gt; val x$12: org.http4s.Uri = lv.copy$default$1;
+      &lt;artifact&gt; val x$13: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$2;
+      &lt;artifact&gt; val x$14: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$3;
+      &lt;artifact&gt; val x$15: Option[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$5;
+      lv.copy(x$12, x$13, x$14, x$11, x$15)
+    }
+    case (value: org.http4s.MediaRange): Type((tpe @ _)) =&gt; {
+      &lt;artifact&gt; val x$16: Some[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[org.http4s.MediaRange](tpe);
+      &lt;artifact&gt; val x$17: org.http4s.Uri = lv.copy$default$1;
+      &lt;artifact&gt; val x$18: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$2;
+      &lt;artifact&gt; val x$19: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$3;
+      &lt;artifact&gt; val x$20: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$4;
+      lv.copy(x$17, x$18, x$19, x$20, x$16)
+    }
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          22181
+        </td>
+        <td>
+          2816
+          -
+          2818
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.headers.Link.lv
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          17883
+        </td>
+        <td>
+          2824
+          -
+          2848
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  &lt;artifact&gt; val x$1: Some[String] @scala.reflect.internal.annotations.uncheckedBounds = scala.Some.apply[String](rel);
+  &lt;artifact&gt; val x$2: org.http4s.Uri = lv.copy$default$1;
+  &lt;artifact&gt; val x$3: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$3;
+  &lt;artifact&gt; val x$4: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$4;
+  &lt;artifact&gt; val x$5: Option[org.http4s.MediaRange] @scala.reflect.internal.annotations.uncheckedBounds = lv.copy$default$5;
+  lv.copy(x$2, x$1, x$3, x$4, x$5)
+}
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          14072
+        </td>
+        <td>
+          2798
+          -
+          2814
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.isDefined
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.rel.isDefined
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          17026
+        </td>
+        <td>
+          2827
+          -
+          2827
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$4
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          21171
+        </td>
+        <td>
+          2827
+          -
+          2827
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$3
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          15097
+        </td>
+        <td>
+          2827
+          -
+          2827
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$5
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          18482
+        </td>
+        <td>
+          2838
+          -
+          2847
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[String](rel)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          14654
+        </td>
+        <td>
+          2827
+          -
+          2827
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$1
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          21706
+        </td>
+        <td>
+          2824
+          -
+          2848
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy(x$2, x$1, x$3, x$4, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          14336
+        </td>
+        <td>
+          2883
+          -
+          2883
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$4
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          22198
+        </td>
+        <td>
+          2883
+          -
+          2883
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$1
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          14090
+        </td>
+        <td>
+          2894
+          -
+          2903
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[String](rev)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          21064
+        </td>
+        <td>
+          2883
+          -
+          2883
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$5
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          18342
+        </td>
+        <td>
+          2883
+          -
+          2883
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$2
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          17046
+        </td>
+        <td>
+          2880
+          -
+          2904
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy(x$7, x$8, x$6, x$9, x$10)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          17587
+        </td>
+        <td>
+          2943
+          -
+          2943
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$2
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          18361
+        </td>
+        <td>
+          2940
+          -
+          2968
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy(x$12, x$13, x$14, x$11, x$15)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          20262
+        </td>
+        <td>
+          2943
+          -
+          2943
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$5
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          15115
+        </td>
+        <td>
+          2956
+          -
+          2967
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[String](title)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          13960
+        </td>
+        <td>
+          2943
+          -
+          2943
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$3
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          21299
+        </td>
+        <td>
+          2943
+          -
+          2943
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$1
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          17453
+        </td>
+        <td>
+          3001
+          -
+          3028
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy(x$17, x$18, x$19, x$20, x$16)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          15000
+        </td>
+        <td>
+          3004
+          -
+          3004
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$3
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          14216
+        </td>
+        <td>
+          3018
+          -
+          3027
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.MediaRange](tpe)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          17062
+        </td>
+        <td>
+          3004
+          -
+          3004
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$2
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          20800
+        </td>
+        <td>
+          3004
+          -
+          3004
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$1
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          21314
+        </td>
+        <td>
+          3004
+          -
+          3004
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.LinkValue.copy$default$4
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          lv.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          18654
+        </td>
+        <td>
+          3116
+          -
+          3126
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyList.head
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          links.head
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          14231
+        </td>
+        <td>
+          3128
+          -
+          3138
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyList.tail
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          links.tail
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          17293
+        </td>
+        <td>
+          3068
+          -
+          3144
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.headerRep1[org.http4s.headers.LinkValue](linkValueWithAttr).map[org.http4s.headers.Link](((links: cats.data.NonEmptyList[org.http4s.headers.LinkValue]) =&gt; Link.apply(links.head, (links.tail: _*))))
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          20662
+        </td>
+        <td>
+          3111
+          -
+          3143
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Link.apply
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Link.apply(links.head, (links.tail: _*))
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          14082
+        </td>
+        <td>
+          3239
+          -
+          3239
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.headers.LinkValue]
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          20524
+        </td>
+        <td>
+          3239
+          -
+          3239
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Renderer.nelRenderer
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderer.nelRenderer[org.http4s.headers.LinkValue](util.this.Renderable.renderableInst[org.http4s.headers.LinkValue])
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          18666
+        </td>
+        <td>
+          3218
+          -
+          3291
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Header.createRendered[org.http4s.headers.Link, org.http4s.Header.Recurring, cats.data.NonEmptyList[org.http4s.headers.LinkValue]](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Link&quot;)).ci(), ((x$1: org.http4s.headers.Link) =&gt; x$1.values), ((s: String) =&gt; Link.this.parse(s)))(util.this.Renderer.nelRenderer[org.http4s.headers.LinkValue](util.this.Renderable.renderableInst[org.http4s.headers.LinkValue]))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          15019
+        </td>
+        <td>
+          3247
+          -
+          3255
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Link&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          21853
+        </td>
+        <td>
+          3263
+          -
+          3271
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Link.values
+        </td>
+        <td>
+          org.http4s.headers.linksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.values
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          17469
+        </td>
+        <td>
+          3279
+          -
+          3284
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Link.parse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Link.this.parse(s)
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          14776
+        </td>
+        <td>
+          3394
+          -
+          3402
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Link.values
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          b.values
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          21055
+        </td>
+        <td>
+          3375
+          -
+          3403
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.concatNel
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          a.values.concatNel[org.http4s.headers.LinkValue](b.values)
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          17313
+        </td>
+        <td>
+          3370
+          -
+          3404
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Link.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Link.apply(a.values.concatNel[org.http4s.headers.LinkValue](b.values))
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

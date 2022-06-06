@@ -1,0 +1,1078 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/BracketRequestResponse.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server.middleware
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Applicative
+</span>20 <span style=''>import cats.data._
+</span>21 <span style=''>import cats.effect._
+</span>22 <span style=''>import cats.effect.kernel.Resource.ExitCase
+</span>23 <span style=''>import cats.effect.syntax.all._
+</span>24 <span style=''>import cats.implicits._
+</span>25 <span style=''>import org.http4s._
+</span>26 <span style=''>import org.http4s.server._
+</span>27 <span style=''>
+</span>28 <span style=''>/** Middelwares which allow for bracketing on a Request/Response, including
+</span>29 <span style=''>  * the completion of the Response body stream.
+</span>30 <span style=''>  *
+</span>31 <span style=''>  * These are analogous to `cats.effect.Bracket` and `fs2.Stream.bracket`. The
+</span>32 <span style=''>  * reason that they exist is because due to the full termination of a
+</span>33 <span style=''>  * Response being a function of the termination of the `fs2.Stream` which
+</span>34 <span style=''>  * backs the response body, you can't actually use either
+</span>35 <span style=''>  * `cats.effect.Bracket` or `fs2.Stream.bracket` directly.
+</span>36 <span style=''>  *
+</span>37 <span style=''>  * @define releaseWarning The bracketing semantics defined here differ in one
+</span>38 <span style=''>  *         very important way from cats-effect or fs2 bracketing
+</span>39 <span style=''>  *         semantics. If the [[Response]] body is not evaluated after the
+</span>40 <span style=''>  *         application of the middleware, then the `release` handler ''will
+</span>41 <span style=''>  *         not run, effectively creating a resource leak.'' This can happen
+</span>42 <span style=''>  *         due to a bug in a server implementation, where it fails to drain
+</span>43 <span style=''>  *         the body, or due to a user code if the [[Response]] body stream
+</span>44 <span style=''>  *         (or the [[Response]] itself) is discarded after the application of
+</span>45 <span style=''>  *         this middleware. Unfortunately, there is currently no way to avoid
+</span>46 <span style=''>  *         this. For this reason, it is strongly recommended that this
+</span>47 <span style=''>  *         middleware be applied at the most outer scope possible. Appending
+</span>48 <span style=''>  *         to or transforming the [[Response]] body ''is safe'' to do after
+</span>49 <span style=''>  *         the application of this middleware.
+</span>50 <span style=''>  */
+</span>51 <span style=''>object BracketRequestResponse {
+</span>52 <span style=''>
+</span>53 <span style=''>  /** A Middleware which uses both a [[ContextRequest]] and [[ContextResponse]]. */
+</span>54 <span style=''>  type FullContextMiddleware[F[_], A, B] =
+</span>55 <span style=''>    Kleisli[OptionT[F, *], ContextRequest[F, A], ContextResponse[F, B]] =&gt; Kleisli[
+</span>56 <span style=''>      OptionT[F, *],
+</span>57 <span style=''>      Request[F],
+</span>58 <span style=''>      Response[F],
+</span>59 <span style=''>    ]
+</span>60 <span style=''>
+</span>61 <span style=''>  /** Bracket on the start of a request and the completion of processing the
+</span>62 <span style=''>    * response ''body Stream''.
+</span>63 <span style=''>    *
+</span>64 <span style=''>    * This middleware uses a context on both the Request and Response. This is
+</span>65 <span style=''>    * the most general possible encoding for bracketing on a Request/Response
+</span>66 <span style=''>    * interaction. It is required to express certain types of bracketing use
+</span>67 <span style=''>    * cases (see Metrics), but for most cases it is more general than is
+</span>68 <span style=''>    * needed. Before attempting to use this middleware, you should consider if
+</span>69 <span style=''>    * [[bracketRequestResponseRoutes]] or
+</span>70 <span style=''>    * [[bracketRequestResponseCaseRoutes]] will work for your use case.
+</span>71 <span style=''>    *
+</span>72 <span style=''>    * @note $releaseWarning
+</span>73 <span style=''>    *
+</span>74 <span style=''>    * @note For some use cases, you might want to differentiate between each
+</span>75 <span style=''>    *       of the three exit branches where `release` may be invoked. The
+</span>76 <span style=''>    *       three exit branches are, running a [[Request]] and receiving
+</span>77 <span style=''>    *       `OptionT.none[F, Response[F]]`, running a [[Request]] and
+</span>78 <span style=''>    *       encountering an error or cancellation before the [[Response]] is
+</span>79 <span style=''>    *       generated, or at the full consumption of the [[Response]] body
+</span>80 <span style=''>    *       stream (regardless of the `ExitCase`). One may determine the in
+</span>81 <span style=''>    *       which branch `release` is being invoked by inspecting the
+</span>82 <span style=''>    *       `ExitCase` and the `Option[B]` response context. If the response
+</span>83 <span style=''>    *       context is defined, e.g. `Some(_: B)`, then you can be certain
+</span>84 <span style=''>    *       that the `release` function was executed at the termination of the
+</span>85 <span style=''>    *       body stream. This is because the response context is only (and
+</span>86 <span style=''>    *       always) present if the [[Response]] value was generated
+</span>87 <span style=''>    *       successfully (whether or not the body stream fails). If the
+</span>88 <span style=''>    *       `ExitCase` is `Completed` and the response context is `None`, then
+</span>89 <span style=''>    *       that means that the underlying [[HttpRoutes]] did not yield a
+</span>90 <span style=''>    *       [[Response]], e.g. we got `OptionT.none: OptionT[F, Response[F]]`.
+</span>91 <span style=''>    *       Otherwise, if the `ExitCase` is either `Error(_: Throwable)` or
+</span>92 <span style=''>    *       `Canceled`, and the response context is `None`, then `release` is
+</span>93 <span style=''>    *       executed in response to an error or cancellation during the
+</span>94 <span style=''>    *       generation of the [[Response]] value proper, e.g. when running the
+</span>95 <span style=''>    *       underlying `HttpRoutes`.
+</span>96 <span style=''>    *
+</span>97 <span style=''>    * @note A careful reader might be wondering where the analogous `use`
+</span>98 <span style=''>    *       parameter from `cats.effect.Bracket` has gone. The use of the
+</span>99 <span style=''>    *       acquired resource is running the request, thus the `use` function
+</span>100 <span style=''>    *       is actually just the normal context route function from http4s
+</span>101 <span style=''>    *       `Kleisli[OptionT[F, *], ContextRequest[F, A], Response[F]]`.
+</span>102 <span style=''>    *
+</span>103 <span style=''>    * @param acquire Function of the [[Request]] to a `F[ContextRequest]` to
+</span>104 <span style=''>    *        run each time a new [[Request]] is received.
+</span>105 <span style=''>    *
+</span>106 <span style=''>    * @param release Function to run on the termination of a Request/Response
+</span>107 <span style=''>    *        interaction, in all cases. The first argument is the request
+</span>108 <span style=''>    *        context, which is guaranteed to exist if acquire succeeds. The
+</span>109 <span style=''>    *        second argument is the response context, which will only exist if
+</span>110 <span style=''>    *        the generation of the `ContextResponse` is successful. The third
+</span>111 <span style=''>    *        argument is the exit condition, either completed, canceled, or
+</span>112 <span style=''>    *        error.
+</span>113 <span style=''>    */
+</span>114 <span style=''>  def bracketRequestResponseCaseRoutes_[F[_], A, B](
+</span>115 <span style=''>      acquire: Request[F] =&gt; F[ContextRequest[F, A]]
+</span>116 <span style=''>  )(release: (A, Option[B], Outcome[F, Throwable, Unit]) =&gt; F[Unit])(
+</span>117 <span style=''>      implicit // TODO: Maybe we can merge A and Outcome
+</span>118 <span style=''>      F: MonadCancelThrow[F]
+</span>119 <span style=''>  ): FullContextMiddleware[F, A, B] =
+</span>120 <span style=''>    // format: off
+</span>121 <span style=''>    (bracketRoutes: Kleisli[OptionT[F, *], ContextRequest[F, A], ContextResponse[F, B]]) =&gt;
+</span>122 <span style=''>      </span><span style='background: #AEF1AE'>Kleisli((request: Request[F]) =&gt;
+</span>123 <span style=''></span><span style='background: #AEF1AE'>        OptionT(
+</span>124 <span style=''></span><span style='background: #AEF1AE'>          acquire(request).flatMap(contextRequest =&gt;
+</span>125 <span style=''></span><span style='background: #AEF1AE'>            bracketRoutes(contextRequest)
+</span>126 <span style=''></span><span style='background: #AEF1AE'>              .foldF(release(contextRequest.context, None, Outcome.succeeded(F.unit)) *&gt; F.pure(
+</span>127 <span style=''></span><span style='background: #AEF1AE'>                None: Option[Response[F]]))(contextResponse =&gt;
+</span>128 <span style=''></span><span style='background: #AEF1AE'>                F.pure(Some(contextResponse.response.pipeBodyThrough(
+</span>129 <span style=''></span><span style='background: #AEF1AE'>                  _.onFinalizeCaseWeak(ec =&gt;
+</span>130 <span style=''></span><span style='background: #AEF1AE'>                    release(contextRequest.context, Some(contextResponse.context), ec.toOutcome))))))
+</span>131 <span style=''></span><span style='background: #AEF1AE'>              .guaranteeCase {
+</span>132 <span style=''></span><span style='background: #AEF1AE'>                  case Outcome.Succeeded(_) =&gt;
+</span>133 <span style=''></span><span style='background: #AEF1AE'>                    F.unit
+</span>134 <span style=''></span><span style='background: #AEF1AE'>                  case otherwise =&gt;
+</span>135 <span style=''></span><span style='background: #AEF1AE'>                    release(contextRequest.context, None, otherwise.void)
+</span>136 <span style=''></span><span style='background: #AEF1AE'>
+</span>137 <span style=''></span><span style='background: #AEF1AE'>              })
+</span>138 <span style=''></span><span style='background: #AEF1AE'>        ))</span><span style=''>
+</span>139 <span style=''>    // format: on
+</span>140 <span style=''>
+</span>141 <span style=''>  /** Bracket on the start of a request and the completion of processing the
+</span>142 <span style=''>    * response ''body Stream''.
+</span>143 <span style=''>    *
+</span>144 <span style=''>    * @note $releaseWarning
+</span>145 <span style=''>    *
+</span>146 <span style=''>    * @note A careful reader might be wondering where the analogous `use`
+</span>147 <span style=''>    *       parameter from `cats.effect.Bracket` has gone. The use of the
+</span>148 <span style=''>    *       acquired resource is running the request, thus the `use` function
+</span>149 <span style=''>    *       is actually just the normal context route function from http4s
+</span>150 <span style=''>    *       `Kleisli[OptionT[F, *], ContextRequest[F, A], Response[F]]`.
+</span>151 <span style=''>    *
+</span>152 <span style=''>    * @param acquire Effect to run each time a request is received. The result
+</span>153 <span style=''>    *        of it is put into a `ContextRequest` and passed to the underlying
+</span>154 <span style=''>    *        routes.
+</span>155 <span style=''>    *
+</span>156 <span style=''>    * @param release Effect to run at the termination of each response body,
+</span>157 <span style=''>    *        or on any error after `acquire` has run. Will always be called
+</span>158 <span style=''>    *        exactly once if `acquire` is invoked, for each request/response.
+</span>159 <span style=''>    */
+</span>160 <span style=''>  def bracketRequestResponseCaseRoutes[F[_], A](
+</span>161 <span style=''>      acquire: F[A]
+</span>162 <span style=''>  )(
+</span>163 <span style=''>      release: (A, Outcome[F, Throwable, Unit]) =&gt; F[Unit]
+</span>164 <span style=''>  )(implicit F: MonadCancelThrow[F]): ContextMiddleware[F, A] =
+</span>165 <span style=''>    contextRoutes =&gt;
+</span>166 <span style=''>      </span><span style='background: #AEF1AE'>bracketRequestResponseCaseRoutes_[F, A, Unit](req =&gt;
+</span>167 <span style=''></span><span style='background: #AEF1AE'>        acquire.map(a =&gt; ContextRequest(a, req))
+</span>168 <span style=''></span><span style='background: #AEF1AE'>      ) { case (a, _, oc) =&gt; release(a, oc) }(F)(
+</span>169 <span style=''></span><span style='background: #AEF1AE'>        contextRoutes.map(resp =&gt; ContextResponse[F, Unit]((), resp))
+</span>170 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>171 <span style=''>
+</span>172 <span style=''>  /** As [[bracketRequestResponseCaseRoutes]] but defined for [[HttpApp]],
+</span>173 <span style=''>    * rather than [[HttpRoutes]].
+</span>174 <span style=''>    *
+</span>175 <span style=''>    * @note $releaseWarning
+</span>176 <span style=''>    */
+</span>177 <span style=''>  def bracketRequestResponseCaseApp[F[_], A](
+</span>178 <span style=''>      acquire: F[A]
+</span>179 <span style=''>  )(release: (A, Outcome[F, Throwable, Unit]) =&gt; F[Unit])(implicit
+</span>180 <span style=''>      F: MonadCancelThrow[F]
+</span>181 <span style=''>  ): Kleisli[F, ContextRequest[F, A], Response[F]] =&gt; Kleisli[F, Request[F], Response[F]] =
+</span>182 <span style=''>    (contextService: Kleisli[F, ContextRequest[F, A], Response[F]]) =&gt;
+</span>183 <span style=''>      </span><span style='background: #AEF1AE'>Kleisli((request: Request[F]) =&gt;
+</span>184 <span style=''></span><span style='background: #AEF1AE'>        acquire.flatMap((a: A) =&gt;
+</span>185 <span style=''></span><span style='background: #AEF1AE'>          contextService
+</span>186 <span style=''></span><span style='background: #AEF1AE'>            .run(ContextRequest(a, request))
+</span>187 <span style=''></span><span style='background: #AEF1AE'>            .map(_.pipeBodyThrough(_.onFinalizeCaseWeak(ec =&gt; release(a, ec.toOutcome))))
+</span>188 <span style=''></span><span style='background: #AEF1AE'>            .guaranteeCase {
+</span>189 <span style=''></span><span style='background: #AEF1AE'>              case Outcome.Succeeded(_) =&gt;
+</span>190 <span style=''></span><span style='background: #AEF1AE'>                F.unit
+</span>191 <span style=''></span><span style='background: #AEF1AE'>              case otherwise =&gt;
+</span>192 <span style=''></span><span style='background: #AEF1AE'>                release(a, otherwise.void)
+</span>193 <span style=''></span><span style='background: #AEF1AE'>
+</span>194 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>195 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>196 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>197 <span style=''>
+</span>198 <span style=''>  /** As [[bracketRequestResponseCaseRoutes]], but `release` is simplified, ignoring
+</span>199 <span style=''>    * the exit condition.
+</span>200 <span style=''>    *
+</span>201 <span style=''>    * @note $releaseWarning
+</span>202 <span style=''>    */
+</span>203 <span style=''>  def bracketRequestResponseRoutes[F[_], A](acquire: F[A])(release: A =&gt; F[Unit])(implicit
+</span>204 <span style=''>      F: MonadCancelThrow[F]
+</span>205 <span style=''>  ): ContextMiddleware[F, A] =
+</span>206 <span style=''>    </span><span style='background: #AEF1AE'>bracketRequestResponseCaseRoutes[F, A](acquire) { case (a, _) =&gt;
+</span>207 <span style=''></span><span style='background: #AEF1AE'>      release(a)
+</span>208 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>209 <span style=''>
+</span>210 <span style=''>  /** As [[bracketRequestResponseCaseApp]], but `release` is simplified, ignoring
+</span>211 <span style=''>    * the exit condition.
+</span>212 <span style=''>    *
+</span>213 <span style=''>    * @note $releaseWarning
+</span>214 <span style=''>    */
+</span>215 <span style=''>  def bracketRequestResponseApp[F[_], A](acquire: F[A])(release: A =&gt; F[Unit])(implicit
+</span>216 <span style=''>      F: MonadCancelThrow[F]
+</span>217 <span style=''>  ): Kleisli[F, ContextRequest[F, A], Response[F]] =&gt; Kleisli[F, Request[F], Response[F]] =
+</span>218 <span style=''>    </span><span style='background: #AEF1AE'>bracketRequestResponseCaseApp[F, A](acquire) { case (a, _) =&gt;
+</span>219 <span style=''></span><span style='background: #AEF1AE'>      release(a)
+</span>220 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>221 <span style=''>
+</span>222 <span style=''>  /** As [[bracketRequestResponseRoutes]], but `acquire` and `release` are
+</span>223 <span style=''>    * defined in terms of a [[cats.effect.Resource]].
+</span>224 <span style=''>    *
+</span>225 <span style=''>    * @note $releaseWarning
+</span>226 <span style=''>    */
+</span>227 <span style=''>  def bracketRequestResponseRoutesR[F[_], A](
+</span>228 <span style=''>      resource: Resource[F, A]
+</span>229 <span style=''>  )(implicit F: MonadCancelThrow[F]): ContextMiddleware[F, A] = {
+</span>230 <span style=''>    (contextRoutes: ContextRoutes[A, F]) =&gt;
+</span>231 <span style=''>      val contextRoutes0: ContextRoutes[(A, F[Unit]), F] =
+</span>232 <span style=''>        </span><span style='background: #F0ADAD'>contextRoutes.local(_.map(_._1))</span><span style=''>
+</span>233 <span style=''>      </span><span style='background: #F0ADAD'>bracketRequestResponseRoutes(
+</span>234 <span style=''></span><span style='background: #F0ADAD'>        resource.allocated
+</span>235 <span style=''></span><span style='background: #F0ADAD'>      )(_._2)(F)(contextRoutes0)</span><span style=''>
+</span>236 <span style=''>  }
+</span>237 <span style=''>
+</span>238 <span style=''>  /** As [[bracketRequestResponseApp]], but `acquire` and `release` are defined
+</span>239 <span style=''>    * in terms of a [[cats.effect.Resource]].
+</span>240 <span style=''>    *
+</span>241 <span style=''>    * @note $releaseWarning
+</span>242 <span style=''>    */
+</span>243 <span style=''>  def bracketRequestResponseAppR[F[_], A](
+</span>244 <span style=''>      resource: Resource[F, A]
+</span>245 <span style=''>  )(implicit
+</span>246 <span style=''>      F: MonadCancelThrow[F]
+</span>247 <span style=''>  ): Kleisli[F, ContextRequest[F, A], Response[F]] =&gt; Kleisli[F, Request[F], Response[F]] = {
+</span>248 <span style=''>    (contextApp: Kleisli[F, ContextRequest[F, A], Response[F]]) =&gt;
+</span>249 <span style=''>      val contextApp0: Kleisli[F, ContextRequest[F, (A, F[Unit])], Response[F]] =
+</span>250 <span style=''>        </span><span style='background: #F0ADAD'>contextApp.local(_.map(_._1))</span><span style=''>
+</span>251 <span style=''>      </span><span style='background: #F0ADAD'>bracketRequestResponseApp(
+</span>252 <span style=''></span><span style='background: #F0ADAD'>        resource.allocated
+</span>253 <span style=''></span><span style='background: #F0ADAD'>      )(_._2)(F)(contextApp0)</span><span style=''>
+</span>254 <span style=''>  }
+</span>255 <span style=''>
+</span>256 <span style=''>  @deprecated(&quot;Use ExitCase.toOutcome instead&quot;, &quot;0.23.8&quot;)
+</span>257 <span style=''>  def exitCaseToOutcome[F[_]](
+</span>258 <span style=''>      ec: ExitCase
+</span>259 <span style=''>  )(implicit F: Applicative[F]): Outcome[F, Throwable, Unit] =
+</span>260 <span style=''>    ec match {
+</span>261 <span style=''>      case ExitCase.Succeeded =&gt; </span><span style='background: #F0ADAD'>Outcome.succeeded(F.unit)</span><span style=''>
+</span>262 <span style=''>      case ExitCase.Errored(e) =&gt; </span><span style='background: #F0ADAD'>Outcome.errored(e)</span><span style=''>
+</span>263 <span style=''>      case ExitCase.Canceled =&gt; </span><span style='background: #F0ADAD'>Outcome.canceled</span><span style=''>
+</span>264 <span style=''>    }
+</span>265 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          9841
+        </td>
+        <td>
+          6295
+          -
+          7060
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.bracketrequestresponsesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((request: org.http4s.Request[F]) =&gt; cats.data.OptionT.apply[F, org.http4s.Response[F]](cats.implicits.toFlatMapOps[F, org.http4s.ContextRequest[F,A]](acquire.apply(request))(F).flatMap[Option[org.http4s.Response[F]]](((contextRequest: org.http4s.ContextRequest[F,A]) =&gt; cats.effect.syntax.`package`.all.monadCancelOps[F, Option[org.http4s.Response[F]], Throwable](bracketRoutes.apply(contextRequest).foldF[Option[org.http4s.Response[F]]](cats.implicits.catsSyntaxApply[F, Unit](release.apply(contextRequest.context, scala.None, cats.effect.`package`.Outcome.succeeded[F, Throwable, Unit](F.unit)))(F).*&gt;[Option[org.http4s.Response[F]]](F.pure[Option[org.http4s.Response[F]]]((scala.None: Option[org.http4s.Response[F]]))))(((contextResponse: org.http4s.ContextResponse[F,B]) =&gt; F.pure[Option[org.http4s.Response[F]]](scala.Some.apply[contextResponse.response.Self](contextResponse.response.pipeBodyThrough(((x$1: fs2.Stream[F,Byte]) =&gt; x$1.onFinalizeCaseWeak[[x]F[x]](((ec: cats.effect.kernel.Resource.ExitCase) =&gt; release.apply(contextRequest.context, scala.Some.apply[B](contextResponse.context), ec.toOutcome[[_]F[_]](F))))(F)))))))(F))(F).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[F,Throwable,Option[org.http4s.Response[F]]]) =&gt; x0$1 match {
+  case (fa: F[Option[org.http4s.Response[F]]]): cats.effect.Outcome.Succeeded[[_]F[_],Throwable,Option[org.http4s.Response[F]]](_) =&gt; F.unit
+  case (otherwise @ _) =&gt; release.apply(contextRequest.context, scala.None, cats.implicits.toFunctorOps[[A]cats.effect.kernel.Outcome[F,Throwable,A], Option[org.http4s.Response[F]]](otherwise)(kernel.this.Outcome.applicativeError[[_]F[_], Throwable](F)).void)
+}))(F))))))
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          8088
+        </td>
+        <td>
+          6336
+          -
+          7059
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.bracketrequestresponsesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, org.http4s.Response[F]](cats.implicits.toFlatMapOps[F, org.http4s.ContextRequest[F,A]](acquire.apply(request))(F).flatMap[Option[org.http4s.Response[F]]](((contextRequest: org.http4s.ContextRequest[F,A]) =&gt; cats.effect.syntax.`package`.all.monadCancelOps[F, Option[org.http4s.Response[F]], Throwable](bracketRoutes.apply(contextRequest).foldF[Option[org.http4s.Response[F]]](cats.implicits.catsSyntaxApply[F, Unit](release.apply(contextRequest.context, scala.None, cats.effect.`package`.Outcome.succeeded[F, Throwable, Unit](F.unit)))(F).*&gt;[Option[org.http4s.Response[F]]](F.pure[Option[org.http4s.Response[F]]]((scala.None: Option[org.http4s.Response[F]]))))(((contextResponse: org.http4s.ContextResponse[F,B]) =&gt; F.pure[Option[org.http4s.Response[F]]](scala.Some.apply[contextResponse.response.Self](contextResponse.response.pipeBodyThrough(((x$1: fs2.Stream[F,Byte]) =&gt; x$1.onFinalizeCaseWeak[[x]F[x]](((ec: cats.effect.kernel.Resource.ExitCase) =&gt; release.apply(contextRequest.context, scala.Some.apply[B](contextResponse.context), ec.toOutcome[[_]F[_]](F))))(F)))))))(F))(F).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[F,Throwable,Option[org.http4s.Response[F]]]) =&gt; x0$1 match {
+  case (fa: F[Option[org.http4s.Response[F]]]): cats.effect.Outcome.Succeeded[[_]F[_],Throwable,Option[org.http4s.Response[F]]](_) =&gt; F.unit
+  case (otherwise @ _) =&gt; release.apply(contextRequest.context, scala.None, cats.implicits.toFunctorOps[[A]cats.effect.kernel.Outcome[F,Throwable,A], Option[org.http4s.Response[F]]](otherwise)(kernel.this.Outcome.applicativeError[[_]F[_], Throwable](F)).void)
+}))(F))))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          7846
+        </td>
+        <td>
+          6355
+          -
+          6371
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.bracketrequestresponsesuite
+        </td>
+        <td style="background: #AEF1AE">
+          acquire.apply(request)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          9081
+        </td>
+        <td>
+          6355
+          -
+          7049
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.bracketrequestresponsesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, org.http4s.ContextRequest[F,A]](acquire.apply(request))(F).flatMap[Option[org.http4s.Response[F]]](((contextRequest: org.http4s.ContextRequest[F,A]) =&gt; cats.effect.syntax.`package`.all.monadCancelOps[F, Option[org.http4s.Response[F]], Throwable](bracketRoutes.apply(contextRequest).foldF[Option[org.http4s.Response[F]]](cats.implicits.catsSyntaxApply[F, Unit](release.apply(contextRequest.context, scala.None, cats.effect.`package`.Outcome.succeeded[F, Throwable, Unit](F.unit)))(F).*&gt;[Option[org.http4s.Response[F]]](F.pure[Option[org.http4s.Response[F]]]((scala.None: Option[org.http4s.Response[F]]))))(((contextResponse: org.http4s.ContextResponse[F,B]) =&gt; F.pure[Option[org.http4s.Response[F]]](scala.Some.apply[contextResponse.response.Self](contextResponse.response.pipeBodyThrough(((x$1: fs2.Stream[F,Byte]) =&gt; x$1.onFinalizeCaseWeak[[x]F[x]](((ec: cats.effect.kernel.Resource.ExitCase) =&gt; release.apply(contextRequest.context, scala.Some.apply[B](contextResponse.context), ec.toOutcome[[_]F[_]](F))))(F)))))))(F))(F).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[F,Throwable,Option[org.http4s.Response[F]]]) =&gt; x0$1 match {
+  case (fa: F[Option[org.http4s.Response[F]]]): cats.effect.Outcome.Succeeded[[_]F[_],Throwable,Option[org.http4s.Response[F]]](_) =&gt; F.unit
+  case (otherwise @ _) =&gt; release.apply(contextRequest.context, scala.None, cats.implicits.toFunctorOps[[A]cats.effect.kernel.Outcome[F,Throwable,A], Option[org.http4s.Response[F]]](otherwise)(kernel.this.Outcome.applicativeError[[_]F[_], Throwable](F)).void)
+}))(F)))
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          7332
+        </td>
+        <td>
+          6410
+          -
+          7048
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.syntax.MonadCancelOps.guaranteeCase
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.syntax.`package`.all.monadCancelOps[F, Option[org.http4s.Response[F]], Throwable](bracketRoutes.apply(contextRequest).foldF[Option[org.http4s.Response[F]]](cats.implicits.catsSyntaxApply[F, Unit](release.apply(contextRequest.context, scala.None, cats.effect.`package`.Outcome.succeeded[F, Throwable, Unit](F.unit)))(F).*&gt;[Option[org.http4s.Response[F]]](F.pure[Option[org.http4s.Response[F]]]((scala.None: Option[org.http4s.Response[F]]))))(((contextResponse: org.http4s.ContextResponse[F,B]) =&gt; F.pure[Option[org.http4s.Response[F]]](scala.Some.apply[contextResponse.response.Self](contextResponse.response.pipeBodyThrough(((x$1: fs2.Stream[F,Byte]) =&gt; x$1.onFinalizeCaseWeak[[x]F[x]](((ec: cats.effect.kernel.Resource.ExitCase) =&gt; release.apply(contextRequest.context, scala.Some.apply[B](contextResponse.context), ec.toOutcome[[_]F[_]](F))))(F)))))))(F))(F).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[F,Throwable,Option[org.http4s.Response[F]]]) =&gt; x0$1 match {
+  case (fa: F[Option[org.http4s.Response[F]]]): cats.effect.Outcome.Succeeded[[_]F[_],Throwable,Option[org.http4s.Response[F]]](_) =&gt; F.unit
+  case (otherwise @ _) =&gt; release.apply(contextRequest.context, scala.None, cats.implicits.toFunctorOps[[A]cats.effect.kernel.Outcome[F,Throwable,A], Option[org.http4s.Response[F]]](otherwise)(kernel.this.Outcome.applicativeError[[_]F[_], Throwable](F)).void)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          9266
+        </td>
+        <td>
+          8334
+          -
+          8356
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContextRequest.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ContextRequest.apply[[_]F[_], A](a, req)
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          8155
+        </td>
+        <td>
+          8317
+          -
+          8357
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.bracketrequestresponsesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFunctorOps[F, A](acquire)(F).map[org.http4s.ContextRequest[[_]F[_],A]](((a: A) =&gt; org.http4s.ContextRequest.apply[[_]F[_], A](a, req)))
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          10038
+        </td>
+        <td>
+          8387
+          -
+          8401
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          release.apply(a, oc)
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          9088
+        </td>
+        <td>
+          8256
+          -
+          8485
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.bracketrequestresponsesuite
+        </td>
+        <td style="background: #AEF1AE">
+          BracketRequestResponse.this.bracketRequestResponseCaseRoutes_[F, A, Unit](((req: org.http4s.Request[F]) =&gt; cats.implicits.toFunctorOps[F, A](acquire)(F).map[org.http4s.ContextRequest[[_]F[_],A]](((a: A) =&gt; org.http4s.ContextRequest.apply[[_]F[_], A](a, req)))))(((x0$1: A, x1$1: Option[Unit], x2$1: cats.effect.Outcome[F,Throwable,Unit]) =&gt; scala.Tuple3.apply[A, Option[Unit], cats.effect.Outcome[F,Throwable,Unit]](x0$1, x1$1, x2$1) match {
+  case (_1: A, _2: Option[Unit], _3: cats.effect.Outcome[F,Throwable,Unit]): (A, Option[Unit], cats.effect.Outcome[F,Throwable,Unit])((a @ _), _, (oc @ _)) =&gt; release.apply(a, oc)
+}))(F).apply(contextRoutes.map[org.http4s.ContextResponse[F,Unit]](((resp: org.http4s.Response[F]) =&gt; org.http4s.ContextResponse.apply[F, Unit]((), resp)))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)))
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          7201
+        </td>
+        <td>
+          8416
+          -
+          8477
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.Kleisli.map
+        </td>
+        <td>
+          org.http4s.server.middleware.bracketrequestresponsesuite
+        </td>
+        <td style="background: #AEF1AE">
+          contextRoutes.map[org.http4s.ContextResponse[F,Unit]](((resp: org.http4s.Response[F]) =&gt; org.http4s.ContextResponse.apply[F, Unit]((), resp)))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          7856
+        </td>
+        <td>
+          8433
+          -
+          8433
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.bracketrequestresponsesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          8918
+        </td>
+        <td>
+          8442
+          -
+          8476
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ContextResponse.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ContextResponse.apply[F, Unit]((), resp)
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          9272
+        </td>
+        <td>
+          8968
+          -
+          9397
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.maxactiverequestssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[F], org.http4s.Response[F]](((request: org.http4s.Request[F]) =&gt; cats.implicits.toFlatMapOps[F, A](acquire)(F).flatMap[org.http4s.Response[F]](((a: A) =&gt; cats.effect.syntax.`package`.all.monadCancelOps[F, org.http4s.Response[F], Throwable](cats.implicits.toFunctorOps[F, org.http4s.Response[F]](contextService.run.apply(org.http4s.ContextRequest.apply[[_]F[_], A](a, request)))(F).map[org.http4s.Response[F]](((x$2: org.http4s.Response[F]) =&gt; x$2.pipeBodyThrough(((x$3: fs2.Stream[F,Byte]) =&gt; x$3.onFinalizeCaseWeak[[x]F[x]](((ec: cats.effect.kernel.Resource.ExitCase) =&gt; release.apply(a, ec.toOutcome[[_]F[_]](F))))(F))))))(F).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[F,Throwable,org.http4s.Response[F]]) =&gt; x0$1 match {
+  case (fa: F[org.http4s.Response[F]]): cats.effect.Outcome.Succeeded[[_]F[_],Throwable,org.http4s.Response[F]](_) =&gt; F.unit
+  case (otherwise @ _) =&gt; release.apply(a, cats.implicits.toFunctorOps[[A]cats.effect.kernel.Outcome[F,Throwable,A], org.http4s.Response[F]](otherwise)(kernel.this.Outcome.applicativeError[[_]F[_], Throwable](F)).void)
+}))(F)))))
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          9800
+        </td>
+        <td>
+          9009
+          -
+          9389
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.maxactiverequestssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFlatMapOps[F, A](acquire)(F).flatMap[org.http4s.Response[F]](((a: A) =&gt; cats.effect.syntax.`package`.all.monadCancelOps[F, org.http4s.Response[F], Throwable](cats.implicits.toFunctorOps[F, org.http4s.Response[F]](contextService.run.apply(org.http4s.ContextRequest.apply[[_]F[_], A](a, request)))(F).map[org.http4s.Response[F]](((x$2: org.http4s.Response[F]) =&gt; x$2.pipeBodyThrough(((x$3: fs2.Stream[F,Byte]) =&gt; x$3.onFinalizeCaseWeak[[x]F[x]](((ec: cats.effect.kernel.Resource.ExitCase) =&gt; release.apply(a, ec.toOutcome[[_]F[_]](F))))(F))))))(F).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[F,Throwable,org.http4s.Response[F]]) =&gt; x0$1 match {
+  case (fa: F[org.http4s.Response[F]]): cats.effect.Outcome.Succeeded[[_]F[_],Throwable,org.http4s.Response[F]](_) =&gt; F.unit
+  case (otherwise @ _) =&gt; release.apply(a, cats.implicits.toFunctorOps[[A]cats.effect.kernel.Outcome[F,Throwable,A], org.http4s.Response[F]](otherwise)(kernel.this.Outcome.applicativeError[[_]F[_], Throwable](F)).void)
+}))(F)))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          7942
+        </td>
+        <td>
+          9045
+          -
+          9379
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.syntax.MonadCancelOps.guaranteeCase
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.syntax.`package`.all.monadCancelOps[F, org.http4s.Response[F], Throwable](cats.implicits.toFunctorOps[F, org.http4s.Response[F]](contextService.run.apply(org.http4s.ContextRequest.apply[[_]F[_], A](a, request)))(F).map[org.http4s.Response[F]](((x$2: org.http4s.Response[F]) =&gt; x$2.pipeBodyThrough(((x$3: fs2.Stream[F,Byte]) =&gt; x$3.onFinalizeCaseWeak[[x]F[x]](((ec: cats.effect.kernel.Resource.ExitCase) =&gt; release.apply(a, ec.toOutcome[[_]F[_]](F))))(F))))))(F).guaranteeCase(((x0$1: cats.effect.kernel.Outcome[F,Throwable,org.http4s.Response[F]]) =&gt; x0$1 match {
+  case (fa: F[org.http4s.Response[F]]): cats.effect.Outcome.Succeeded[[_]F[_],Throwable,org.http4s.Response[F]](_) =&gt; F.unit
+  case (otherwise @ _) =&gt; release.apply(a, cats.implicits.toFunctorOps[[A]cats.effect.kernel.Outcome[F,Throwable,A], org.http4s.Response[F]](otherwise)(kernel.this.Outcome.applicativeError[[_]F[_], Throwable](F)).void)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          8161
+        </td>
+        <td>
+          9706
+          -
+          9793
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.BracketRequestResponse.bracketRequestResponseCaseRoutes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          BracketRequestResponse.this.bracketRequestResponseCaseRoutes[F, A](acquire)(((x0$1: A, x1$1: cats.effect.Outcome[F,Throwable,Unit]) =&gt; scala.Tuple2.apply[A, cats.effect.Outcome[F,Throwable,Unit]](x0$1, x1$1) match {
+  case (_1: A, _2: cats.effect.Outcome[F,Throwable,Unit]): (A, cats.effect.Outcome[F,Throwable,Unit])((a @ _), _) =&gt; release.apply(a)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          9996
+        </td>
+        <td>
+          10157
+          -
+          10241
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.BracketRequestResponse.bracketRequestResponseCaseApp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          BracketRequestResponse.this.bracketRequestResponseCaseApp[F, A](acquire)(((x0$1: A, x1$1: cats.effect.Outcome[F,Throwable,Unit]) =&gt; scala.Tuple2.apply[A, cats.effect.Outcome[F,Throwable,Unit]](x0$1, x1$1) match {
+  case (_1: A, _2: cats.effect.Outcome[F,Throwable,Unit]): (A, cats.effect.Outcome[F,Throwable,Unit])((a @ _), _) =&gt; release.apply(a)
+}))(F)
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          7802
+        </td>
+        <td>
+          10693
+          -
+          10697
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$5._1
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          7206
+        </td>
+        <td>
+          10687
+          -
+          10698
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.implicits.toFunctorOps[[A]org.http4s.ContextRequest[F,A], (A, F[Unit])](x$4)(http4s.this.ContextRequest.contextRequestInstances[[_]F[_]]).map[A](((x$5: (A, F[Unit])) =&gt; x$5._1))
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          8853
+        </td>
+        <td>
+          10687
+          -
+          10687
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.ContextRequest.contextRequestInstances
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http4s.this.ContextRequest.contextRequestInstances[[_]F[_]]
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          9095
+        </td>
+        <td>
+          10667
+          -
+          10699
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.local
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          contextRoutes.local[org.http4s.ContextRequest[F,(A, F[Unit])]](((x$4: org.http4s.ContextRequest[F,(A, F[Unit])]) =&gt; cats.implicits.toFunctorOps[[A]org.http4s.ContextRequest[F,A], (A, F[Unit])](x$4)(http4s.this.ContextRequest.contextRequestInstances[[_]F[_]]).map[A](((x$5: (A, F[Unit])) =&gt; x$5._1))))
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          8079
+        </td>
+        <td>
+          10706
+          -
+          10795
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          BracketRequestResponse.this.bracketRequestResponseRoutes[F, (A, F[Unit])](resource.allocated[A](F))(((x$6: (A, F[Unit])) =&gt; x$6._2))(F).apply(contextRoutes0)
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          9755
+        </td>
+        <td>
+          11352
+          -
+          11352
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.ContextRequest.contextRequestInstances
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http4s.this.ContextRequest.contextRequestInstances[[_]F[_]]
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          8656
+        </td>
+        <td>
+          11358
+          -
+          11362
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$8._1
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          8123
+        </td>
+        <td>
+          11352
+          -
+          11363
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.implicits.toFunctorOps[[A]org.http4s.ContextRequest[F,A], (A, F[Unit])](x$7)(http4s.this.ContextRequest.contextRequestInstances[[_]F[_]]).map[A](((x$8: (A, F[Unit])) =&gt; x$8._1))
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          10004
+        </td>
+        <td>
+          11335
+          -
+          11364
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.local
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          contextApp.local[org.http4s.ContextRequest[F,(A, F[Unit])]](((x$7: org.http4s.ContextRequest[F,(A, F[Unit])]) =&gt; cats.implicits.toFunctorOps[[A]org.http4s.ContextRequest[F,A], (A, F[Unit])](x$7)(http4s.this.ContextRequest.contextRequestInstances[[_]F[_]]).map[A](((x$8: (A, F[Unit])) =&gt; x$8._1))))
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          8991
+        </td>
+        <td>
+          11371
+          -
+          11454
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          BracketRequestResponse.this.bracketRequestResponseApp[F, (A, F[Unit])](resource.allocated[A](F))(((x$9: (A, F[Unit])) =&gt; x$9._2))(F).apply(contextApp0)
+        </td>
+      </tr><tr>
+        <td>
+          261
+        </td>
+        <td>
+          7747
+        </td>
+        <td>
+          11697
+          -
+          11703
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Applicative.unit
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.unit
+        </td>
+      </tr><tr>
+        <td>
+          261
+        </td>
+        <td>
+          7208
+        </td>
+        <td>
+          11679
+          -
+          11704
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Outcome.succeeded
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Outcome.succeeded[F, Throwable, Unit](F.unit)
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          9044
+        </td>
+        <td>
+          11739
+          -
+          11757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Outcome.errored
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Outcome.errored[[_]F[_], Throwable, Unit](e)
+        </td>
+      </tr><tr>
+        <td>
+          263
+        </td>
+        <td>
+          8085
+        </td>
+        <td>
+          11790
+          -
+          11806
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.effect.kernel.Outcome.canceled
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Outcome.canceled[[_]F[_], Throwable, Unit]
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,5920 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/Forwarded.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.headers
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data.NonEmptyList
+</span>20 <span style=''>import cats.parse.Numbers
+</span>21 <span style=''>import cats.parse.Parser0
+</span>22 <span style=''>import cats.parse.Rfc5234
+</span>23 <span style=''>import cats.parse.{Parser =&gt; P}
+</span>24 <span style=''>import cats.syntax.either._
+</span>25 <span style=''>import com.comcast.ip4s.Ipv4Address
+</span>26 <span style=''>import com.comcast.ip4s.Ipv6Address
+</span>27 <span style=''>import org.http4s.Header
+</span>28 <span style=''>import org.http4s._
+</span>29 <span style=''>import org.http4s.internal.parsing.Rfc3986
+</span>30 <span style=''>import org.http4s.internal.parsing.Rfc7230
+</span>31 <span style=''>import org.http4s.util.Renderable
+</span>32 <span style=''>import org.http4s.util.Writer
+</span>33 <span style=''>import org.typelevel.ci._
+</span>34 <span style=''>
+</span>35 <span style=''>import java.net.Inet4Address
+</span>36 <span style=''>import java.net.Inet6Address
+</span>37 <span style=''>import java.nio.ByteBuffer
+</span>38 <span style=''>import java.util.Locale
+</span>39 <span style=''>import scala.util.Try
+</span>40 <span style=''>
+</span>41 <span style=''>object Forwarded extends ForwardedRenderers {
+</span>42 <span style=''>
+</span>43 <span style=''>  def apply(head: Forwarded.Element, tail: Forwarded.Element*): Forwarded =
+</span>44 <span style=''>    </span><span style='background: #F0ADAD'>apply(NonEmptyList(head, tail.toList))</span><span style=''>
+</span>45 <span style=''>
+</span>46 <span style=''>  final case class Node(nodeName: Node.Name, nodePort: Option[Node.Port] = None)
+</span>47 <span style=''>
+</span>48 <span style=''>  protected[http4s] val NodeNameIpv4 = </span><span style='background: #AEF1AE'>Node.Name.Ipv4</span><span style=''>
+</span>49 <span style=''>
+</span>50 <span style=''>  object Node {
+</span>51 <span style=''>    def apply(nodeName: Name, nodePort: Port): Node = </span><span style='background: #AEF1AE'>apply(nodeName, Some(nodePort))</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>    sealed trait Name { self: Product =&gt; }
+</span>54 <span style=''>
+</span>55 <span style=''>    object Name {
+</span>56 <span style=''>      // scalafix:off Http4sGeneralLinters; bincompat until 1.0
+</span>57 <span style=''>      case class Ipv4(address: Ipv4Address) extends Name
+</span>58 <span style=''>      case class Ipv6(address: Ipv6Address) extends Name
+</span>59 <span style=''>      // scalafix:on
+</span>60 <span style=''>      case object Unknown extends Name
+</span>61 <span style=''>
+</span>62 <span style=''>      @deprecated(&quot;Use Name.Ipv4(Ipv4Address.fromInet4Address(address))&quot;, &quot;0.23.5&quot;)
+</span>63 <span style=''>      def ofInet4Address(address: Inet4Address): Name =
+</span>64 <span style=''>        </span><span style='background: #F0ADAD'>Ipv4(Ipv4Address.fromInet4Address(address))</span><span style=''>
+</span>65 <span style=''>      def ofIpv4Address(a: Byte, b: Byte, c: Byte, d: Byte): Name = </span><span style='background: #AEF1AE'>Ipv4(
+</span>66 <span style=''></span><span style='background: #AEF1AE'>        Ipv4Address.fromBytes(a.toInt, b.toInt, c.toInt, d.toInt)
+</span>67 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>      @deprecated(&quot;Use Name.Ipv6(Ipv6Address.fromInet6Address(address))&quot;, &quot;0.23.5&quot;)
+</span>70 <span style=''>      def ofInet6Address(address: Inet6Address): Name =
+</span>71 <span style=''>        </span><span style='background: #F0ADAD'>Ipv6(Ipv6Address.fromInet6Address(address))</span><span style=''>
+</span>72 <span style=''>
+</span>73 <span style=''>      def ofIpv6Address(
+</span>74 <span style=''>          a: Short,
+</span>75 <span style=''>          b: Short,
+</span>76 <span style=''>          c: Short,
+</span>77 <span style=''>          d: Short,
+</span>78 <span style=''>          e: Short,
+</span>79 <span style=''>          f: Short,
+</span>80 <span style=''>          g: Short,
+</span>81 <span style=''>          h: Short,
+</span>82 <span style=''>      ): Name = {
+</span>83 <span style=''>        val bb = </span><span style='background: #AEF1AE'>ByteBuffer.allocate(16)</span><span style=''>
+</span>84 <span style=''>        </span><span style='background: #AEF1AE'>bb.putShort(a)</span><span style=''>
+</span>85 <span style=''>        </span><span style='background: #AEF1AE'>bb.putShort(b)</span><span style=''>
+</span>86 <span style=''>        </span><span style='background: #AEF1AE'>bb.putShort(c)</span><span style=''>
+</span>87 <span style=''>        </span><span style='background: #AEF1AE'>bb.putShort(d)</span><span style=''>
+</span>88 <span style=''>        </span><span style='background: #AEF1AE'>bb.putShort(e)</span><span style=''>
+</span>89 <span style=''>        </span><span style='background: #AEF1AE'>bb.putShort(f)</span><span style=''>
+</span>90 <span style=''>        </span><span style='background: #AEF1AE'>bb.putShort(g)</span><span style=''>
+</span>91 <span style=''>        </span><span style='background: #AEF1AE'>bb.putShort(h)</span><span style=''>
+</span>92 <span style=''>        </span><span style='background: #AEF1AE'>Ipv6(Ipv6Address.fromBytes(bb.array).get)</span><span style=''>
+</span>93 <span style=''>      }
+</span>94 <span style=''>    }
+</span>95 <span style=''>
+</span>96 <span style=''>    sealed trait Port { self: Product =&gt; }
+</span>97 <span style=''>
+</span>98 <span style=''>    object Port {
+</span>99 <span style=''>      final case class Numeric(value: Int) extends Port {
+</span>100 <span style=''>        override def productPrefix: String = </span><span style='background: #F0ADAD'>&quot;Port&quot;</span><span style=''>
+</span>101 <span style=''>      }
+</span>102 <span style=''>
+</span>103 <span style=''>      def fromInt(num: Int): ParseResult[Port] =
+</span>104 <span style=''>        </span><span style='background: #AEF1AE'>checkPortNum(num).toLeft(Numeric(num))</span><span style=''>
+</span>105 <span style=''>
+</span>106 <span style=''>      def unapply(port: Port): Option[Int] =
+</span>107 <span style=''>        </span><span style='background: #F0ADAD'>PartialFunction.condOpt(port) { case Numeric(num) =&gt; num }</span><span style=''>
+</span>108 <span style=''>    }
+</span>109 <span style=''>
+</span>110 <span style=''>    /** Opaque type for obfuscated identifiers.
+</span>111 <span style=''>      *
+</span>112 <span style=''>      * @param value obfuscated identifier with leading '_' (underscore) symbol.
+</span>113 <span style=''>      *
+</span>114 <span style=''>      * @see [[https://datatracker.ietf.org/doc/html/rfc7239#section-6.3 RFC 7239, Section 6.3, Obfuscated Identifier]]
+</span>115 <span style=''>      */
+</span>116 <span style=''>    sealed abstract case class Obfuscated private (value: String) extends Name with Port
+</span>117 <span style=''>
+</span>118 <span style=''>    object Obfuscated {
+</span>119 <span style=''>      val parser: P[Obfuscated] =
+</span>120 <span style=''>        </span><span style='background: #AEF1AE'>(P.char('_') ~ (P.oneOf(List(Rfc5234.alpha, Rfc5234.digit, P.charIn(&quot;._-&quot;))).rep(1))).string
+</span>121 <span style=''></span><span style='background: #AEF1AE'>          .map(Obfuscated.apply)</span><span style=''>
+</span>122 <span style=''>
+</span>123 <span style=''>      def fromString(s: String): ParseResult[Obfuscated] =
+</span>124 <span style=''>        </span><span style='background: #AEF1AE'>parser.parseAll(s).left.map { e =&gt;
+</span>125 <span style=''></span><span style='background: #AEF1AE'>          ParseFailure(s&quot;invalid obfuscated value '$s'&quot;, e.toString)
+</span>126 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>127 <span style=''>
+</span>128 <span style=''>      /** Unsafe constructor for internal use only. */
+</span>129 <span style=''>      private[http4s] def apply(s: String): Obfuscated = </span><span style='background: #AEF1AE'>new</span><span style=''> Obfuscated(s) {}
+</span>130 <span style=''>    }
+</span>131 <span style=''>
+</span>132 <span style=''>    def fromString(s: String): ParseResult[Node] =
+</span>133 <span style=''>      </span><span style='background: #AEF1AE'>parser.parseAll(s).left.map { e =&gt;
+</span>134 <span style=''></span><span style='background: #AEF1AE'>        ParseFailure(s&quot;invalid node '$s'&quot;, e.toString)
+</span>135 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>136 <span style=''>
+</span>137 <span style=''>    val parser: P[Node] = {
+</span>138 <span style=''>      // https://datatracker.ietf.org/doc/html/rfc7239#section-4
+</span>139 <span style=''>
+</span>140 <span style=''>      def modelNodePortFromString(str: String): Option[Node.Port] =
+</span>141 <span style=''>        </span><span style='background: #AEF1AE'>Try(Integer.parseUnsignedInt(str)).toOption.flatMap(Node.Port.fromInt(_).toOption)</span><span style=''>
+</span>142 <span style=''>
+</span>143 <span style=''>      // node-port = port / obfport
+</span>144 <span style=''>      // port      = 1*5DIGIT
+</span>145 <span style=''>      // obfport   = &quot;_&quot; 1*(ALPHA / DIGIT / &quot;.&quot; / &quot;_&quot; / &quot;-&quot;)
+</span>146 <span style=''>      val nodePort: P[Node.Port] =
+</span>147 <span style=''>        </span><span style='background: #AEF1AE'>Numbers.digits
+</span>148 <span style=''></span><span style='background: #AEF1AE'>          // is it worth it to consume only up to 5 chars or just let it fail later?
+</span>149 <span style=''></span><span style='background: #AEF1AE'>          .mapFilter(digits =&gt; modelNodePortFromString(digits))
+</span>150 <span style=''></span><span style='background: #AEF1AE'>          .orElse(Obfuscated.parser)</span><span style=''>
+</span>151 <span style=''>
+</span>152 <span style=''>      // nodename = IPv4address / &quot;[&quot; IPv6address &quot;]&quot; / &quot;unknown&quot; / obfnode
+</span>153 <span style=''>      // obfnode  = &quot;_&quot; 1*( ALPHA / DIGIT / &quot;.&quot; / &quot;_&quot; / &quot;-&quot;)
+</span>154 <span style=''>      val nodeName: P[Node.Name] =
+</span>155 <span style=''>        </span><span style='background: #AEF1AE'>P.oneOf[Node.Name](
+</span>156 <span style=''></span><span style='background: #AEF1AE'>          List(
+</span>157 <span style=''></span><span style='background: #AEF1AE'>            Rfc3986.ipv4Address.map(Node.Name.Ipv4.apply),
+</span>158 <span style=''></span><span style='background: #AEF1AE'>            Rfc3986.ipv6Address
+</span>159 <span style=''></span><span style='background: #AEF1AE'>              .between(P.char('['), P.char(']'))
+</span>160 <span style=''></span><span style='background: #AEF1AE'>              .map(Node.Name.Ipv6.apply),
+</span>161 <span style=''></span><span style='background: #AEF1AE'>            P.string(&quot;unknown&quot;).as(Node.Name.Unknown),
+</span>162 <span style=''></span><span style='background: #AEF1AE'>            Obfuscated.parser,
+</span>163 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>164 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''>
+</span>165 <span style=''>
+</span>166 <span style=''>      // node = nodename [ &quot;:&quot; node-port ]
+</span>167 <span style=''>      </span><span style='background: #AEF1AE'>(nodeName ~ (P.char(':') *&gt; nodePort).?)
+</span>168 <span style=''></span><span style='background: #AEF1AE'>        .map { case (n, p) =&gt; Node(n, p) }</span><span style=''>
+</span>169 <span style=''>    }
+</span>170 <span style=''>  }
+</span>171 <span style=''>
+</span>172 <span style=''>  sealed abstract case class Host private (host: Uri.Host, port: Option[Int])
+</span>173 <span style=''>
+</span>174 <span style=''>  object Host {
+</span>175 <span style=''>    private[this] def apply(host: Uri.Host, port: Option[Int]) = </span><span style='background: #AEF1AE'>new</span><span style=''> Host(host, port) {}
+</span>176 <span style=''>
+</span>177 <span style=''>    /** Creates [[Host]] from [[Uri.Host]].
+</span>178 <span style=''>      * Assumes that the latter is always valid so no further validation is necessary.
+</span>179 <span style=''>      */
+</span>180 <span style=''>    def ofHost(uriHost: Uri.Host): Host = </span><span style='background: #AEF1AE'>apply(uriHost, None)</span><span style=''>
+</span>181 <span style=''>
+</span>182 <span style=''>    /** Creates [[Host]] from [[Uri.Host]] and port number.
+</span>183 <span style=''>      * Validates the latter and returns [[ParseFailure]] if it is invalid.
+</span>184 <span style=''>      */
+</span>185 <span style=''>    def fromHostAndPort(uriHost: Uri.Host, port: Int): ParseResult[Host] =
+</span>186 <span style=''>      </span><span style='background: #AEF1AE'>checkPortNum(port).toLeft(apply(uriHost, Some(port)))</span><span style=''>
+</span>187 <span style=''>
+</span>188 <span style=''>    /** Creates [[Host]] from [[Uri.Host]] and optional port number.
+</span>189 <span style=''>      * For internal use in parsers in generators only.
+</span>190 <span style=''>      */
+</span>191 <span style=''>    private[http4s] def fromHostAndMaybePort(
+</span>192 <span style=''>        uriHost: Uri.Host,
+</span>193 <span style=''>        port: Option[Int],
+</span>194 <span style=''>    ): ParseResult[Host] =
+</span>195 <span style=''>      </span><span style='background: #AEF1AE'>port.fold(ofHost(uriHost).asRight[ParseFailure])(fromHostAndPort(uriHost, _))</span><span style=''>
+</span>196 <span style=''>
+</span>197 <span style=''>    /** Creates [[Host]] from [[Uri.host]] and [[Uri.port]] parts of the given [[Uri]].
+</span>198 <span style=''>      */
+</span>199 <span style=''>    def fromUri(uri: Uri): ParseResult[Host] =
+</span>200 <span style=''>      </span><span style='background: #AEF1AE'>uri.host.toRight(Failures.missingHost(uri)).flatMap(fromHostAndMaybePort(_, uri.port))</span><span style=''>
+</span>201 <span style=''>
+</span>202 <span style=''>    /** Parses host and optional port number from the given string according to RFC3986.
+</span>203 <span style=''>      */
+</span>204 <span style=''>    def fromString(s: String): ParseResult[Host] =
+</span>205 <span style=''>      </span><span style='background: #AEF1AE'>parser.parseAll(s).left.map { e =&gt;
+</span>206 <span style=''></span><span style='background: #AEF1AE'>        ParseFailure(s&quot;invalid host '$s'&quot;, e.toString)
+</span>207 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>208 <span style=''>
+</span>209 <span style=''>    val parser: Parser0[Host] = {
+</span>210 <span style=''>      // this is awkward but the spec allows an empty port number
+</span>211 <span style=''>      val port: P[Option[Int]] = </span><span style='background: #AEF1AE'>Numbers.digits
+</span>212 <span style=''></span><span style='background: #AEF1AE'>        .mapFilter { s =&gt;
+</span>213 <span style=''></span><span style='background: #AEF1AE'>          if (s.isEmpty) </span><span style='background: #F0ADAD'>Some(None)</span><span style='background: #AEF1AE'>
+</span>214 <span style=''></span><span style='background: #AEF1AE'>          else {
+</span>215 <span style=''></span><span style='background: #AEF1AE'>            try {
+</span>216 <span style=''></span><span style='background: #AEF1AE'>              val i = s.toInt
+</span>217 <span style=''></span><span style='background: #AEF1AE'>              if (i &lt;= PortMax) Some(Some(i)) else None
+</span>218 <span style=''></span><span style='background: #AEF1AE'>            } catch { case _: NumberFormatException =&gt; </span><span style='background: #F0ADAD'>None</span><span style='background: #AEF1AE'> }
+</span>219 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>220 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>221 <span style=''>
+</span>222 <span style=''>      // ** RFC7230 **
+</span>223 <span style=''>      // Host     = uri-host [ &quot;:&quot; port ]
+</span>224 <span style=''>      // uri-host = &lt;host, see [RFC3986], Section 3.2.2&gt;
+</span>225 <span style=''>      // port     = &lt;port, see [RFC3986], Section 3.2.3&gt;
+</span>226 <span style=''>
+</span>227 <span style=''>      // ** RFC3986 **
+</span>228 <span style=''>      // port = *DIGIT
+</span>229 <span style=''>      </span><span style='background: #AEF1AE'>(Uri.Parser.host ~ (P.char(':') *&gt; port).?)
+</span>230 <span style=''></span><span style='background: #AEF1AE'>        .map { case (h, p) =&gt; apply(h, p.flatten) }</span><span style=''>
+</span>231 <span style=''>    }
+</span>232 <span style=''>  }
+</span>233 <span style=''>
+</span>234 <span style=''>  type Proto = Uri.Scheme
+</span>235 <span style=''>  val Proto: Uri.Scheme.type = </span><span style='background: #AEF1AE'>Uri.Scheme</span><span style=''>
+</span>236 <span style=''>
+</span>237 <span style=''>  sealed trait Element extends Renderable { self: Product =&gt;
+</span>238 <span style=''>    def maybeBy: Option[Node]
+</span>239 <span style=''>    def maybeFor: Option[Node]
+</span>240 <span style=''>    def maybeHost: Option[Host]
+</span>241 <span style=''>    def maybeProto: Option[Proto]
+</span>242 <span style=''>
+</span>243 <span style=''>    def withBy(value: Node): Element
+</span>244 <span style=''>    def withFor(value: Node): Element
+</span>245 <span style=''>    def withHost(value: Host): Element
+</span>246 <span style=''>    def withProto(value: Proto): Element
+</span>247 <span style=''>
+</span>248 <span style=''>    override def render(writer: Writer): writer.type = </span><span style='background: #AEF1AE'>renderElement(writer, this)</span><span style=''>
+</span>249 <span style=''>  }
+</span>250 <span style=''>
+</span>251 <span style=''>  /** Enables the following construction syntax (which preserves type safety and consistency):
+</span>252 <span style=''>    * {{{
+</span>253 <span style=''>    *   Element
+</span>254 <span style=''>    *     .fromBy(&lt;by-node&gt;)
+</span>255 <span style=''>    *     .withFor(&lt;for-node&gt;)
+</span>256 <span style=''>    *     .withHost(&lt;host&gt;)
+</span>257 <span style=''>    *     .withProto(&lt;schema&gt;)`
+</span>258 <span style=''>    * }}}
+</span>259 <span style=''>    */
+</span>260 <span style=''>  object Element {
+</span>261 <span style=''>    // Since at least one of the fields must be set to `Some`,
+</span>262 <span style=''>    // the `Element` trait implementation is hidden.
+</span>263 <span style=''>    private[this] final case class C(
+</span>264 <span style=''>        maybeBy: Option[Node] = None,
+</span>265 <span style=''>        maybeFor: Option[Node] = None,
+</span>266 <span style=''>        maybeHost: Option[Host] = None,
+</span>267 <span style=''>        maybeProto: Option[Proto] = None,
+</span>268 <span style=''>    ) extends Element {
+</span>269 <span style=''>
+</span>270 <span style=''>      def withBy(value: Node): Element = </span><span style='background: #AEF1AE'>copy(maybeBy = Some(value))</span><span style=''>
+</span>271 <span style=''>      def withFor(value: Node): Element = </span><span style='background: #AEF1AE'>copy(maybeFor = Some(value))</span><span style=''>
+</span>272 <span style=''>      def withHost(value: Host): Element = </span><span style='background: #AEF1AE'>copy(maybeHost = Some(value))</span><span style=''>
+</span>273 <span style=''>      def withProto(value: Proto): Element = </span><span style='background: #AEF1AE'>copy(maybeProto = Some(value))</span><span style=''>
+</span>274 <span style=''>
+</span>275 <span style=''>      override def productPrefix: String = </span><span style='background: #F0ADAD'>&quot;Element&quot;</span><span style=''>
+</span>276 <span style=''>    }
+</span>277 <span style=''>
+</span>278 <span style=''>    def fromBy(value: Node): Element = </span><span style='background: #AEF1AE'>C(maybeBy = Some(value))</span><span style=''>
+</span>279 <span style=''>    def fromFor(value: Node): Element = </span><span style='background: #AEF1AE'>C(maybeFor = Some(value))</span><span style=''>
+</span>280 <span style=''>    def fromHost(value: Host): Element = </span><span style='background: #AEF1AE'>C(maybeHost = Some(value))</span><span style=''>
+</span>281 <span style=''>    def fromProto(value: Proto): Element = </span><span style='background: #AEF1AE'>C(maybeProto = Some(value))</span><span style=''>
+</span>282 <span style=''>
+</span>283 <span style=''>    def unapply(elem: Element): Option[(Option[Node], Option[Node], Option[Host], Option[Proto])] =
+</span>284 <span style=''>      </span><span style='background: #AEF1AE'>Some((elem.maybeBy, elem.maybeFor, elem.maybeHost, elem.maybeProto))</span><span style=''>
+</span>285 <span style=''>  }
+</span>286 <span style=''>
+</span>287 <span style=''>  final val PortMin = </span><span style='background: #F0ADAD'>0</span><span style=''>
+</span>288 <span style=''>  final val PortMax = </span><span style='background: #F0ADAD'>65535</span><span style=''>
+</span>289 <span style=''>
+</span>290 <span style=''>  private def checkPortNum(portNum: Int): Option[ParseFailure] =
+</span>291 <span style=''>    if (</span><span style='background: #AEF1AE'>(portNum &gt;= PortMin) &amp;&amp; (portNum &lt;= PortMax)</span><span style=''>)
+</span>292 <span style=''>      </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>293 <span style=''>    else
+</span>294 <span style=''>      </span><span style='background: #AEF1AE'>Some(Failures.invalidPortNum(portNum))</span><span style=''>
+</span>295 <span style=''>
+</span>296 <span style=''>  private object Failures {
+</span>297 <span style=''>    def invalidPortNum(num: Int): ParseFailure =
+</span>298 <span style=''>      </span><span style='background: #AEF1AE'>ParseFailure(&quot;invalid port number&quot;, s&quot;port $num is not in range $PortMin..$PortMax&quot;)</span><span style=''>
+</span>299 <span style=''>    def missingHost(uri: Uri): ParseFailure =
+</span>300 <span style=''>      </span><span style='background: #AEF1AE'>ParseFailure(&quot;missing host&quot;, s&quot;no host defined in the URI '$uri'&quot;)</span><span style=''>
+</span>301 <span style=''>  }
+</span>302 <span style=''>
+</span>303 <span style=''>  def parse(s: String): ParseResult[Forwarded] =
+</span>304 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Forwarded header&quot;)(s)</span><span style=''>
+</span>305 <span style=''>
+</span>306 <span style=''>  private val parser: P[Forwarded] = {
+</span>307 <span style=''>    // https://datatracker.ietf.org/doc/html/rfc7239#section-4
+</span>308 <span style=''>
+</span>309 <span style=''>    // A utility so that we can decode multiple pairs and join them in a single element
+</span>310 <span style=''>    trait Pair {
+</span>311 <span style=''>      def create: Element
+</span>312 <span style=''>      def merge(e: Element): Element
+</span>313 <span style=''>    }
+</span>314 <span style=''>
+</span>315 <span style=''>    object Pair {
+</span>316 <span style=''>      def apply(c: Element, m: Element =&gt; Element): Pair = </span><span style='background: #AEF1AE'>new</span><span style=''> Pair {
+</span>317 <span style=''>        override def create: Element = c
+</span>318 <span style=''>        override def merge(e: Element): Element = </span><span style='background: #AEF1AE'>m(e)</span><span style=''>
+</span>319 <span style=''>      }
+</span>320 <span style=''>    }
+</span>321 <span style=''>
+</span>322 <span style=''>    def quoted[A](p: Parser0[A]): P[A] =
+</span>323 <span style=''>      </span><span style='background: #AEF1AE'>Rfc7230.token
+</span>324 <span style=''></span><span style='background: #AEF1AE'>        .orElse(Rfc7230.quotedString)
+</span>325 <span style=''></span><span style='background: #AEF1AE'>        .flatMap(str =&gt;
+</span>326 <span style=''></span><span style='background: #AEF1AE'>          p.parseAll(str)
+</span>327 <span style=''></span><span style='background: #AEF1AE'>            .fold(_ =&gt; </span><span style='background: #F0ADAD'>P.fail[A]</span><span style='background: #AEF1AE'>, P.pure)
+</span>328 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''> // this looks not very good
+</span>329 <span style=''>
+</span>330 <span style=''>    // forwarded-pair = token &quot;=&quot; value
+</span>331 <span style=''>    // The syntax of a &quot;by&quot; value, after potential quoted-string unescaping
+</span>332 <span style=''>    // conforms to the &quot;node&quot; ABNF
+</span>333 <span style=''>    // The syntax of a &quot;for&quot; value, after potential quoted-string
+</span>334 <span style=''>    // unescaping, conforms to the &quot;node&quot; ABNF
+</span>335 <span style=''>    // The syntax for a &quot;host&quot; value, after potential quoted-string
+</span>336 <span style=''>    // unescaping, MUST conform to the Host ABNF described in Section 5.4 of
+</span>337 <span style=''>    // [RFC7230].
+</span>338 <span style=''>    // The syntax of a &quot;proto&quot; value, after potential quoted-string
+</span>339 <span style=''>    // unescaping, MUST conform to the URI scheme name as defined in Section 3.1 in
+</span>340 <span style=''>    // [RFC3986]
+</span>341 <span style=''>
+</span>342 <span style=''>    val host = </span><span style='background: #AEF1AE'>Host.parser</span><span style=''>
+</span>343 <span style=''>    val proto = </span><span style='background: #AEF1AE'>Uri.Parser.scheme</span><span style=''>
+</span>344 <span style=''>    val node = </span><span style='background: #AEF1AE'>Node.parser</span><span style=''>
+</span>345 <span style=''>
+</span>346 <span style=''>    val forwardedPair = </span><span style='background: #AEF1AE'>P.oneOf(
+</span>347 <span style=''></span><span style='background: #AEF1AE'>      List(
+</span>348 <span style=''></span><span style='background: #AEF1AE'>        Rfc7230.token
+</span>349 <span style=''></span><span style='background: #AEF1AE'>          .flatMap(tok =&gt;
+</span>350 <span style=''></span><span style='background: #AEF1AE'>            tok.toLowerCase(Locale.ROOT) match {
+</span>351 <span style=''></span><span style='background: #AEF1AE'>              case &quot;by&quot; =&gt;
+</span>352 <span style=''></span><span style='background: #AEF1AE'>                P.char('=') *&gt; quoted(node).map(n =&gt; Pair(Element.fromBy(n), _.withBy(n)))
+</span>353 <span style=''></span><span style='background: #AEF1AE'>              case &quot;for&quot; =&gt;
+</span>354 <span style=''></span><span style='background: #AEF1AE'>                P.char('=') *&gt; quoted(node).map(n =&gt; Pair(Element.fromFor(n), _.withFor(n)))
+</span>355 <span style=''></span><span style='background: #AEF1AE'>              case &quot;host&quot; =&gt;
+</span>356 <span style=''></span><span style='background: #AEF1AE'>                P.char('=') *&gt; quoted(host).map(h =&gt; Pair(Element.fromHost(h), _.withHost(h)))
+</span>357 <span style=''></span><span style='background: #AEF1AE'>              case &quot;proto&quot; =&gt;
+</span>358 <span style=''></span><span style='background: #AEF1AE'>                P.char('=') *&gt; quoted(proto).map(p =&gt; Pair(Element.fromProto(p), _.withProto(p)))
+</span>359 <span style=''></span><span style='background: #AEF1AE'>              case other =&gt;
+</span>360 <span style=''></span><span style='background: #AEF1AE'>                P.failWith(s&quot;expected parameters: 'by', 'for', 'host' or 'proto', but got '$other'&quot;)
+</span>361 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>362 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>363 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>364 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>365 <span style=''>
+</span>366 <span style=''>    // forwarded-element = [ forwarded-pair ] *( &quot;;&quot; [ forwarded-pair ] )
+</span>367 <span style=''>    val forwardedElement =
+</span>368 <span style=''>      </span><span style='background: #AEF1AE'>P.repSep(forwardedPair, 1, P.char(';'))
+</span>369 <span style=''></span><span style='background: #AEF1AE'>        .map(pairs =&gt; pairs.tail.foldLeft(pairs.head.create)((z, x) =&gt; x.merge(z)))</span><span style=''>
+</span>370 <span style=''>
+</span>371 <span style=''>    // Forwarded = 1#forwarded-element
+</span>372 <span style=''>    </span><span style='background: #AEF1AE'>Rfc7230
+</span>373 <span style=''></span><span style='background: #AEF1AE'>      .headerRep1(forwardedElement)
+</span>374 <span style=''></span><span style='background: #AEF1AE'>      .map(Forwarded.apply)</span><span style=''>
+</span>375 <span style=''>  }
+</span>376 <span style=''>
+</span>377 <span style=''>  val name: CIString = </span><span style='background: #AEF1AE'>ci&quot;Forwarded&quot;</span><span style=''>
+</span>378 <span style=''>
+</span>379 <span style=''>  implicit val headerInstance: Header[Forwarded, Header.Recurring] =
+</span>380 <span style=''>    </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>381 <span style=''></span><span style='background: #AEF1AE'>      name,
+</span>382 <span style=''></span><span style='background: #AEF1AE'>      _.values,
+</span>383 <span style=''></span><span style='background: #AEF1AE'>      </span><span style='background: #F0ADAD'>parse</span><span style='background: #AEF1AE'>,
+</span>384 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>385 <span style=''>
+</span>386 <span style=''>  implicit val headerSemigroupInstance: cats.Semigroup[Forwarded] =
+</span>387 <span style=''>    (a, b) =&gt; </span><span style='background: #F0ADAD'>Forwarded(a.values.concatNel(b.values))</span><span style=''>
+</span>388 <span style=''>
+</span>389 <span style=''>}
+</span>390 <span style=''>
+</span>391 <span style=''>final case class Forwarded(values: NonEmptyList[Forwarded.Element])
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          17093
+        </td>
+        <td>
+          1350
+          -
+          1381
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.NonEmptyList.apply[org.http4s.headers.Forwarded.Element](head, tail.toList)
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          21106
+        </td>
+        <td>
+          1369
+          -
+          1380
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          tail.toList
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          13211
+        </td>
+        <td>
+          1344
+          -
+          1382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Forwarded.this.apply(cats.data.NonEmptyList.apply[org.http4s.headers.Forwarded.Element](head, tail.toList))
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          19869
+        </td>
+        <td>
+          1505
+          -
+          1519
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Name.Ipv4
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Node.Name.Ipv4
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          13773
+        </td>
+        <td>
+          1591
+          -
+          1622
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Node.this.apply(nodeName, scala.Some.apply[org.http4s.headers.Forwarded.Node.Port](nodePort))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          17941
+        </td>
+        <td>
+          1607
+          -
+          1621
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Node.Port](nodePort)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          20311
+        </td>
+        <td>
+          2078
+          -
+          2115
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.comcast.ip4s.Ipv4AddressCompanionPlatform.fromInet4Address
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          com.comcast.ip4s.Ipv4Address.fromInet4Address(address)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          16622
+        </td>
+        <td>
+          2073
+          -
+          2116
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Name.Ipv4.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Name.this.Ipv4.apply(com.comcast.ip4s.Ipv4Address.fromInet4Address(address))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          17835
+        </td>
+        <td>
+          2185
+          -
+          2264
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Name.Ipv4.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Name.this.Ipv4.apply(com.comcast.ip4s.Ipv4Address.fromBytes(a.toInt, b.toInt, c.toInt, d.toInt))
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          21122
+        </td>
+        <td>
+          2230
+          -
+          2237
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Byte.toInt
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.toInt
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          13230
+        </td>
+        <td>
+          2248
+          -
+          2255
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Byte.toInt
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          d.toInt
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          14605
+        </td>
+        <td>
+          2221
+          -
+          2228
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Byte.toInt
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          a.toInt
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          19587
+        </td>
+        <td>
+          2199
+          -
+          2256
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.comcast.ip4s.Ipv4Address.fromBytes
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.Ipv4Address.fromBytes(a.toInt, b.toInt, c.toInt, d.toInt)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          16988
+        </td>
+        <td>
+          2239
+          -
+          2246
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Byte.toInt
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.toInt
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          20196
+        </td>
+        <td>
+          2414
+          -
+          2457
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Name.Ipv6.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Name.this.Ipv6.apply(com.comcast.ip4s.Ipv6Address.fromInet6Address(address))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          13790
+        </td>
+        <td>
+          2419
+          -
+          2456
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.comcast.ip4s.Ipv6AddressCompanionPlatform.fromInet6Address
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          com.comcast.ip4s.Ipv6Address.fromInet6Address(address)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          16212
+        </td>
+        <td>
+          2679
+          -
+          2702
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.allocate
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.ByteBuffer.allocate(16)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          22796
+        </td>
+        <td>
+          2711
+          -
+          2725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.putShort
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.putShort(a)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          21016
+        </td>
+        <td>
+          2734
+          -
+          2748
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.putShort
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.putShort(b)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          17000
+        </td>
+        <td>
+          2757
+          -
+          2771
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.putShort
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.putShort(c)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          13251
+        </td>
+        <td>
+          2780
+          -
+          2794
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.putShort
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.putShort(d)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          19451
+        </td>
+        <td>
+          2803
+          -
+          2817
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.putShort
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.putShort(e)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          17536
+        </td>
+        <td>
+          2826
+          -
+          2840
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.putShort
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.putShort(f)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          13674
+        </td>
+        <td>
+          2849
+          -
+          2863
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.putShort
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.putShort(g)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          20208
+        </td>
+        <td>
+          2872
+          -
+          2886
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.putShort
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.putShort(h)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          21103
+        </td>
+        <td>
+          2895
+          -
+          2936
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Name.Ipv6.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Name.this.Ipv6.apply(com.comcast.ip4s.Ipv6Address.fromBytes(bb.array()).get)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          22663
+        </td>
+        <td>
+          2900
+          -
+          2935
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Option.get
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          com.comcast.ip4s.Ipv6Address.fromBytes(bb.array()).get
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          16227
+        </td>
+        <td>
+          2922
+          -
+          2930
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.array
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          bb.array()
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          16897
+        </td>
+        <td>
+          3117
+          -
+          3123
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;Port&quot;
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          13528
+        </td>
+        <td>
+          3215
+          -
+          3227
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Port.Numeric.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Port.this.Numeric.apply(num)
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          19472
+        </td>
+        <td>
+          3190
+          -
+          3228
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.toLeft
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.checkPortNum(num).toLeft[org.http4s.headers.Forwarded.Node.Port.Numeric](Port.this.Numeric.apply(num))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          14009
+        </td>
+        <td>
+          3283
+          -
+          3341
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.PartialFunction.condOpt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.PartialFunction.condOpt[org.http4s.headers.Forwarded.Node.Port, Int](port)(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[org.http4s.headers.Forwarded.Node.Port,Int] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.headers.Forwarded.Node.Port =&gt; Int&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: org.http4s.headers.Forwarded.Node.Port, B1 &gt;: Int](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[org.http4s.headers.Forwarded.Node.Port]: org.http4s.headers.Forwarded.Node.Port): org.http4s.headers.Forwarded.Node.Port @unchecked) match {
+      case (value: Int): org.http4s.headers.Forwarded.Node.Port.Numeric((num @ _)) =&gt; num
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: org.http4s.headers.Forwarded.Node.Port): Boolean = ((x1.asInstanceOf[org.http4s.headers.Forwarded.Node.Port]: org.http4s.headers.Forwarded.Node.Port): org.http4s.headers.Forwarded.Node.Port @unchecked) match {
+      case (value: Int): org.http4s.headers.Forwarded.Node.Port.Numeric((num @ _)) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[org.http4s.headers.Forwarded.Node.Port,Int]))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          15603
+        </td>
+        <td>
+          3313
+          -
+          3313
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Port.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          16762
+        </td>
+        <td>
+          3795
+          -
+          3862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.rep
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.oneOf[Char](scala.`package`.List.apply[cats.parse.Parser[Char]](cats.parse.Rfc5234.alpha, cats.parse.Rfc5234.digit, cats.parse.Parser.charIn(scala.Predef.wrapString(&quot;._-&quot;)))).rep(1)
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          20227
+        </td>
+        <td>
+          3787
+          -
+          3790
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          '_'
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          22685
+        </td>
+        <td>
+          3887
+          -
+          3903
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Obfuscated.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Node.this.Obfuscated.apply(s)
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          20994
+        </td>
+        <td>
+          3779
+          -
+          3904
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('_').~[cats.data.NonEmptyList[Char]](cats.parse.Parser.oneOf[Char](scala.`package`.List.apply[cats.parse.Parser[Char]](cats.parse.Rfc5234.alpha, cats.parse.Rfc5234.digit, cats.parse.Parser.charIn(scala.Predef.wrapString(&quot;._-&quot;)))).rep(1)).string.map[org.http4s.headers.Forwarded.Node.Obfuscated](((s: String) =&gt; Node.this.Obfuscated.apply(s)))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          19983
+        </td>
+        <td>
+          3973
+          -
+          4086
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.LeftProjection.map
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Obfuscated.this.parser.parseAll(s).left.map[org.http4s.ParseFailure](((e: cats.parse.Parser.Error) =&gt; org.http4s.ParseFailure.apply((&quot;invalid obfuscated value \'&quot;.+(s).+(&quot;\'&quot;): String), e.toString())))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          17239
+        </td>
+        <td>
+          4065
+          -
+          4075
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.Error.toString
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          e.toString()
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          12893
+        </td>
+        <td>
+          4018
+          -
+          4076
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ParseFailure.apply((&quot;invalid obfuscated value \'&quot;.+(s).+(&quot;\'&quot;): String), e.toString())
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          15982
+        </td>
+        <td>
+          4200
+          -
+          4203
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Obfuscated.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          16137
+        </td>
+        <td>
+          4285
+          -
+          4382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.LeftProjection.map
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Node.this.parser.parseAll(s).left.map[org.http4s.ParseFailure](((e: cats.parse.Parser.Error) =&gt; org.http4s.ParseFailure.apply((&quot;invalid node \'&quot;.+(s).+(&quot;\'&quot;): String), e.toString())))
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          14030
+        </td>
+        <td>
+          4363
+          -
+          4373
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.Error.toString
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          e.toString()
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          20190
+        </td>
+        <td>
+          4328
+          -
+          4374
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ParseFailure.apply((&quot;invalid node \'&quot;.+(s).+(&quot;\'&quot;): String), e.toString())
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          23191
+        </td>
+        <td>
+          4558
+          -
+          4587
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Integer.parseUnsignedInt
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.Integer.parseUnsignedInt(str)
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          21010
+        </td>
+        <td>
+          4606
+          -
+          4635
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.toOption
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Node.Port.fromInt(x$1).toOption
+        </td>
+      </tr><tr>
+        <td>
+          141
+        </td>
+        <td>
+          17260
+        </td>
+        <td>
+          4554
+          -
+          4636
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.util.Try.apply[Int](java.lang.Integer.parseUnsignedInt(str)).toOption.flatMap[org.http4s.headers.Forwarded.Node.Port](((x$1: Int) =&gt; Forwarded.this.Node.Port.fromInt(x$1).toOption))
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          13093
+        </td>
+        <td>
+          4939
+          -
+          4970
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.modelNodePortFromString
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          modelNodePortFromString(digits)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          19369
+        </td>
+        <td>
+          4990
+          -
+          5007
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Obfuscated.parser
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Node.this.Obfuscated.parser
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          15881
+        </td>
+        <td>
+          4808
+          -
+          5008
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Numbers.digits.mapFilter[org.http4s.headers.Forwarded.Node.Port](((digits: String) =&gt; modelNodePortFromString(digits))).orElse[org.http4s.headers.Forwarded.Node.Port](Node.this.Obfuscated.parser)
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          16372
+        </td>
+        <td>
+          5190
+          -
+          5515
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.oneOf
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.oneOf[org.http4s.headers.Forwarded.Node.Name](scala.`package`.List.apply[cats.parse.Parser[Product with org.http4s.headers.Forwarded.Node.Name with java.io.Serializable]](org.http4s.internal.parsing.Rfc3986.ipv4Address.map[org.http4s.headers.Forwarded.Node.Name.Ipv4](((address: com.comcast.ip4s.Ipv4Address) =&gt; Forwarded.this.Node.Name.Ipv4.apply(address))), org.http4s.internal.parsing.Rfc3986.ipv6Address.between(cats.parse.Parser.char('['), cats.parse.Parser.char(']')).map[org.http4s.headers.Forwarded.Node.Name.Ipv6](((address: com.comcast.ip4s.Ipv6Address) =&gt; Forwarded.this.Node.Name.Ipv6.apply(address))), cats.parse.Parser.string(&quot;unknown&quot;).as[org.http4s.headers.Forwarded.Node.Name.Unknown.type](Forwarded.this.Node.Name.Unknown), Node.this.Obfuscated.parser))
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          20101
+        </td>
+        <td>
+          5220
+          -
+          5505
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[cats.parse.Parser[Product with org.http4s.headers.Forwarded.Node.Name with java.io.Serializable]](org.http4s.internal.parsing.Rfc3986.ipv4Address.map[org.http4s.headers.Forwarded.Node.Name.Ipv4](((address: com.comcast.ip4s.Ipv4Address) =&gt; Forwarded.this.Node.Name.Ipv4.apply(address))), org.http4s.internal.parsing.Rfc3986.ipv6Address.between(cats.parse.Parser.char('['), cats.parse.Parser.char(']')).map[org.http4s.headers.Forwarded.Node.Name.Ipv6](((address: com.comcast.ip4s.Ipv6Address) =&gt; Forwarded.this.Node.Name.Ipv6.apply(address))), cats.parse.Parser.string(&quot;unknown&quot;).as[org.http4s.headers.Forwarded.Node.Name.Unknown.type](Forwarded.this.Node.Name.Unknown), Node.this.Obfuscated.parser)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          13909
+        </td>
+        <td>
+          5262
+          -
+          5282
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Name.Ipv4.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Node.Name.Ipv4.apply(address)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          20204
+        </td>
+        <td>
+          5238
+          -
+          5283
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc3986.ipv4Address.map[org.http4s.headers.Forwarded.Node.Name.Ipv4](((address: com.comcast.ip4s.Ipv4Address) =&gt; Forwarded.this.Node.Name.Ipv4.apply(address)))
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          16357
+        </td>
+        <td>
+          5340
+          -
+          5351
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('[')
+        </td>
+      </tr><tr>
+        <td>
+          159
+        </td>
+        <td>
+          22972
+        </td>
+        <td>
+          5353
+          -
+          5364
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(']')
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          16890
+        </td>
+        <td>
+          5297
+          -
+          5406
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc3986.ipv6Address.between(cats.parse.Parser.char('['), cats.parse.Parser.char(']')).map[org.http4s.headers.Forwarded.Node.Name.Ipv6](((address: com.comcast.ip4s.Ipv6Address) =&gt; Forwarded.this.Node.Name.Ipv6.apply(address)))
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          19215
+        </td>
+        <td>
+          5385
+          -
+          5405
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Name.Ipv6.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Node.Name.Ipv6.apply(address)
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          19609
+        </td>
+        <td>
+          5443
+          -
+          5460
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Name.Unknown
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Node.Name.Unknown
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          15897
+        </td>
+        <td>
+          5420
+          -
+          5461
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.as
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.string(&quot;unknown&quot;).as[org.http4s.headers.Forwarded.Node.Name.Unknown.type](Forwarded.this.Node.Name.Unknown)
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          13112
+        </td>
+        <td>
+          5429
+          -
+          5438
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;unknown&quot;
+        </td>
+      </tr><tr>
+        <td>
+          162
+        </td>
+        <td>
+          13926
+        </td>
+        <td>
+          5475
+          -
+          5492
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.Obfuscated.parser
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Node.this.Obfuscated.parser
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          19105
+        </td>
+        <td>
+          5578
+          -
+          5605
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.?
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(':').*&gt;[org.http4s.headers.Forwarded.Node.Port](nodePort).?
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          22675
+        </td>
+        <td>
+          5586
+          -
+          5589
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          ':'
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          16905
+        </td>
+        <td>
+          5637
+          -
+          5647
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Node.apply(n, p)
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          12996
+        </td>
+        <td>
+          5566
+          -
+          5649
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          nodeName.~[Option[org.http4s.headers.Forwarded.Node.Port]](cats.parse.Parser.char(':').*&gt;[org.http4s.headers.Forwarded.Node.Port](nodePort).?).map[org.http4s.headers.Forwarded.Node](((x0$1: (org.http4s.headers.Forwarded.Node.Name, Option[org.http4s.headers.Forwarded.Node.Port])) =&gt; x0$1 match {
+  case (_1: org.http4s.headers.Forwarded.Node.Name, _2: Option[org.http4s.headers.Forwarded.Node.Port]): (org.http4s.headers.Forwarded.Node.Name, Option[org.http4s.headers.Forwarded.Node.Port])((n @ _), (p @ _)) =&gt; Forwarded.this.Node.apply(n, p)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          19978
+        </td>
+        <td>
+          5821
+          -
+          5824
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          13821
+        </td>
+        <td>
+          6028
+          -
+          6048
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Host.this.apply(uriHost, scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          15618
+        </td>
+        <td>
+          6043
+          -
+          6047
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          20114
+        </td>
+        <td>
+          6317
+          -
+          6327
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Int](port)
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          23185
+        </td>
+        <td>
+          6276
+          -
+          6329
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.toLeft
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.checkPortNum(port).toLeft[org.http4s.headers.Forwarded.Host](Host.this.apply(uriHost, scala.Some.apply[Int](port)))
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          16250
+        </td>
+        <td>
+          6302
+          -
+          6328
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Host.this.apply(uriHost, scala.Some.apply[Int](port))
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          16789
+        </td>
+        <td>
+          6608
+          -
+          6645
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.EitherIdOps.asRight
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.either.catsSyntaxEitherId[org.http4s.headers.Forwarded.Host](Host.this.ofHost(uriHost)).asRight[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          19363
+        </td>
+        <td>
+          6598
+          -
+          6675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          port.fold[Either[org.http4s.ParseFailure,org.http4s.headers.Forwarded.Host]](cats.syntax.`package`.either.catsSyntaxEitherId[org.http4s.headers.Forwarded.Host](Host.this.ofHost(uriHost)).asRight[org.http4s.ParseFailure])(((x$2: Int) =&gt; Host.this.fromHostAndPort(uriHost, x$2)))
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          13010
+        </td>
+        <td>
+          6647
+          -
+          6674
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.fromHostAndPort
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Host.this.fromHostAndPort(uriHost, x$2)
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          18844
+        </td>
+        <td>
+          6608
+          -
+          6623
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.ofHost
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Host.this.ofHost(uriHost)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          16674
+        </td>
+        <td>
+          6827
+          -
+          6913
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.flatMap
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          uri.host.toRight[org.http4s.ParseFailure](Forwarded.this.Failures.missingHost(uri)).flatMap[org.http4s.ParseFailure, org.http4s.headers.Forwarded.Host](((x$3: org.http4s.Uri.Host) =&gt; Host.this.fromHostAndMaybePort(x$3, uri.port)))
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          20008
+        </td>
+        <td>
+          6879
+          -
+          6912
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.fromHostAndMaybePort
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Host.this.fromHostAndMaybePort(x$3, uri.port)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          22382
+        </td>
+        <td>
+          6903
+          -
+          6911
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.port
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          uri.port
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          16122
+        </td>
+        <td>
+          6844
+          -
+          6869
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Failures.missingHost
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Failures.missingHost(uri)
+        </td>
+      </tr><tr>
+        <td>
+          205
+        </td>
+        <td>
+          17125
+        </td>
+        <td>
+          7070
+          -
+          7167
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.LeftProjection.map
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Host.this.parser.parseAll(s).left.map[org.http4s.ParseFailure](((e: cats.parse.Parser.Error) =&gt; org.http4s.ParseFailure.apply((&quot;invalid host \'&quot;.+(s).+(&quot;\'&quot;): String), e.toString())))
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          22566
+        </td>
+        <td>
+          7148
+          -
+          7158
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.Error.toString
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          e.toString()
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          19350
+        </td>
+        <td>
+          7113
+          -
+          7159
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ParseFailure.apply((&quot;invalid host \'&quot;.+(s).+(&quot;\'&quot;): String), e.toString())
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          16244
+        </td>
+        <td>
+          7302
+          -
+          7583
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Numbers.digits.mapFilter[Option[Int]](((s: String) =&gt; if (s.isEmpty())
+  scala.Some.apply[None.type](scala.None)
+else
+  try {
+    val i: Int = scala.Predef.augmentString(s).toInt;
+    if (i.&lt;=(65535))
+      scala.Some.apply[Some[Int]](scala.Some.apply[Int](i))
+    else
+      scala.None
+  } catch {
+    case (_: NumberFormatException) =&gt; scala.None
+  }))
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          15497
+        </td>
+        <td>
+          7368
+          -
+          7378
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          19898
+        </td>
+        <td>
+          7373
+          -
+          7377
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          22253
+        </td>
+        <td>
+          7368
+          -
+          7378
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          12910
+        </td>
+        <td>
+          7357
+          -
+          7366
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          s.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          20374
+        </td>
+        <td>
+          7408
+          -
+          7561
+        </td>
+        <td>
+          Try
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          try {
+  val i: Int = scala.Predef.augmentString(s).toInt;
+  if (i.&lt;=(65535))
+    scala.Some.apply[Some[Int]](scala.Some.apply[Int](i))
+  else
+    scala.None
+} catch {
+  case (_: NumberFormatException) =&gt; scala.None
+}
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          16015
+        </td>
+        <td>
+          7412
+          -
+          7513
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val i: Int = scala.Predef.augmentString(s).toInt;
+  if (i.&lt;=(65535))
+    scala.Some.apply[Some[Int]](scala.Some.apply[Int](i))
+  else
+    scala.None
+}
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          20348
+        </td>
+        <td>
+          7436
+          -
+          7443
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toInt
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(s).toInt
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          23087
+        </td>
+        <td>
+          7481
+          -
+          7488
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Int](i)
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          12990
+        </td>
+        <td>
+          7495
+          -
+          7499
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          16689
+        </td>
+        <td>
+          7462
+          -
+          7474
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;=
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          i.&lt;=(65535)
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          19910
+        </td>
+        <td>
+          7495
+          -
+          7499
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          15178
+        </td>
+        <td>
+          7476
+          -
+          7489
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Some[Int]](scala.Some.apply[Int](i))
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          19098
+        </td>
+        <td>
+          7476
+          -
+          7489
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Some[Int]](scala.Some.apply[Int](i))
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          22271
+        </td>
+        <td>
+          7555
+          -
+          7559
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          229
+        </td>
+        <td>
+          18992
+        </td>
+        <td>
+          7836
+          -
+          7859
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.?
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(':').*&gt;[Option[Int]](port).?
+        </td>
+      </tr><tr>
+        <td>
+          229
+        </td>
+        <td>
+          23102
+        </td>
+        <td>
+          7844
+          -
+          7847
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          ':'
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          15200
+        </td>
+        <td>
+          7902
+          -
+          7902
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[Option[Int]]
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          19489
+        </td>
+        <td>
+          7891
+          -
+          7910
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Host.this.apply(h, p.flatten[Int](scala.this.&lt;:&lt;.refl[Option[Int]]))
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          13007
+        </td>
+        <td>
+          7900
+          -
+          7909
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.Option.flatten
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          p.flatten[Int](scala.this.&lt;:&lt;.refl[Option[Int]])
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          15803
+        </td>
+        <td>
+          7817
+          -
+          7912
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser0.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Parser.host.~[Option[Option[Int]]](cats.parse.Parser.char(':').*&gt;[Option[Int]](port).?).map[org.http4s.headers.Forwarded.Host](((x0$1: (org.http4s.Uri.Host, Option[Option[Int]])) =&gt; x0$1 match {
+  case (_1: org.http4s.Uri.Host, _2: Option[Option[Int]]): (org.http4s.Uri.Host, Option[Option[Int]])((h @ _), (p @ _)) =&gt; Host.this.apply(h, p.flatten[Int](scala.this.&lt;:&lt;.refl[Option[Int]]))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          22156
+        </td>
+        <td>
+          7981
+          -
+          7991
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Scheme
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          20000
+        </td>
+        <td>
+          8393
+          -
+          8420
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.ForwardedRenderers.renderElement
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.renderElement(writer, this)
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          22701
+        </td>
+        <td>
+          9082
+          -
+          9082
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$2
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          16261
+        </td>
+        <td>
+          9097
+          -
+          9108
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Node](value)
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          19006
+        </td>
+        <td>
+          9082
+          -
+          9082
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$3
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          15213
+        </td>
+        <td>
+          9082
+          -
+          9082
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$4
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          12901
+        </td>
+        <td>
+          9082
+          -
+          9109
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy(scala.Some.apply[org.http4s.headers.Forwarded.Node](value), C.this.copy$default$2, C.this.copy$default$3, C.this.copy$default$4)
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          19510
+        </td>
+        <td>
+          9168
+          -
+          9179
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Node](value)
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          18197
+        </td>
+        <td>
+          9152
+          -
+          9152
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$4
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          15995
+        </td>
+        <td>
+          9152
+          -
+          9152
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$1
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          16150
+        </td>
+        <td>
+          9152
+          -
+          9180
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy(x$2, x$1, x$3, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          22176
+        </td>
+        <td>
+          9152
+          -
+          9152
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$3
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          19214
+        </td>
+        <td>
+          9224
+          -
+          9224
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$1
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          14858
+        </td>
+        <td>
+          9224
+          -
+          9224
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$2
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          12920
+        </td>
+        <td>
+          9224
+          -
+          9224
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$4
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          19385
+        </td>
+        <td>
+          9224
+          -
+          9253
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy(x$2, x$3, x$1, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          23084
+        </td>
+        <td>
+          9241
+          -
+          9252
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Host](value)
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          22985
+        </td>
+        <td>
+          9299
+          -
+          9329
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy(x$2, x$3, x$4, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          18094
+        </td>
+        <td>
+          9299
+          -
+          9299
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$2
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          21922
+        </td>
+        <td>
+          9299
+          -
+          9299
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$1
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          16009
+        </td>
+        <td>
+          9317
+          -
+          9328
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Proto](value)
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          16167
+        </td>
+        <td>
+          9299
+          -
+          9299
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.copy$default$3
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          C.this.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          19230
+        </td>
+        <td>
+          9374
+          -
+          9383
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;Element&quot;
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          19802
+        </td>
+        <td>
+          9430
+          -
+          9430
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$3
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$3
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          22425
+        </td>
+        <td>
+          9430
+          -
+          9454
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply(scala.Some.apply[org.http4s.headers.Forwarded.Node](value), Element.this.C.apply$default$2, Element.this.C.apply$default$3, Element.this.C.apply$default$4)
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          13464
+        </td>
+        <td>
+          9430
+          -
+          9430
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$2
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$2
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          16027
+        </td>
+        <td>
+          9430
+          -
+          9430
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$4
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$4
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          15189
+        </td>
+        <td>
+          9442
+          -
+          9453
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Node](value)
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          15066
+        </td>
+        <td>
+          9495
+          -
+          9520
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply(x$2, x$1, x$3, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          18442
+        </td>
+        <td>
+          9508
+          -
+          9519
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Node](value)
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          19249
+        </td>
+        <td>
+          9495
+          -
+          9495
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$4
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$4
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          23001
+        </td>
+        <td>
+          9495
+          -
+          9495
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$3
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$3
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          16706
+        </td>
+        <td>
+          9495
+          -
+          9495
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$1
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$1
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          22168
+        </td>
+        <td>
+          9562
+          -
+          9562
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$4
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$4
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          21671
+        </td>
+        <td>
+          9576
+          -
+          9587
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Host](value)
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          18312
+        </td>
+        <td>
+          9562
+          -
+          9588
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply(x$2, x$3, x$1, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          15922
+        </td>
+        <td>
+          9562
+          -
+          9562
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$2
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$2
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          19684
+        </td>
+        <td>
+          9562
+          -
+          9562
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$1
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$1
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          21535
+        </td>
+        <td>
+          9632
+          -
+          9659
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply(x$2, x$3, x$4, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          15083
+        </td>
+        <td>
+          9632
+          -
+          9632
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$3
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$3
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          19132
+        </td>
+        <td>
+          9632
+          -
+          9632
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$2
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$2
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          16144
+        </td>
+        <td>
+          9647
+          -
+          9658
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.headers.Forwarded.Proto](value)
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          23019
+        </td>
+        <td>
+          9632
+          -
+          9632
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.C.apply$default$1
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Element.this.C.apply$default$1
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          22581
+        </td>
+        <td>
+          9767
+          -
+          9835
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[(Option[org.http4s.headers.Forwarded.Node], Option[org.http4s.headers.Forwarded.Node], Option[org.http4s.headers.Forwarded.Host], Option[org.http4s.headers.Forwarded.Proto])](scala.Tuple4.apply[Option[org.http4s.headers.Forwarded.Node], Option[org.http4s.headers.Forwarded.Node], Option[org.http4s.headers.Forwarded.Host], Option[org.http4s.headers.Forwarded.Proto]](elem.maybeBy, elem.maybeFor, elem.maybeHost, elem.maybeProto))
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          22075
+        </td>
+        <td>
+          9802
+          -
+          9816
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.maybeHost
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          elem.maybeHost
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          19377
+        </td>
+        <td>
+          9773
+          -
+          9785
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.maybeBy
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          elem.maybeBy
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          18330
+        </td>
+        <td>
+          9818
+          -
+          9833
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.maybeProto
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          elem.maybeProto
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          14322
+        </td>
+        <td>
+          9772
+          -
+          9834
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple4.apply
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple4.apply[Option[org.http4s.headers.Forwarded.Node], Option[org.http4s.headers.Forwarded.Node], Option[org.http4s.headers.Forwarded.Host], Option[org.http4s.headers.Forwarded.Proto]](elem.maybeBy, elem.maybeFor, elem.maybeHost, elem.maybeProto)
+        </td>
+      </tr><tr>
+        <td>
+          284
+        </td>
+        <td>
+          15937
+        </td>
+        <td>
+          9787
+          -
+          9800
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.maybeFor
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          elem.maybeFor
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          18908
+        </td>
+        <td>
+          9863
+          -
+          9864
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          288
+        </td>
+        <td>
+          14983
+        </td>
+        <td>
+          9887
+          -
+          9892
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          65535
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          15515
+        </td>
+        <td>
+          9967
+          -
+          10011
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          portNum.&gt;=(0).&amp;&amp;(portNum.&lt;=(65535))
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          19398
+        </td>
+        <td>
+          9992
+          -
+          10010
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;=
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          portNum.&lt;=(65535)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          21284
+        </td>
+        <td>
+          9979
+          -
+          9986
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          292
+        </td>
+        <td>
+          22085
+        </td>
+        <td>
+          10019
+          -
+          10023
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          292
+        </td>
+        <td>
+          18212
+        </td>
+        <td>
+          10019
+          -
+          10023
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          294
+        </td>
+        <td>
+          19112
+        </td>
+        <td>
+          10039
+          -
+          10077
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.ParseFailure](Forwarded.this.Failures.invalidPortNum(portNum))
+        </td>
+      </tr><tr>
+        <td>
+          294
+        </td>
+        <td>
+          22601
+        </td>
+        <td>
+          10039
+          -
+          10077
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.ParseFailure](Forwarded.this.Failures.invalidPortNum(portNum))
+        </td>
+      </tr><tr>
+        <td>
+          294
+        </td>
+        <td>
+          14202
+        </td>
+        <td>
+          10044
+          -
+          10076
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Failures.invalidPortNum
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Failures.invalidPortNum(portNum)
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          21303
+        </td>
+        <td>
+          10162
+          -
+          10246
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ParseFailure.apply(&quot;invalid port number&quot;, (&quot;port &quot;.+(num).+(&quot; is not in range &quot;).+(0).+(&quot;..&quot;).+(65535): String))
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          14992
+        </td>
+        <td>
+          10175
+          -
+          10196
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;invalid port number&quot;
+        </td>
+      </tr><tr>
+        <td>
+          300
+        </td>
+        <td>
+          15918
+        </td>
+        <td>
+          10299
+          -
+          10365
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ParseFailure.apply(&quot;missing host&quot;, (&quot;no host defined in the URI \'&quot;.+(uri).+(&quot;\'&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          300
+        </td>
+        <td>
+          19919
+        </td>
+        <td>
+          10312
+          -
+          10326
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;missing host&quot;
+        </td>
+      </tr><tr>
+        <td>
+          304
+        </td>
+        <td>
+          22286
+        </td>
+        <td>
+          10424
+          -
+          10485
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.ParseResult.fromParser[org.http4s.headers.Forwarded](Forwarded.this.parser, &quot;Invalid Forwarded header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          14220
+        </td>
+        <td>
+          10842
+          -
+          10845
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Pair.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          318
+        </td>
+        <td>
+          18638
+        </td>
+        <td>
+          10944
+          -
+          10948
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          m.apply(e)
+        </td>
+      </tr><tr>
+        <td>
+          324
+        </td>
+        <td>
+          23118
+        </td>
+        <td>
+          11041
+          -
+          11061
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.quotedString
+        </td>
+      </tr><tr>
+        <td>
+          325
+        </td>
+        <td>
+          17457
+        </td>
+        <td>
+          11011
+          -
+          11164
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.flatMap
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.orElse[String](org.http4s.internal.parsing.Rfc7230.quotedString).flatMap[A](((str: String) =&gt; p.parseAll(str).fold[cats.parse.Parser0[A]](((x$4: cats.parse.Parser.Error) =&gt; cats.parse.Parser.fail[A]), ((a: A) =&gt; cats.parse.Parser.pure[A](a)))))
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          15212
+        </td>
+        <td>
+          11147
+          -
+          11153
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.pure
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.pure[A](a)
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          21844
+        </td>
+        <td>
+          11097
+          -
+          11154
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          p.parseAll(str).fold[cats.parse.Parser0[A]](((x$4: cats.parse.Parser.Error) =&gt; cats.parse.Parser.fail[A]), ((a: A) =&gt; cats.parse.Parser.pure[A](a)))
+        </td>
+      </tr><tr>
+        <td>
+          327
+        </td>
+        <td>
+          19128
+        </td>
+        <td>
+          11136
+          -
+          11145
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.parse.Parser.fail
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.parse.Parser.fail[A]
+        </td>
+      </tr><tr>
+        <td>
+          342
+        </td>
+        <td>
+          15817
+        </td>
+        <td>
+          11806
+          -
+          11817
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Host.parser
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Host.parser
+        </td>
+      </tr><tr>
+        <td>
+          343
+        </td>
+        <td>
+          22300
+        </td>
+        <td>
+          11834
+          -
+          11851
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Parser.scheme
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Parser.scheme
+        </td>
+      </tr><tr>
+        <td>
+          344
+        </td>
+        <td>
+          18319
+        </td>
+        <td>
+          11867
+          -
+          11878
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Node.parser
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Node.parser
+        </td>
+      </tr><tr>
+        <td>
+          346
+        </td>
+        <td>
+          19269
+        </td>
+        <td>
+          11904
+          -
+          12681
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.oneOf
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.oneOf[Pair](scala.`package`.List.apply[cats.parse.Parser[Pair]](org.http4s.internal.parsing.Rfc7230.token.flatMap[Pair](((tok: String) =&gt; tok.toLowerCase(java.util.Locale.ROOT) match {
+  case &quot;by&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromBy(n), ((x$5: org.http4s.headers.Forwarded.Element) =&gt; x$5.withBy(n))))))
+  case &quot;for&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromFor(n), ((x$6: org.http4s.headers.Forwarded.Element) =&gt; x$6.withFor(n))))))
+  case &quot;host&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Host](host).map[Pair](((h: org.http4s.headers.Forwarded.Host) =&gt; Pair.apply(Forwarded.this.Element.fromHost(h), ((x$7: org.http4s.headers.Forwarded.Element) =&gt; x$7.withHost(h))))))
+  case &quot;proto&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.Uri.Scheme](proto).map[Pair](((p: org.http4s.Uri.Scheme) =&gt; Pair.apply(Forwarded.this.Element.fromProto(p), ((x$8: org.http4s.headers.Forwarded.Element) =&gt; x$8.withProto(p))))))
+  case (other @ _) =&gt; cats.parse.Parser.failWith[Nothing]((&quot;expected parameters: \'by\', \'for\', \'host\' or \'proto\', but got \'&quot;.+(other).+(&quot;\'&quot;): String))
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          347
+        </td>
+        <td>
+          21155
+        </td>
+        <td>
+          11919
+          -
+          12675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[cats.parse.Parser[Pair]](org.http4s.internal.parsing.Rfc7230.token.flatMap[Pair](((tok: String) =&gt; tok.toLowerCase(java.util.Locale.ROOT) match {
+  case &quot;by&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromBy(n), ((x$5: org.http4s.headers.Forwarded.Element) =&gt; x$5.withBy(n))))))
+  case &quot;for&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromFor(n), ((x$6: org.http4s.headers.Forwarded.Element) =&gt; x$6.withFor(n))))))
+  case &quot;host&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Host](host).map[Pair](((h: org.http4s.headers.Forwarded.Host) =&gt; Pair.apply(Forwarded.this.Element.fromHost(h), ((x$7: org.http4s.headers.Forwarded.Element) =&gt; x$7.withHost(h))))))
+  case &quot;proto&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.Uri.Scheme](proto).map[Pair](((p: org.http4s.Uri.Scheme) =&gt; Pair.apply(Forwarded.this.Element.fromProto(p), ((x$8: org.http4s.headers.Forwarded.Element) =&gt; x$8.withProto(p))))))
+  case (other @ _) =&gt; cats.parse.Parser.failWith[Nothing]((&quot;expected parameters: \'by\', \'for\', \'host\' or \'proto\', but got \'&quot;.+(other).+(&quot;\'&quot;): String))
+})))
+        </td>
+      </tr><tr>
+        <td>
+          349
+        </td>
+        <td>
+          14760
+        </td>
+        <td>
+          11933
+          -
+          12667
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.flatMap
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.flatMap[Pair](((tok: String) =&gt; tok.toLowerCase(java.util.Locale.ROOT) match {
+  case &quot;by&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromBy(n), ((x$5: org.http4s.headers.Forwarded.Element) =&gt; x$5.withBy(n))))))
+  case &quot;for&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromFor(n), ((x$6: org.http4s.headers.Forwarded.Element) =&gt; x$6.withFor(n))))))
+  case &quot;host&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Host](host).map[Pair](((h: org.http4s.headers.Forwarded.Host) =&gt; Pair.apply(Forwarded.this.Element.fromHost(h), ((x$7: org.http4s.headers.Forwarded.Element) =&gt; x$7.withHost(h))))))
+  case &quot;proto&quot; =&gt; cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.Uri.Scheme](proto).map[Pair](((p: org.http4s.Uri.Scheme) =&gt; Pair.apply(Forwarded.this.Element.fromProto(p), ((x$8: org.http4s.headers.Forwarded.Element) =&gt; x$8.withProto(p))))))
+  case (other @ _) =&gt; cats.parse.Parser.failWith[Nothing]((&quot;expected parameters: \'by\', \'for\', \'host\' or \'proto\', but got \'&quot;.+(other).+(&quot;\'&quot;): String))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          350
+        </td>
+        <td>
+          14766
+        </td>
+        <td>
+          12001
+          -
+          12012
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.util.Locale.ROOT
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.util.Locale.ROOT
+        </td>
+      </tr><tr>
+        <td>
+          350
+        </td>
+        <td>
+          22903
+        </td>
+        <td>
+          11985
+          -
+          12013
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.toLowerCase
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          tok.toLowerCase(java.util.Locale.ROOT)
+        </td>
+      </tr><tr>
+        <td>
+          352
+        </td>
+        <td>
+          22317
+        </td>
+        <td>
+          12065
+          -
+          12139
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromBy(n), ((x$5: org.http4s.headers.Forwarded.Element) =&gt; x$5.withBy(n))))))
+        </td>
+      </tr><tr>
+        <td>
+          352
+        </td>
+        <td>
+          17995
+        </td>
+        <td>
+          12102
+          -
+          12138
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Pair.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Pair.apply(Forwarded.this.Element.fromBy(n), ((x$5: org.http4s.headers.Forwarded.Element) =&gt; x$5.withBy(n)))
+        </td>
+      </tr><tr>
+        <td>
+          352
+        </td>
+        <td>
+          15832
+        </td>
+        <td>
+          12080
+          -
+          12139
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromBy(n), ((x$5: org.http4s.headers.Forwarded.Element) =&gt; x$5.withBy(n)))))
+        </td>
+      </tr><tr>
+        <td>
+          352
+        </td>
+        <td>
+          21547
+        </td>
+        <td>
+          12126
+          -
+          12137
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.withBy
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$5.withBy(n)
+        </td>
+      </tr><tr>
+        <td>
+          352
+        </td>
+        <td>
+          15231
+        </td>
+        <td>
+          12107
+          -
+          12124
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.fromBy
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Element.fromBy(n)
+        </td>
+      </tr><tr>
+        <td>
+          352
+        </td>
+        <td>
+          19020
+        </td>
+        <td>
+          12072
+          -
+          12075
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          354
+        </td>
+        <td>
+          18206
+        </td>
+        <td>
+          12191
+          -
+          12194
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          354
+        </td>
+        <td>
+          14485
+        </td>
+        <td>
+          12226
+          -
+          12244
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.fromFor
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Element.fromFor(n)
+        </td>
+      </tr><tr>
+        <td>
+          354
+        </td>
+        <td>
+          19036
+        </td>
+        <td>
+          12221
+          -
+          12259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Pair.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Pair.apply(Forwarded.this.Element.fromFor(n), ((x$6: org.http4s.headers.Forwarded.Element) =&gt; x$6.withFor(n)))
+        </td>
+      </tr><tr>
+        <td>
+          354
+        </td>
+        <td>
+          21416
+        </td>
+        <td>
+          12184
+          -
+          12260
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromFor(n), ((x$6: org.http4s.headers.Forwarded.Element) =&gt; x$6.withFor(n))))))
+        </td>
+      </tr><tr>
+        <td>
+          354
+        </td>
+        <td>
+          14986
+        </td>
+        <td>
+          12199
+          -
+          12260
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          quoted[org.http4s.headers.Forwarded.Node](node).map[Pair](((n: org.http4s.headers.Forwarded.Node) =&gt; Pair.apply(Forwarded.this.Element.fromFor(n), ((x$6: org.http4s.headers.Forwarded.Element) =&gt; x$6.withFor(n)))))
+        </td>
+      </tr><tr>
+        <td>
+          354
+        </td>
+        <td>
+          22779
+        </td>
+        <td>
+          12246
+          -
+          12258
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.withFor
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.withFor(n)
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          15715
+        </td>
+        <td>
+          12348
+          -
+          12367
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.fromHost
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Element.fromHost(h)
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          22207
+        </td>
+        <td>
+          12369
+          -
+          12382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.withHost
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$7.withHost(h)
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          20643
+        </td>
+        <td>
+          12306
+          -
+          12384
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.headers.Forwarded.Host](host).map[Pair](((h: org.http4s.headers.Forwarded.Host) =&gt; Pair.apply(Forwarded.this.Element.fromHost(h), ((x$7: org.http4s.headers.Forwarded.Element) =&gt; x$7.withHost(h))))))
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          14347
+        </td>
+        <td>
+          12321
+          -
+          12384
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          quoted[org.http4s.headers.Forwarded.Host](host).map[Pair](((h: org.http4s.headers.Forwarded.Host) =&gt; Pair.apply(Forwarded.this.Element.fromHost(h), ((x$7: org.http4s.headers.Forwarded.Element) =&gt; x$7.withHost(h)))))
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          17433
+        </td>
+        <td>
+          12313
+          -
+          12316
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          18219
+        </td>
+        <td>
+          12343
+          -
+          12383
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Pair.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Pair.apply(Forwarded.this.Element.fromHost(h), ((x$7: org.http4s.headers.Forwarded.Element) =&gt; x$7.withHost(h)))
+        </td>
+      </tr><tr>
+        <td>
+          358
+        </td>
+        <td>
+          17973
+        </td>
+        <td>
+          12469
+          -
+          12511
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Pair.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Pair.apply(Forwarded.this.Element.fromProto(p), ((x$8: org.http4s.headers.Forwarded.Element) =&gt; x$8.withProto(p)))
+        </td>
+      </tr><tr>
+        <td>
+          358
+        </td>
+        <td>
+          21433
+        </td>
+        <td>
+          12496
+          -
+          12510
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.withProto
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$8.withProto(p)
+        </td>
+      </tr><tr>
+        <td>
+          358
+        </td>
+        <td>
+          19052
+        </td>
+        <td>
+          12438
+          -
+          12441
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          358
+        </td>
+        <td>
+          21988
+        </td>
+        <td>
+          12431
+          -
+          12512
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('=').*&gt;[Pair](quoted[org.http4s.Uri.Scheme](proto).map[Pair](((p: org.http4s.Uri.Scheme) =&gt; Pair.apply(Forwarded.this.Element.fromProto(p), ((x$8: org.http4s.headers.Forwarded.Element) =&gt; x$8.withProto(p))))))
+        </td>
+      </tr><tr>
+        <td>
+          358
+        </td>
+        <td>
+          14888
+        </td>
+        <td>
+          12474
+          -
+          12494
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Element.fromProto
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.Element.fromProto(p)
+        </td>
+      </tr><tr>
+        <td>
+          358
+        </td>
+        <td>
+          16045
+        </td>
+        <td>
+          12446
+          -
+          12512
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          quoted[org.http4s.Uri.Scheme](proto).map[Pair](((p: org.http4s.Uri.Scheme) =&gt; Pair.apply(Forwarded.this.Element.fromProto(p), ((x$8: org.http4s.headers.Forwarded.Element) =&gt; x$8.withProto(p)))))
+        </td>
+      </tr><tr>
+        <td>
+          360
+        </td>
+        <td>
+          18127
+        </td>
+        <td>
+          12557
+          -
+          12641
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.failWith
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.failWith[Nothing]((&quot;expected parameters: \'by\', \'for\', \'host\' or \'proto\', but got \'&quot;.+(other).+(&quot;\'&quot;): String))
+        </td>
+      </tr><tr>
+        <td>
+          368
+        </td>
+        <td>
+          14904
+        </td>
+        <td>
+          12814
+          -
+          12815
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          1
+        </td>
+      </tr><tr>
+        <td>
+          368
+        </td>
+        <td>
+          21324
+        </td>
+        <td>
+          12817
+          -
+          12828
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(';')
+        </td>
+      </tr><tr>
+        <td>
+          369
+        </td>
+        <td>
+          17987
+        </td>
+        <td>
+          12872
+          -
+          12889
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Pair.create
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          pairs.head.create
+        </td>
+      </tr><tr>
+        <td>
+          369
+        </td>
+        <td>
+          13576
+        </td>
+        <td>
+          12901
+          -
+          12911
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.Pair.merge
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          x.merge(z)
+        </td>
+      </tr><tr>
+        <td>
+          369
+        </td>
+        <td>
+          22184
+        </td>
+        <td>
+          12852
+          -
+          12912
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          pairs.tail.foldLeft[org.http4s.headers.Forwarded.Element](pairs.head.create)(((z: org.http4s.headers.Forwarded.Element, x: Pair) =&gt; x.merge(z)))
+        </td>
+      </tr><tr>
+        <td>
+          369
+        </td>
+        <td>
+          18141
+        </td>
+        <td>
+          12790
+          -
+          12913
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.repSep[Pair](forwardedPair, 1, cats.parse.Parser.char(';')).map[org.http4s.headers.Forwarded.Element](((pairs: cats.data.NonEmptyList[Pair]) =&gt; pairs.tail.foldLeft[org.http4s.headers.Forwarded.Element](pairs.head.create)(((z: org.http4s.headers.Forwarded.Element, x: Pair) =&gt; x.merge(z)))))
+        </td>
+      </tr><tr>
+        <td>
+          374
+        </td>
+        <td>
+          21176
+        </td>
+        <td>
+          12958
+          -
+          13029
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.headerRep1[org.http4s.headers.Forwarded.Element](forwardedElement).map[org.http4s.headers.Forwarded](((values: cats.data.NonEmptyList[org.http4s.headers.Forwarded.Element]) =&gt; Forwarded.apply(values)))
+        </td>
+      </tr><tr>
+        <td>
+          374
+        </td>
+        <td>
+          14659
+        </td>
+        <td>
+          13013
+          -
+          13028
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.apply
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.apply(values)
+        </td>
+      </tr><tr>
+        <td>
+          377
+        </td>
+        <td>
+          19031
+        </td>
+        <td>
+          13058
+          -
+          13071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Forwarded&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          380
+        </td>
+        <td>
+          18343
+        </td>
+        <td>
+          13146
+          -
+          13215
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Header.createRendered[org.http4s.headers.Forwarded, org.http4s.Header.Recurring, cats.data.NonEmptyList[org.http4s.headers.Forwarded.Element]](Forwarded.this.name, ((x$9: org.http4s.headers.Forwarded) =&gt; x$9.values), ((s: String) =&gt; Forwarded.this.parse(s)))(util.this.Renderer.nelRenderer[org.http4s.headers.Forwarded.Element](util.this.Renderable.renderableInst[org.http4s.headers.Forwarded.Element]))
+        </td>
+      </tr><tr>
+        <td>
+          380
+        </td>
+        <td>
+          14095
+        </td>
+        <td>
+          13167
+          -
+          13167
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.headers.Forwarded.Element]
+        </td>
+      </tr><tr>
+        <td>
+          380
+        </td>
+        <td>
+          22202
+        </td>
+        <td>
+          13167
+          -
+          13167
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Renderer.nelRenderer
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderer.nelRenderer[org.http4s.headers.Forwarded.Element](util.this.Renderable.renderableInst[org.http4s.headers.Forwarded.Element])
+        </td>
+      </tr><tr>
+        <td>
+          381
+        </td>
+        <td>
+          15099
+        </td>
+        <td>
+          13175
+          -
+          13179
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.name
+        </td>
+        <td>
+          org.http4s.parser.forwardedheaderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Forwarded.this.name
+        </td>
+      </tr><tr>
+        <td>
+          382
+        </td>
+        <td>
+          21408
+        </td>
+        <td>
+          13187
+          -
+          13195
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.values
+        </td>
+        <td>
+          org.http4s.headers.forwardedrendererssuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$9.values
+        </td>
+      </tr><tr>
+        <td>
+          383
+        </td>
+        <td>
+          18005
+        </td>
+        <td>
+          13203
+          -
+          13208
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.parse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Forwarded.this.parse(s)
+        </td>
+      </tr><tr>
+        <td>
+          387
+        </td>
+        <td>
+          18921
+        </td>
+        <td>
+          13299
+          -
+          13338
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Forwarded.apply(a.values.concatNel[org.http4s.headers.Forwarded.Element](b.values))
+        </td>
+      </tr><tr>
+        <td>
+          387
+        </td>
+        <td>
+          14339
+        </td>
+        <td>
+          13328
+          -
+          13336
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Forwarded.values
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          b.values
+        </td>
+      </tr><tr>
+        <td>
+          387
+        </td>
+        <td>
+          21195
+        </td>
+        <td>
+          13309
+          -
+          13337
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.concatNel
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          a.values.concatNel[org.http4s.headers.Forwarded.Element](b.values)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

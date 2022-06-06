@@ -1,0 +1,3722 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/EntityEncoder.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Contravariant
+</span>20 <span style=''>import cats.Show
+</span>21 <span style=''>import cats.data.NonEmptyList
+</span>22 <span style=''>import cats.effect.Sync
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import fs2.Chunk
+</span>25 <span style=''>import fs2.Stream
+</span>26 <span style=''>import fs2.io.file.Files
+</span>27 <span style=''>import fs2.io.readInputStream
+</span>28 <span style=''>import org.http4s.Charset.`UTF-8`
+</span>29 <span style=''>import org.http4s.headers._
+</span>30 <span style=''>import org.http4s.multipart.Multipart
+</span>31 <span style=''>import org.http4s.multipart.MultipartEncoder
+</span>32 <span style=''>import scodec.bits.ByteVector
+</span>33 <span style=''>
+</span>34 <span style=''>import java.io._
+</span>35 <span style=''>import java.nio.CharBuffer
+</span>36 <span style=''>import java.nio.file.Path
+</span>37 <span style=''>import scala.annotation.implicitNotFound
+</span>38 <span style=''>
+</span>39 <span style=''>@implicitNotFound(
+</span>40 <span style=''>  &quot;Cannot convert from ${A} to an Entity, because no EntityEncoder[${F}, ${A}] instance could be found.&quot;
+</span>41 <span style=''>)
+</span>42 <span style=''>trait EntityEncoder[F[_], A] { self =&gt;
+</span>43 <span style=''>
+</span>44 <span style=''>  /** Convert the type `A` to an [[Entity]] in the effect type `F` */
+</span>45 <span style=''>  def toEntity(a: A): Entity[F]
+</span>46 <span style=''>
+</span>47 <span style=''>  /** Headers that may be added to a [[Message]]
+</span>48 <span style=''>    *
+</span>49 <span style=''>    * Examples of such headers would be Content-Type.
+</span>50 <span style=''>    * __NOTE:__ The Content-Length header will be generated from the resulting Entity and thus should not be added.
+</span>51 <span style=''>    */
+</span>52 <span style=''>  def headers: Headers
+</span>53 <span style=''>
+</span>54 <span style=''>  /** Make a new [[EntityEncoder]] using this type as a foundation */
+</span>55 <span style=''>  def contramap[B](f: B =&gt; A): EntityEncoder[F, B] =
+</span>56 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityEncoder[F, B] {
+</span>57 <span style=''>      override def toEntity(a: B): Entity[F] = </span><span style='background: #AEF1AE'>self.toEntity(f(a))</span><span style=''>
+</span>58 <span style=''>      override def headers: Headers = </span><span style='background: #AEF1AE'>self.headers</span><span style=''>
+</span>59 <span style=''>    }
+</span>60 <span style=''>
+</span>61 <span style=''>  /** Get the [[org.http4s.headers.Content-Type]] of the body encoded by this [[EntityEncoder]],
+</span>62 <span style=''>    * if defined the headers
+</span>63 <span style=''>    */
+</span>64 <span style=''>  def contentType: Option[`Content-Type`] = </span><span style='background: #AEF1AE'>headers.get[`Content-Type`]</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>  /** Get the [[Charset]] of the body encoded by this [[EntityEncoder]], if defined the headers */
+</span>67 <span style=''>  def charset: Option[Charset] = </span><span style='background: #F0ADAD'>headers.get[`Content-Type`].flatMap(_.charset)</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>  /** Generate a new EntityEncoder that will contain the `Content-Type` header */
+</span>70 <span style=''>  def withContentType(tpe: `Content-Type`): EntityEncoder[F, A] =
+</span>71 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityEncoder[F, A] {
+</span>72 <span style=''>      override def toEntity(a: A): Entity[F] = </span><span style='background: #AEF1AE'>self.toEntity(a)</span><span style=''>
+</span>73 <span style=''>      override val headers: Headers = </span><span style='background: #AEF1AE'>self.headers.put(tpe)</span><span style=''>
+</span>74 <span style=''>    }
+</span>75 <span style=''>}
+</span>76 <span style=''>
+</span>77 <span style=''>object EntityEncoder {
+</span>78 <span style=''>  private val DefaultChunkSize = </span><span style='background: #AEF1AE'>4096</span><span style=''>
+</span>79 <span style=''>
+</span>80 <span style=''>  /** summon an implicit [[EntityEncoder]] */
+</span>81 <span style=''>  def apply[F[_], A](implicit ev: EntityEncoder[F, A]): EntityEncoder[F, A] = ev
+</span>82 <span style=''>
+</span>83 <span style=''>  /** Create a new [[EntityEncoder]] */
+</span>84 <span style=''>  def encodeBy[F[_], A](hs: Headers)(f: A =&gt; Entity[F]): EntityEncoder[F, A] =
+</span>85 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityEncoder[F, A] {
+</span>86 <span style=''>      override def toEntity(a: A): Entity[F] = </span><span style='background: #AEF1AE'>f(a)</span><span style=''>
+</span>87 <span style=''>      override def headers: Headers = hs
+</span>88 <span style=''>    }
+</span>89 <span style=''>
+</span>90 <span style=''>  /** Create a new [[EntityEncoder]] */
+</span>91 <span style=''>  def encodeBy[F[_], A](hs: Header.ToRaw*)(f: A =&gt; Entity[F]): EntityEncoder[F, A] = {
+</span>92 <span style=''>    val hdrs = if (</span><span style='background: #AEF1AE'>hs.nonEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>Headers(hs: _*)</span><span style=''> else </span><span style='background: #AEF1AE'>Headers.empty</span><span style=''>
+</span>93 <span style=''>    </span><span style='background: #AEF1AE'>encodeBy(hdrs)(f)</span><span style=''>
+</span>94 <span style=''>  }
+</span>95 <span style=''>
+</span>96 <span style=''>  /** Create a new [[EntityEncoder]]
+</span>97 <span style=''>    *
+</span>98 <span style=''>    * This constructor is a helper for types that can be serialized synchronously, for example a String.
+</span>99 <span style=''>    */
+</span>100 <span style=''>  def simple[F[_], A](hs: Header.ToRaw*)(toChunk: A =&gt; Chunk[Byte]): EntityEncoder[F, A] =
+</span>101 <span style=''>    </span><span style='background: #AEF1AE'>encodeBy(hs: _*) { a =&gt;
+</span>102 <span style=''></span><span style='background: #AEF1AE'>      val c = toChunk(a)
+</span>103 <span style=''></span><span style='background: #AEF1AE'>      Entity[F](Stream.chunk(c), Some(c.size.toLong))
+</span>104 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>105 <span style=''>
+</span>106 <span style=''>  /** Encodes a value from its Show instance.  Too broad to be implicit, too useful to not exist. */
+</span>107 <span style=''>  def showEncoder[F[_], A](implicit
+</span>108 <span style=''>      charset: Charset = `UTF-8`,
+</span>109 <span style=''>      show: Show[A],
+</span>110 <span style=''>  ): EntityEncoder[F, A] = {
+</span>111 <span style=''>    val hdr = </span><span style='background: #F0ADAD'>`Content-Type`(MediaType.text.plain).withCharset(charset)</span><span style=''>
+</span>112 <span style=''>    </span><span style='background: #F0ADAD'>simple[F, A](hdr)(a =&gt; Chunk.array(show.show(a).getBytes(charset.nioCharset)))</span><span style=''>
+</span>113 <span style=''>  }
+</span>114 <span style=''>
+</span>115 <span style=''>  def emptyEncoder[F[_], A]: EntityEncoder[F, A] =
+</span>116 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityEncoder[F, A] {
+</span>117 <span style=''>      def toEntity(a: A): Entity[F] = </span><span style='background: #AEF1AE'>Entity.empty</span><span style=''>
+</span>118 <span style=''>      def headers: Headers = </span><span style='background: #AEF1AE'>Headers.empty</span><span style=''>
+</span>119 <span style=''>    }
+</span>120 <span style=''>
+</span>121 <span style=''>  /** A stream encoder is intended for streaming, and does not calculate its
+</span>122 <span style=''>    * bodies in advance.  As such, it does not calculate the Content-Length in
+</span>123 <span style=''>    * advance.  This is for use with chunked transfer encoding.
+</span>124 <span style=''>    */
+</span>125 <span style=''>  implicit def streamEncoder[F[_], A](implicit
+</span>126 <span style=''>      W: EntityEncoder[F, A]
+</span>127 <span style=''>  ): EntityEncoder[F, Stream[F, A]] =
+</span>128 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> EntityEncoder[F, Stream[F, A]] {
+</span>129 <span style=''>      override def toEntity(a: Stream[F, A]): Entity[F] =
+</span>130 <span style=''>        </span><span style='background: #AEF1AE'>Entity(a.flatMap(W.toEntity(_).body))</span><span style=''>
+</span>131 <span style=''>
+</span>132 <span style=''>      override def headers: Headers =
+</span>133 <span style=''>        </span><span style='background: #AEF1AE'>W.headers.get[`Transfer-Encoding`]</span><span style=''> match {
+</span>134 <span style=''>          case Some(transferCoding) if </span><span style='background: #AEF1AE'>transferCoding.hasChunked</span><span style=''> =&gt;
+</span>135 <span style=''>            </span><span style='background: #AEF1AE'>W.headers</span><span style=''>
+</span>136 <span style=''>          case _ =&gt;
+</span>137 <span style=''>            </span><span style='background: #AEF1AE'>W.headers.add(`Transfer-Encoding`(TransferCoding.chunked.pure[NonEmptyList]))</span><span style=''>
+</span>138 <span style=''>        }
+</span>139 <span style=''>    }
+</span>140 <span style=''>
+</span>141 <span style=''>  implicit def unitEncoder[F[_]]: EntityEncoder[F, Unit] =
+</span>142 <span style=''>    </span><span style='background: #AEF1AE'>emptyEncoder[F, Unit]</span><span style=''>
+</span>143 <span style=''>
+</span>144 <span style=''>  implicit def stringEncoder[F[_]](implicit
+</span>145 <span style=''>      charset: Charset = `UTF-8`
+</span>146 <span style=''>  ): EntityEncoder[F, String] = {
+</span>147 <span style=''>    val hdr = </span><span style='background: #AEF1AE'>`Content-Type`(MediaType.text.plain).withCharset(charset)</span><span style=''>
+</span>148 <span style=''>    </span><span style='background: #AEF1AE'>simple(hdr)(s =&gt; Chunk.array(s.getBytes(charset.nioCharset)))</span><span style=''>
+</span>149 <span style=''>  }
+</span>150 <span style=''>
+</span>151 <span style=''>  implicit def charArrayEncoder[F[_]](implicit
+</span>152 <span style=''>      charset: Charset = `UTF-8`
+</span>153 <span style=''>  ): EntityEncoder[F, Array[Char]] =
+</span>154 <span style=''>    </span><span style='background: #AEF1AE'>stringEncoder[F].contramap(new String(_))</span><span style=''>
+</span>155 <span style=''>
+</span>156 <span style=''>  implicit def chunkEncoder[F[_]]: EntityEncoder[F, Chunk[Byte]] =
+</span>157 <span style=''>    </span><span style='background: #AEF1AE'>simple(`Content-Type`(MediaType.application.`octet-stream`))(identity)</span><span style=''>
+</span>158 <span style=''>
+</span>159 <span style=''>  implicit def byteArrayEncoder[F[_]]: EntityEncoder[F, Array[Byte]] =
+</span>160 <span style=''>    </span><span style='background: #AEF1AE'>chunkEncoder[F].contramap(Chunk.array[Byte])</span><span style=''>
+</span>161 <span style=''>
+</span>162 <span style=''>  implicit def byteVectorEncoder[F[_]]: EntityEncoder[F, ByteVector] =
+</span>163 <span style=''>    </span><span style='background: #AEF1AE'>chunkEncoder[F].contramap(Chunk.byteVector)</span><span style=''>
+</span>164 <span style=''>
+</span>165 <span style=''>  /** Encodes an entity body.  Chunking of the stream is preserved.  A
+</span>166 <span style=''>    * `Transfer-Encoding: chunked` header is set, as we cannot know
+</span>167 <span style=''>    * the content length without running the stream.
+</span>168 <span style=''>    */
+</span>169 <span style=''>  implicit def entityBodyEncoder[F[_]]: EntityEncoder[F, EntityBody[F]] =
+</span>170 <span style=''>    </span><span style='background: #AEF1AE'>encodeBy(`Transfer-Encoding`(TransferCoding.chunked.pure[NonEmptyList])) { body =&gt;
+</span>171 <span style=''></span><span style='background: #AEF1AE'>      Entity(body, None)
+</span>172 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>173 <span style=''>
+</span>174 <span style=''>  // TODO if Header moves to Entity, can add a Content-Disposition with the filename
+</span>175 <span style=''>  @deprecated(&quot;Use pathEncoder with fs2.io.file.Path&quot;, &quot;0.23.5&quot;)
+</span>176 <span style=''>  implicit def fileEncoder[F[_]: Files]: EntityEncoder[F, File] =
+</span>177 <span style=''>    </span><span style='background: #F0ADAD'>pathEncoder.contramap(f =&gt; fs2.io.file.Path.fromNioPath(f.toPath()))</span><span style=''>
+</span>178 <span style=''>
+</span>179 <span style=''>  // TODO if Header moves to Entity, can add a Content-Disposition with the filename
+</span>180 <span style=''>  @deprecated(&quot;Use pathEncoder with fs2.io.file.Path&quot;, &quot;0.23.5&quot;)
+</span>181 <span style=''>  implicit def filePathEncoder[F[_]: Files]: EntityEncoder[F, Path] =
+</span>182 <span style=''>    </span><span style='background: #F0ADAD'>pathEncoder.contramap(p =&gt; fs2.io.file.Path.fromNioPath(p))</span><span style=''>
+</span>183 <span style=''>
+</span>184 <span style=''>  // TODO if Header moves to Entity, can add a Content-Disposition with the filename
+</span>185 <span style=''>  implicit def pathEncoder[F[_]: Files]: EntityEncoder[F, fs2.io.file.Path] =
+</span>186 <span style=''>    </span><span style='background: #AEF1AE'>encodeBy[F, fs2.io.file.Path](`Transfer-Encoding`(TransferCoding.chunked)) { p =&gt;
+</span>187 <span style=''></span><span style='background: #AEF1AE'>      Entity(Files[F].readAll(p))
+</span>188 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>189 <span style=''>
+</span>190 <span style=''>  implicit def inputStreamEncoder[F[_]: Sync, IS &lt;: InputStream]: EntityEncoder[F, F[IS]] =
+</span>191 <span style=''>    </span><span style='background: #AEF1AE'>entityBodyEncoder[F].contramap { (in: F[IS]) =&gt;
+</span>192 <span style=''></span><span style='background: #AEF1AE'>      readInputStream[F](in.widen[InputStream], DefaultChunkSize)
+</span>193 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>194 <span style=''>
+</span>195 <span style=''>  // TODO parameterize chunk size
+</span>196 <span style=''>  implicit def readerEncoder[F[_], R &lt;: Reader](implicit
+</span>197 <span style=''>      F: Sync[F],
+</span>198 <span style=''>      charset: Charset = `UTF-8`,
+</span>199 <span style=''>  ): EntityEncoder[F, F[R]] =
+</span>200 <span style=''>    </span><span style='background: #AEF1AE'>entityBodyEncoder[F].contramap { (fr: F[R]) =&gt;
+</span>201 <span style=''></span><span style='background: #AEF1AE'>      // Shared buffer
+</span>202 <span style=''></span><span style='background: #AEF1AE'>      val charBuffer = CharBuffer.allocate(DefaultChunkSize)
+</span>203 <span style=''></span><span style='background: #AEF1AE'>      def readToBytes(r: Reader): F[Option[Chunk[Byte]]] =
+</span>204 <span style=''></span><span style='background: #AEF1AE'>        for {
+</span>205 <span style=''></span><span style='background: #AEF1AE'>          // Read into the buffer
+</span>206 <span style=''></span><span style='background: #AEF1AE'>          readChars &lt;- F.blocking(r.read(charBuffer))
+</span>207 <span style=''></span><span style='background: #AEF1AE'>        } yield {
+</span>208 <span style=''></span><span style='background: #AEF1AE'>          // Flip to read
+</span>209 <span style=''></span><span style='background: #AEF1AE'>          charBuffer.flip()
+</span>210 <span style=''></span><span style='background: #AEF1AE'>
+</span>211 <span style=''></span><span style='background: #AEF1AE'>          if (readChars &lt; 0) None
+</span>212 <span style=''></span><span style='background: #AEF1AE'>          else if (readChars == 0) Some(Chunk.empty)
+</span>213 <span style=''></span><span style='background: #AEF1AE'>          else {
+</span>214 <span style=''></span><span style='background: #AEF1AE'>            // Encode to bytes according to the charset
+</span>215 <span style=''></span><span style='background: #AEF1AE'>            val bb = charset.nioCharset.encode(charBuffer)
+</span>216 <span style=''></span><span style='background: #AEF1AE'>            // Read into a Chunk
+</span>217 <span style=''></span><span style='background: #AEF1AE'>            val b = new Array[Byte](bb.remaining())
+</span>218 <span style=''></span><span style='background: #AEF1AE'>            bb.get(b)
+</span>219 <span style=''></span><span style='background: #AEF1AE'>            Some(Chunk.array(b))
+</span>220 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>221 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>222 <span style=''></span><span style='background: #AEF1AE'>
+</span>223 <span style=''></span><span style='background: #AEF1AE'>      def useReader(r: Reader) =
+</span>224 <span style=''></span><span style='background: #AEF1AE'>        Stream
+</span>225 <span style=''></span><span style='background: #AEF1AE'>          .eval(readToBytes(r))
+</span>226 <span style=''></span><span style='background: #AEF1AE'>          .repeat
+</span>227 <span style=''></span><span style='background: #AEF1AE'>          .unNoneTerminate
+</span>228 <span style=''></span><span style='background: #AEF1AE'>          .flatMap(Stream.chunk[F, Byte])
+</span>229 <span style=''></span><span style='background: #AEF1AE'>
+</span>230 <span style=''></span><span style='background: #AEF1AE'>      // The reader is closed at the end like InputStream
+</span>231 <span style=''></span><span style='background: #AEF1AE'>      Stream.bracket(fr)(r =&gt; F.delay(r.close())).flatMap(useReader)
+</span>232 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>233 <span style=''>
+</span>234 <span style=''>  implicit def multipartEncoder[F[_]]: EntityEncoder[F, Multipart[F]] =
+</span>235 <span style=''>    </span><span style='background: #AEF1AE'>new MultipartEncoder[F]</span><span style=''>
+</span>236 <span style=''>
+</span>237 <span style=''>  implicit def entityEncoderContravariant[F[_]]: Contravariant[EntityEncoder[F, *]] =
+</span>238 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Contravariant[EntityEncoder[F, *]] {
+</span>239 <span style=''>      override def contramap[A, B](r: EntityEncoder[F, A])(f: (B) =&gt; A): EntityEncoder[F, B] =
+</span>240 <span style=''>        </span><span style='background: #AEF1AE'>r.contramap(f)</span><span style=''>
+</span>241 <span style=''>    }
+</span>242 <span style=''>
+</span>243 <span style=''>  implicit def serverSentEventEncoder[F[_]]: EntityEncoder[F, EventStream[F]] =
+</span>244 <span style=''>    </span><span style='background: #AEF1AE'>entityBodyEncoder[F]
+</span>245 <span style=''></span><span style='background: #AEF1AE'>      .contramap[EventStream[F]](_.through(ServerSentEvent.encoder))
+</span>246 <span style=''></span><span style='background: #AEF1AE'>      .withContentType(`Content-Type`(MediaType.`text/event-stream`))</span><span style=''>
+</span>247 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          14673
+        </td>
+        <td>
+          1767
+          -
+          1770
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.circe.test.circesuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          14093
+        </td>
+        <td>
+          1854
+          -
+          1858
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          20384
+        </td>
+        <td>
+          1840
+          -
+          1859
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.toEntity(f.apply(a))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          16550
+        </td>
+        <td>
+          1898
+          -
+          1910
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityEncoder.headers
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.circe.test.circesuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.headers
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          13310
+        </td>
+        <td>
+          2095
+          -
+          2122
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.headers.get[org.http4s.headers.Content-Type](Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          21193
+        </td>
+        <td>
+          2106
+          -
+          2106
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          17047
+        </td>
+        <td>
+          2106
+          -
+          2106
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          19504
+        </td>
+        <td>
+          2267
+          -
+          2267
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          17898
+        </td>
+        <td>
+          2267
+          -
+          2267
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          20263
+        </td>
+        <td>
+          2256
+          -
+          2302
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityEncoder.this.headers.get[org.http4s.headers.Content-Type](Header.this.Select.singleHeaders[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance)).flatMap[org.http4s.Charset](((x$1: org.http4s.headers.Content-Type) =&gt; x$1.charset))
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          13848
+        </td>
+        <td>
+          2292
+          -
+          2301
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.charset
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$1.charset
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          13175
+        </td>
+        <td>
+          2456
+          -
+          2459
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.circe.test.circesuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          16570
+        </td>
+        <td>
+          2529
+          -
+          2545
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.toEntity(a)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          22872
+        </td>
+        <td>
+          2601
+          -
+          2601
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.circe.test.circesuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          17065
+        </td>
+        <td>
+          2584
+          -
+          2605
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.put
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.circe.test.circesuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.headers.put(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](tpe)(headers.this.Content-Type.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          21078
+        </td>
+        <td>
+          2601
+          -
+          2604
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.server.middleware.urlformliftersuite,org.http4s.circe.test.circesuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](tpe)(headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          19527
+        </td>
+        <td>
+          2671
+          -
+          2675
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          4096
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          13741
+        </td>
+        <td>
+          2928
+          -
+          2931
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          17608
+        </td>
+        <td>
+          3001
+          -
+          3005
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          16958
+        </td>
+        <td>
+          3234
+          -
+          3247
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.Headers.empty
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.empty
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          16162
+        </td>
+        <td>
+          3213
+          -
+          3228
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply((hs: _*))
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          22738
+        </td>
+        <td>
+          3213
+          -
+          3228
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply((hs: _*))
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          20283
+        </td>
+        <td>
+          3200
+          -
+          3211
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.nonEmpty
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          hs.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          21164
+        </td>
+        <td>
+          3234
+          -
+          3247
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.empty
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.empty
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          13195
+        </td>
+        <td>
+          3252
+          -
+          3269
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.encodeBy
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.encodeBy[[_]F[_], A](hdrs)(f)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          22760
+        </td>
+        <td>
+          3525
+          -
+          3633
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.encodeBy
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.encodeBy[[_]F[_], A]((hs: _*))(((a: A) =&gt; {
+  val c: fs2.Chunk[Byte] = toChunk.apply(a);
+  Entity.apply[F](fs2.Stream.chunk[[x]fs2.Pure[x], Byte](c), scala.Some.apply[Long](c.size.toLong))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          19550
+        </td>
+        <td>
+          3563
+          -
+          3573
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          toChunk.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          20165
+        </td>
+        <td>
+          3607
+          -
+          3626
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](c.size.toLong)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          15682
+        </td>
+        <td>
+          3590
+          -
+          3605
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.chunk
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](c)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          16184
+        </td>
+        <td>
+          3580
+          -
+          3627
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Entity.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Entity.apply[F](fs2.Stream.chunk[[x]fs2.Pure[x], Byte](c), scala.Some.apply[Long](c.size.toLong))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          14084
+        </td>
+        <td>
+          3612
+          -
+          3625
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toLong
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.size.toLong
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          21058
+        </td>
+        <td>
+          3870
+          -
+          3927
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.withCharset
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Content-Type.apply(MediaType.text.plain).withCharset(charset)
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          13953
+        </td>
+        <td>
+          3955
+          -
+          4009
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.Chunk.array[Byte](show.show(a).getBytes(charset.nioCharset))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          17314
+        </td>
+        <td>
+          3945
+          -
+          3945
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          20540
+        </td>
+        <td>
+          3932
+          -
+          4010
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.simple
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityEncoder.this.simple[F, A](Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](hdr)(headers.this.Content-Type.headerInstance))(((a: A) =&gt; fs2.Chunk.array[Byte](show.show(a).getBytes(charset.nioCharset))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))))
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          16042
+        </td>
+        <td>
+          3967
+          -
+          4008
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.getBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          show.show(a).getBytes(charset.nioCharset)
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          13476
+        </td>
+        <td>
+          3945
+          -
+          3948
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](hdr)(headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          19415
+        </td>
+        <td>
+          3989
+          -
+          4007
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Charset.nioCharset
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          charset.nioCharset
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          21070
+        </td>
+        <td>
+          4071
+          -
+          4074
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.entitycodecsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          16198
+        </td>
+        <td>
+          4135
+          -
+          4147
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.empty
+        </td>
+        <td>
+          org.http4s.dsl.responsegeneratorsuite,munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Entity.empty
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          22621
+        </td>
+        <td>
+          4177
+          -
+          4190
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Headers.empty
+        </td>
+        <td>
+          org.http4s.entitycodecsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.empty
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          18891
+        </td>
+        <td>
+          4543
+          -
+          4546
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          13169
+        </td>
+        <td>
+          4662
+          -
+          4662
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.http4ssuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          13970
+        </td>
+        <td>
+          4646
+          -
+          4683
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Entity.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.http4ssuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Entity.apply[[x]F[x]](a.flatMap[[x]F[x], Byte](((x$2: A) =&gt; W.toEntity(x$2).body))(compat.this.NotGiven.default[Nothing]), Entity.apply$default$2[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          19434
+        </td>
+        <td>
+          4653
+          -
+          4682
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.http4ssuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          a.flatMap[[x]F[x], Byte](((x$2: A) =&gt; W.toEntity(x$2).body))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          15931
+        </td>
+        <td>
+          4646
+          -
+          4646
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Entity.apply$default$2
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.http4ssuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Entity.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          17181
+        </td>
+        <td>
+          4663
+          -
+          4681
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.body
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          W.toEntity(x$2).body
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          16433
+        </td>
+        <td>
+          4744
+          -
+          4744
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerInstance
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          19141
+        </td>
+        <td>
+          4731
+          -
+          4765
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          W.headers.get[org.http4s.headers.Transfer-Encoding](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          22643
+        </td>
+        <td>
+          4744
+          -
+          4744
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.recurringHeadersWithMerge
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Transfer-Encoding](headers.this.Transfer-Encoding.headerSemigroupInstance, headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          20273
+        </td>
+        <td>
+          4744
+          -
+          4744
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerSemigroupInstance
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerSemigroupInstance
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          17202
+        </td>
+        <td>
+          4813
+          -
+          4838
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.hasChunked
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          transferCoding.hasChunked
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          13186
+        </td>
+        <td>
+          4854
+          -
+          4863
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityEncoder.headers
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          W.headers
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          13873
+        </td>
+        <td>
+          4930
+          -
+          4971
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          15948
+        </td>
+        <td>
+          4957
+          -
+          4957
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataInstancesForNonEmptyList
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataInstancesForNonEmptyList
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          19686
+        </td>
+        <td>
+          4930
+          -
+          4952
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.TransferCoding.chunked
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          TransferCoding.chunked
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          16450
+        </td>
+        <td>
+          4909
+          -
+          4909
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerInstance
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          22598
+        </td>
+        <td>
+          4896
+          -
+          4973
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.add
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          W.headers.add[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          20160
+        </td>
+        <td>
+          4910
+          -
+          4972
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.test.circesuite,org.http4s.client.middleware.retrysuite,org.http4s.ember.client.emberclientsuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList))
+        </td>
+      </tr><tr>
+        <td>
+          142
+        </td>
+        <td>
+          16968
+        </td>
+        <td>
+          5054
+          -
+          5075
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.emptyEncoder
+        </td>
+        <td>
+          org.http4s.entitycodecsuite,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.emptyEncoder[F, Unit]
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          13060
+        </td>
+        <td>
+          5202
+          -
+          5259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.withCharset
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Type.apply(MediaType.text.plain).withCharset(charset)
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          16325
+        </td>
+        <td>
+          5281
+          -
+          5324
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.array[Byte](s.getBytes(charset.nioCharset))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          20176
+        </td>
+        <td>
+          5293
+          -
+          5323
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.getBytes
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.getBytes(charset.nioCharset)
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          13594
+        </td>
+        <td>
+          5304
+          -
+          5322
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Charset.nioCharset
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          charset.nioCharset
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          15531
+        </td>
+        <td>
+          5271
+          -
+          5274
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](hdr)(headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          22615
+        </td>
+        <td>
+          5264
+          -
+          5325
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.simple
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.core.encodersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.simple[[_]F[_], String](Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](hdr)(headers.this.Content-Type.headerInstance))(((s: String) =&gt; fs2.Chunk.array[Byte](s.getBytes(charset.nioCharset))((ClassTag.Byte: scala.reflect.ClassTag[Byte]))))
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          19702
+        </td>
+        <td>
+          5271
+          -
+          5271
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.encodersuite,org.http4s.urlformspec,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          18767
+        </td>
+        <td>
+          5479
+          -
+          5492
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new scala.Predef.String(x$3)
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          17173
+        </td>
+        <td>
+          5452
+          -
+          5493
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          org.http4s.entitycodecsuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.stringEncoder[F](charset).contramap[Array[Char]](((x$3: Array[Char]) =&gt; new scala.Predef.String(x$3)))
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          19937
+        </td>
+        <td>
+          5587
+          -
+          5587
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.client.clientspec,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          15555
+        </td>
+        <td>
+          5573
+          -
+          5625
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.circe.test.circesuite,org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](org.http4s.headers.Content-Type.apply(MediaType.application.octet-stream))(headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          13079
+        </td>
+        <td>
+          5573
+          -
+          5625
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.apply
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.client.clientspec,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Type.apply(MediaType.application.octet-stream)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          22457
+        </td>
+        <td>
+          5627
+          -
+          5635
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[fs2.Chunk[Byte]](x)
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          20402
+        </td>
+        <td>
+          5566
+          -
+          5636
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.simple
+        </td>
+        <td>
+          org.http4s.entitydecodersuite,org.http4s.client.clientspec,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.simple[[_]F[_], fs2.Chunk[Byte]](Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](org.http4s.headers.Content-Type.apply(MediaType.application.octet-stream))(headers.this.Content-Type.headerInstance))(((x: fs2.Chunk[Byte]) =&gt; scala.Predef.identity[fs2.Chunk[Byte]](x)))
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          16344
+        </td>
+        <td>
+          5739
+          -
+          5756
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.array[Byte](values)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          23135
+        </td>
+        <td>
+          5713
+          -
+          5757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.chunkEncoder[F].contramap[Array[Byte]](((values: Array[Byte]) =&gt; fs2.Chunk.array[Byte](values)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))))
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          17191
+        </td>
+        <td>
+          5834
+          -
+          5877
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.chunkEncoder[F].contramap[scodec.bits.ByteVector](((bv: scodec.bits.ByteVector) =&gt; fs2.Chunk.byteVector(bv)))
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          18790
+        </td>
+        <td>
+          5860
+          -
+          5876
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Chunk.byteVector
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.byteVector(bv)
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          16292
+        </td>
+        <td>
+          6165
+          -
+          6227
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          13331
+        </td>
+        <td>
+          6185
+          -
+          6207
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.TransferCoding.chunked
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          TransferCoding.chunked
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          20424
+        </td>
+        <td>
+          6184
+          -
+          6184
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerInstance
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          15250
+        </td>
+        <td>
+          6156
+          -
+          6269
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.encodeBy
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.encodeBy[[_]F[_], org.http4s.EntityBody[F]](Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance))(((body: org.http4s.EntityBody[F]) =&gt; Entity.apply[[_]F[_]](body, scala.None)))
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          19954
+        </td>
+        <td>
+          6212
+          -
+          6212
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataInstancesForNonEmptyList
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataInstancesForNonEmptyList
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          15576
+        </td>
+        <td>
+          6185
+          -
+          6226
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          22314
+        </td>
+        <td>
+          6165
+          -
+          6227
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.apply
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList))
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          23154
+        </td>
+        <td>
+          6258
+          -
+          6262
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          19155
+        </td>
+        <td>
+          6245
+          -
+          6263
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Entity.apply
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Entity.apply[[_]F[_]](body, scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          19549
+        </td>
+        <td>
+          6518
+          -
+          6558
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Path.fromNioPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.io.file.Path.fromNioPath(f.toPath())
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          13352
+        </td>
+        <td>
+          6547
+          -
+          6557
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.File.toPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.toPath()
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          16086
+        </td>
+        <td>
+          6491
+          -
+          6559
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityEncoder.this.pathEncoder[[_]F[_]](evidence$1).contramap[java.io.File](((f: java.io.File) =&gt; fs2.io.file.Path.fromNioPath(f.toPath())))
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          20297
+        </td>
+        <td>
+          6785
+          -
+          6844
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityEncoder.this.pathEncoder[[_]F[_]](evidence$2).contramap[java.nio.file.Path](((p: java.nio.file.Path) =&gt; fs2.io.file.Path.fromNioPath(p)))
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          22337
+        </td>
+        <td>
+          6812
+          -
+          6843
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Path.fromNioPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.io.file.Path.fromNioPath(p)
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          22217
+        </td>
+        <td>
+          7013
+          -
+          7134
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.encodeBy
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.encodeBy[F, fs2.io.file.Path](Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(TransferCoding.chunked))(headers.this.Transfer-Encoding.headerInstance))(((p: fs2.io.file.Path) =&gt; Entity.apply[[_]F[_]](fs2.io.file.Files.apply[F](evidence$3).readAll(p), Entity.apply$default$2[Nothing])))
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          22901
+        </td>
+        <td>
+          7043
+          -
+          7086
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.apply
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Transfer-Encoding.apply(TransferCoding.chunked)
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          16318
+        </td>
+        <td>
+          7063
+          -
+          7085
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.TransferCoding.chunked
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          TransferCoding.chunked
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          15273
+        </td>
+        <td>
+          7043
+          -
+          7086
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(TransferCoding.chunked))(headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          19047
+        </td>
+        <td>
+          7062
+          -
+          7062
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerInstance
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          12951
+        </td>
+        <td>
+          7108
+          -
+          7127
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.readAll
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](evidence$3).readAll(p)
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          19568
+        </td>
+        <td>
+          7101
+          -
+          7101
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Entity.apply$default$2
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Entity.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          187
+        </td>
+        <td>
+          15545
+        </td>
+        <td>
+          7101
+          -
+          7128
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Entity.apply
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Entity.apply[[_]F[_]](fs2.io.file.Files.apply[F](evidence$3).readAll(p), Entity.apply$default$2[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          16334
+        </td>
+        <td>
+          7232
+          -
+          7351
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.entityBodyEncoder[F].contramap[F[IS]](((in: F[IS]) =&gt; fs2.io.`package`.readInputStream[F](cats.syntax.`package`.all.toFunctorOps[F, IS](in)(evidence$4).widen[java.io.InputStream], EntityEncoder.this.DefaultChunkSize, fs2.io.`package`.readInputStream$default$3[F])(evidence$4)))
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          20312
+        </td>
+        <td>
+          7286
+          -
+          7345
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.readInputStream
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.`package`.readInputStream[F](cats.syntax.`package`.all.toFunctorOps[F, IS](in)(evidence$4).widen[java.io.InputStream], EntityEncoder.this.DefaultChunkSize, fs2.io.`package`.readInputStream$default$3[F])(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          19424
+        </td>
+        <td>
+          7530
+          -
+          8577
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.entityBodyEncoder[F].contramap[F[R]](((fr: F[R]) =&gt; {
+  val charBuffer: java.nio.CharBuffer = java.nio.CharBuffer.allocate(EntityEncoder.this.DefaultChunkSize);
+  def readToBytes(r: java.io.Reader): F[Option[fs2.Chunk[Byte]]] = cats.syntax.`package`.all.toFunctorOps[F, Int](F.blocking[Int](r.read(charBuffer)))(F).map[Option[fs2.Chunk[Byte]]](((readChars: Int) =&gt; {
+    charBuffer.flip();
+    if (readChars.&lt;(0))
+      scala.None
+    else
+      if (readChars.==(0))
+        scala.Some.apply[fs2.Chunk[Nothing]](fs2.Chunk.empty[Nothing])
+      else
+        {
+          val bb: java.nio.ByteBuffer = charset.nioCharset.encode(charBuffer);
+          val b: Array[Byte] = new Array[Byte](bb.remaining());
+          bb.get(b);
+          scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](b)((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+        }
+  }));
+  def useReader(r: java.io.Reader): fs2.Stream[[x]F[x],Byte] = fs2.this.Stream.OptionStreamOps[[_]F[_], fs2.Chunk[Byte]](fs2.Stream.eval[F, Option[fs2.Chunk[Byte]]](readToBytes(r)).repeat).unNoneTerminate.flatMap[[x]F[x], Byte](((os: fs2.Chunk[Byte]) =&gt; fs2.Stream.chunk[F, Byte](os)))(compat.this.NotGiven.default[Nothing]);
+  fs2.Stream.bracket[F, R](fr)(((r: R) =&gt; F.delay[Unit](r.close()))).flatMap[[x]F[x], Byte](((r: java.io.Reader) =&gt; useReader(r)))(compat.this.NotGiven.default[Nothing])
+}))
+        </td>
+      </tr><tr>
+        <td>
+          202
+        </td>
+        <td>
+          22778
+        </td>
+        <td>
+          7643
+          -
+          7659
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.EntityEncoder.DefaultChunkSize
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.DefaultChunkSize
+        </td>
+      </tr><tr>
+        <td>
+          202
+        </td>
+        <td>
+          18779
+        </td>
+        <td>
+          7623
+          -
+          7660
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.CharBuffer.allocate
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.CharBuffer.allocate(EntityEncoder.this.DefaultChunkSize)
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          15113
+        </td>
+        <td>
+          7728
+          -
+          8275
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Int](F.blocking[Int](r.read(charBuffer)))(F).map[Option[fs2.Chunk[Byte]]](((readChars: Int) =&gt; {
+  charBuffer.flip();
+  if (readChars.&lt;(0))
+    scala.None
+  else
+    if (readChars.==(0))
+      scala.Some.apply[fs2.Chunk[Nothing]](fs2.Chunk.empty[Nothing])
+    else
+      {
+        val bb: java.nio.ByteBuffer = charset.nioCharset.encode(charBuffer);
+        val b: Array[Byte] = new Array[Byte](bb.remaining());
+        bb.get(b);
+        scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](b)((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+      }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          12965
+        </td>
+        <td>
+          7791
+          -
+          7821
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.blocking
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.blocking[Int](r.read(charBuffer))
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          15135
+        </td>
+        <td>
+          7802
+          -
+          7820
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.Reader.read
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.read(charBuffer)
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          19588
+        </td>
+        <td>
+          7876
+          -
+          7893
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.CharBuffer.flip
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          charBuffer.flip()
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          16063
+        </td>
+        <td>
+          7909
+          -
+          7922
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          readChars.&lt;(0)
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          18132
+        </td>
+        <td>
+          7924
+          -
+          7928
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          211
+        </td>
+        <td>
+          21972
+        </td>
+        <td>
+          7924
+          -
+          7928
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          19304
+        </td>
+        <td>
+          7944
+          -
+          8265
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          if (readChars.==(0))
+  scala.Some.apply[fs2.Chunk[Nothing]](fs2.Chunk.empty[Nothing])
+else
+  {
+    val bb: java.nio.ByteBuffer = charset.nioCharset.encode(charBuffer);
+    val b: Array[Byte] = new Array[Byte](bb.remaining());
+    bb.get(b);
+    scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](b)((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+  }
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          14889
+        </td>
+        <td>
+          7964
+          -
+          7981
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[fs2.Chunk[Nothing]](fs2.Chunk.empty[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          16213
+        </td>
+        <td>
+          7948
+          -
+          7962
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          readChars.==(0)
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          19287
+        </td>
+        <td>
+          7964
+          -
+          7981
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[fs2.Chunk[Nothing]](fs2.Chunk.empty[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          22797
+        </td>
+        <td>
+          7969
+          -
+          7980
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.Chunk.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.empty[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          23044
+        </td>
+        <td>
+          7997
+          -
+          8265
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val bb: java.nio.ByteBuffer = charset.nioCharset.encode(charBuffer);
+  val b: Array[Byte] = new Array[Byte](bb.remaining());
+  bb.get(b);
+  scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](b)((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+}
+        </td>
+      </tr><tr>
+        <td>
+          215
+        </td>
+        <td>
+          12978
+        </td>
+        <td>
+          8076
+          -
+          8113
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.charset.Charset.encode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          charset.nioCharset.encode(charBuffer)
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          19452
+        </td>
+        <td>
+          8183
+          -
+          8197
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.Buffer.remaining
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bb.remaining()
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          16081
+        </td>
+        <td>
+          8167
+          -
+          8198
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Array.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new Array[Byte](bb.remaining())
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          22483
+        </td>
+        <td>
+          8211
+          -
+          8220
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.ByteBuffer.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bb.get(b)
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          18501
+        </td>
+        <td>
+          8238
+          -
+          8252
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.array
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.array[Byte](b)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          16230
+        </td>
+        <td>
+          8233
+          -
+          8253
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[fs2.Chunk[Byte]](fs2.Chunk.array[Byte](b)((ClassTag.Byte: scala.reflect.ClassTag[Byte])))
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          13204
+        </td>
+        <td>
+          8341
+          -
+          8355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.readToBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          readToBytes(r)
+        </td>
+      </tr><tr>
+        <td>
+          226
+        </td>
+        <td>
+          19473
+        </td>
+        <td>
+          8318
+          -
+          8374
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.repeat
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.eval[F, Option[fs2.Chunk[Byte]]](readToBytes(r)).repeat
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          22504
+        </td>
+        <td>
+          8420
+          -
+          8420
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          18522
+        </td>
+        <td>
+          8318
+          -
+          8443
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.OptionStreamOps[[_]F[_], fs2.Chunk[Byte]](fs2.Stream.eval[F, Option[fs2.Chunk[Byte]]](readToBytes(r)).repeat).unNoneTerminate.flatMap[[x]F[x], Byte](((os: fs2.Chunk[Byte]) =&gt; fs2.Stream.chunk[F, Byte](os)))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          228
+        </td>
+        <td>
+          15967
+        </td>
+        <td>
+          8421
+          -
+          8442
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.chunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.chunk[F, Byte](os)
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          15131
+        </td>
+        <td>
+          8560
+          -
+          8560
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          16468
+        </td>
+        <td>
+          8541
+          -
+          8550
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.Reader.close
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.close()
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          23062
+        </td>
+        <td>
+          8533
+          -
+          8551
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.delay[Unit](r.close())
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          19180
+        </td>
+        <td>
+          8561
+          -
+          8570
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.useReader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          useReader(r)
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          21739
+        </td>
+        <td>
+          8509
+          -
+          8571
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.flatMap
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.bracket[F, R](fr)(((r: R) =&gt; F.delay[Unit](r.close()))).flatMap[[x]F[x], Byte](((r: java.io.Reader) =&gt; useReader(r)))(compat.this.NotGiven.default[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          15984
+        </td>
+        <td>
+          8655
+          -
+          8678
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.multipart.MultipartEncoder.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.multipart.MultipartEncoder[F]()
+        </td>
+      </tr><tr>
+        <td>
+          238
+        </td>
+        <td>
+          18378
+        </td>
+        <td>
+          8770
+          -
+          8773
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.entityencoderspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          240
+        </td>
+        <td>
+          22230
+        </td>
+        <td>
+          8914
+          -
+          8928
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.contramap
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          r.contramap[B](f)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          22633
+        </td>
+        <td>
+          9074
+          -
+          9108
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.through
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.through[[x]F[x], Byte](ServerSentEvent.encoder[[_]F[_]])
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          16490
+        </td>
+        <td>
+          9084
+          -
+          9107
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.ServerSentEvent.encoder
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          ServerSentEvent.encoder[[_]F[_]]
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          15150
+        </td>
+        <td>
+          9020
+          -
+          9179
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.withContentType
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.this.entityBodyEncoder[F].contramap[org.http4s.EventStream[F]](((x$4: org.http4s.EventStream[F]) =&gt; x$4.through[[x]F[x], Byte](ServerSentEvent.encoder[[_]F[_]]))).withContentType(org.http4s.headers.Content-Type.apply(MediaType.text/event-stream))
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          19200
+        </td>
+        <td>
+          9133
+          -
+          9178
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.apply
+        </td>
+        <td>
+          org.http4s.serversenteventspec
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Type.apply(MediaType.text/event-stream)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

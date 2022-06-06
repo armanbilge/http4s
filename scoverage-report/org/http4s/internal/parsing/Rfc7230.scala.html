@@ -1,0 +1,2458 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/internal/parsing/Rfc7230.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.internal.parsing
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data.NonEmptyList
+</span>20 <span style=''>import cats.parse.Parser
+</span>21 <span style=''>import cats.parse.Parser.char
+</span>22 <span style=''>import cats.parse.Parser.charIn
+</span>23 <span style=''>import cats.parse.Parser0
+</span>24 <span style=''>import cats.parse.Rfc5234.alpha
+</span>25 <span style=''>import cats.parse.Rfc5234.digit
+</span>26 <span style=''>import cats.parse.Rfc5234.dquote
+</span>27 <span style=''>import cats.parse.Rfc5234.htab
+</span>28 <span style=''>import cats.parse.Rfc5234.sp
+</span>29 <span style=''>import cats.parse.Rfc5234.vchar
+</span>30 <span style=''>
+</span>31 <span style=''>/** Common rules defined in RFC7230
+</span>32 <span style=''>  *
+</span>33 <span style=''>  * @see [[https://datatracker.ietf.org/doc/html/rfc7230#appendix-B]]
+</span>34 <span style=''>  */
+</span>35 <span style=''>private[http4s] object Rfc7230 {
+</span>36 <span style=''>  /* `tchar = &quot;!&quot; / &quot;#&quot; / &quot;$&quot; / &quot;%&quot; / &quot;&amp;&quot; / &quot;'&quot; / &quot;*&quot; / &quot;+&quot; / &quot;-&quot; / &quot;.&quot; /
+</span>37 <span style=''>   *  &quot;^&quot; / &quot;_&quot; / &quot;`&quot; / &quot;|&quot; / &quot;~&quot; / DIGIT / ALPHA`
+</span>38 <span style=''>   */
+</span>39 <span style=''>  val tchar: Parser[Char] = </span><span style='background: #AEF1AE'>charIn(&quot;!#$%&amp;'*+-.^_`|~&quot;).orElse(digit).orElse(alpha)</span><span style=''>
+</span>40 <span style=''>
+</span>41 <span style=''>  /* `token = 1*tchar` */
+</span>42 <span style=''>  val token: Parser[String] = </span><span style='background: #AEF1AE'>tchar.rep.string</span><span style=''>
+</span>43 <span style=''>
+</span>44 <span style=''>  /* `obs-text = %x80-FF` */
+</span>45 <span style=''>  val obsText: Parser[Char] = </span><span style='background: #AEF1AE'>charIn(0x80.toChar to 0xff.toChar)</span><span style=''>
+</span>46 <span style=''>
+</span>47 <span style=''>  /* `OWS = *( SP / HTAB )` */
+</span>48 <span style=''>  val ows: Parser0[Unit] = </span><span style='background: #AEF1AE'>sp.orElse(htab).rep0.void</span><span style=''>
+</span>49 <span style=''>
+</span>50 <span style=''>  /*https://datatracker.ietf.org/doc/html/rfc7230#section-3.2.3 last paragraph */
+</span>51 <span style=''>  val bws: Parser0[Unit] = </span><span style='background: #AEF1AE'>ows</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>  /*   qdtext         = HTAB / SP /%x21 / %x23-5B / %x5D-7E / obs-text */
+</span>54 <span style=''>  val qdText: Parser[Char] =
+</span>55 <span style=''>    </span><span style='background: #AEF1AE'>charIn('\t', ' ', 0x21.toChar)
+</span>56 <span style=''></span><span style='background: #AEF1AE'>      .orElse(charIn(0x23.toChar to 0x5b.toChar))
+</span>57 <span style=''></span><span style='background: #AEF1AE'>      .orElse(charIn(0x5d.toChar to 0x7e.toChar))
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      .orElse(obsText)</span><span style=''>
+</span>59 <span style=''>
+</span>60 <span style=''>  val qdPairChar: Parser[Char] = </span><span style='background: #AEF1AE'>charIn('\t', ' ').orElse(vchar).orElse(obsText)</span><span style=''>
+</span>61 <span style=''>
+</span>62 <span style=''>  /* quoted-pair    = &quot;\&quot; ( HTAB / SP / VCHAR / obs-text ) */
+</span>63 <span style=''>  val quotedPair: Parser[Char] = </span><span style='background: #AEF1AE'>char('\\') *&gt; qdPairChar</span><span style=''>
+</span>64 <span style=''>
+</span>65 <span style=''>  private def surroundedBy[A](a: Parser0[A], b: Parser[Any]): Parser[A] =
+</span>66 <span style=''>    </span><span style='background: #AEF1AE'>b *&gt; a &lt;* b</span><span style=''>
+</span>67 <span style=''>  private def between[A](a: Parser[Any], b: Parser0[A], c: Parser[Any]): Parser[A] =
+</span>68 <span style=''>    </span><span style='background: #AEF1AE'>a *&gt; b &lt;* c</span><span style=''>
+</span>69 <span style=''>
+</span>70 <span style=''>  /*quoted-string  = DQUOTE *( qdtext / quoted-pair ) DQUOTE*/
+</span>71 <span style=''>  val quotedString: Parser[String] =
+</span>72 <span style=''>    </span><span style='background: #AEF1AE'>surroundedBy(qdText.orElse(quotedPair).rep0.string, dquote)</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>  /* HTAB / SP / %x21-27 / %x2A-5B / %x5D-7E / obs-text */
+</span>75 <span style=''>  val cText: Parser[Char] =
+</span>76 <span style=''>    </span><span style='background: #AEF1AE'>charIn('\t', ' ', 0x21.toChar)
+</span>77 <span style=''></span><span style='background: #AEF1AE'>      .orElse(charIn(0x21.toChar to 0x27.toChar))
+</span>78 <span style=''></span><span style='background: #AEF1AE'>      .orElse(charIn(0x2a.toChar to 0x5b.toChar))
+</span>79 <span style=''></span><span style='background: #AEF1AE'>      .orElse(charIn(0x5d.toChar to 0x7e.toChar))
+</span>80 <span style=''></span><span style='background: #AEF1AE'>      .orElse(obsText)</span><span style=''>
+</span>81 <span style=''>
+</span>82 <span style=''>  /* &quot;(&quot; *( ctext / quoted-pair / comment ) &quot;)&quot; */
+</span>83 <span style=''>  val comment: Parser[String] = </span><span style='background: #AEF1AE'>Parser.recursive[String] { (comment: Parser[String]) =&gt;
+</span>84 <span style=''></span><span style='background: #AEF1AE'>    between(char('('), cText.orElse(quotedPair).orElse(comment).rep0.string, char(')'))
+</span>85 <span style=''></span><span style='background: #AEF1AE'>  }</span><span style=''>
+</span>86 <span style=''>
+</span>87 <span style=''>  def headerRep[A](element: Parser[A]): Parser0[List[A]] =
+</span>88 <span style=''>    </span><span style='background: #AEF1AE'>headerRep1(element).?.map(_.fold(List.empty[A])(_.toList))</span><span style=''>
+</span>89 <span style=''>
+</span>90 <span style=''>  /* `1#element =&gt; *( &quot;,&quot; OWS ) element *( OWS &quot;,&quot; [ OWS element ] )` */
+</span>91 <span style=''>  def headerRep1[A](element: Parser[A]): Parser[NonEmptyList[A]] = {
+</span>92 <span style=''>    val prelude = </span><span style='background: #AEF1AE'>(char(',') &lt;* ows).rep0</span><span style=''>
+</span>93 <span style=''>    val tailOpt = </span><span style='background: #AEF1AE'>(ows.with1 *&gt; char(',') *&gt; (ows.with1 *&gt; element).?).rep0</span><span style=''>
+</span>94 <span style=''>    val tail = </span><span style='background: #AEF1AE'>tailOpt.map(_.collect { case Some(x) =&gt; x })</span><span style=''>
+</span>95 <span style=''>
+</span>96 <span style=''>    </span><span style='background: #AEF1AE'>(prelude.with1 *&gt; element ~ tail).map { case (h, t) =&gt;
+</span>97 <span style=''></span><span style='background: #AEF1AE'>      NonEmptyList(h, t)
+</span>98 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>99 <span style=''>  }
+</span>100 <span style=''>
+</span>101 <span style=''>  def listSep: Parser[Unit] = </span><span style='background: #AEF1AE'>Parser.char(',').surroundedBy(ows)</span><span style=''>
+</span>102 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          21029
+        </td>
+        <td>
+          1305
+          -
+          1310
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.digit
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.digit
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          22945
+        </td>
+        <td>
+          1279
+          -
+          1296
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          scala.LowPriorityImplicits.wrapString
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.wrapString(&quot;!#$%&amp;\'*+-.^_`|~&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          17133
+        </td>
+        <td>
+          1319
+          -
+          1324
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.alpha
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.alpha
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          13114
+        </td>
+        <td>
+          1272
+          -
+          1325
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn(scala.Predef.wrapString(&quot;!#$%&amp;\'*+-.^_`|~&quot;)).orElse[Char](cats.parse.Rfc5234.digit).orElse[Char](cats.parse.Rfc5234.alpha)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          19615
+        </td>
+        <td>
+          1383
+          -
+          1399
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.string
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.tchar.rep.string
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          21248
+        </td>
+        <td>
+          1460
+          -
+          1494
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.charIn
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn(scala.Predef.charWrapper(128.toChar).to(255.toChar))
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          16376
+        </td>
+        <td>
+          1482
+          -
+          1493
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          255.toChar
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          15869
+        </td>
+        <td>
+          1467
+          -
+          1471
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          22957
+        </td>
+        <td>
+          1467
+          -
+          1493
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.runtime.IntegralProxy.to
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.charWrapper(128.toChar).to(255.toChar)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          13658
+        </td>
+        <td>
+          1467
+          -
+          1478
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          128.toChar
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          20357
+        </td>
+        <td>
+          1482
+          -
+          1486
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          255
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          13002
+        </td>
+        <td>
+          1554
+          -
+          1579
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.void
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.sp.orElse[Unit](cats.parse.Rfc5234.htab).rep0.void
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          16882
+        </td>
+        <td>
+          1564
+          -
+          1568
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.htab
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.htab
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          19635
+        </td>
+        <td>
+          1690
+          -
+          1693
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.ows
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          15624
+        </td>
+        <td>
+          1809
+          -
+          1813
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '\t'
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          14171
+        </td>
+        <td>
+          1815
+          -
+          1818
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ' '
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          16255
+        </td>
+        <td>
+          1820
+          -
+          1831
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          33.toChar
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          20468
+        </td>
+        <td>
+          1820
+          -
+          1824
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          33
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          19653
+        </td>
+        <td>
+          1854
+          -
+          1880
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.runtime.IntegralProxy.to
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.charWrapper(35.toChar).to(91.toChar)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          16124
+        </td>
+        <td>
+          1847
+          -
+          1881
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.charIn
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn(scala.Predef.charWrapper(35.toChar).to(91.toChar))
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          13393
+        </td>
+        <td>
+          1869
+          -
+          1880
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          91.toChar
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          20630
+        </td>
+        <td>
+          1854
+          -
+          1865
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          35.toChar
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          17403
+        </td>
+        <td>
+          1869
+          -
+          1873
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          91
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          22848
+        </td>
+        <td>
+          1854
+          -
+          1858
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          35
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          13544
+        </td>
+        <td>
+          1904
+          -
+          1908
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          93
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          20332
+        </td>
+        <td>
+          1904
+          -
+          1915
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          93.toChar
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          19354
+        </td>
+        <td>
+          1904
+          -
+          1930
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.runtime.IntegralProxy.to
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.charWrapper(93.toChar).to(126.toChar)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          17128
+        </td>
+        <td>
+          1897
+          -
+          1931
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.charIn
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn(scala.Predef.charWrapper(93.toChar).to(126.toChar))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          16646
+        </td>
+        <td>
+          1919
+          -
+          1923
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          126
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          22570
+        </td>
+        <td>
+          1919
+          -
+          1930
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          126.toChar
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          13254
+        </td>
+        <td>
+          1947
+          -
+          1954
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.obsText
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.obsText
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          19874
+        </td>
+        <td>
+          1802
+          -
+          1955
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn('\t', ' ', 33.toChar).orElse[Char](cats.parse.Parser.charIn(scala.Predef.charWrapper(35.toChar).to(91.toChar))).orElse[Char](cats.parse.Parser.charIn(scala.Predef.charWrapper(93.toChar).to(126.toChar))).orElse[Char](Rfc7230.this.obsText)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          20350
+        </td>
+        <td>
+          2015
+          -
+          2020
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.vchar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.vchar
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          14054
+        </td>
+        <td>
+          2003
+          -
+          2006
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ' '
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          15501
+        </td>
+        <td>
+          1997
+          -
+          2001
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '\t'
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          22822
+        </td>
+        <td>
+          1990
+          -
+          2037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn('\t', ' ').orElse[Char](cats.parse.Rfc5234.vchar).orElse[Char](Rfc7230.this.obsText)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          16661
+        </td>
+        <td>
+          2029
+          -
+          2036
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.obsText
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.obsText
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          17015
+        </td>
+        <td>
+          2148
+          -
+          2158
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.qdPairChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.qdPairChar
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          18737
+        </td>
+        <td>
+          2139
+          -
+          2143
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '\\'
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          13276
+        </td>
+        <td>
+          2134
+          -
+          2158
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.*&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('\\').*&gt;[Char](Rfc7230.this.qdPairChar)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          19627
+        </td>
+        <td>
+          2238
+          -
+          2249
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          b.*&gt;[A](a).&lt;*[Any](b)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          15757
+        </td>
+        <td>
+          2339
+          -
+          2350
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.&lt;*
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          a.*&gt;[A](b).&lt;*[Any](c)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          21935
+        </td>
+        <td>
+          2483
+          -
+          2493
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedPair
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.quotedPair
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          20376
+        </td>
+        <td>
+          2469
+          -
+          2506
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.string
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.qdText.orElse[Char](Rfc7230.this.quotedPair).rep0.string
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          22840
+        </td>
+        <td>
+          2456
+          -
+          2515
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.surroundedBy
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.surroundedBy[String](Rfc7230.this.qdText.orElse[Char](Rfc7230.this.quotedPair).rep0.string, cats.parse.Rfc5234.dquote)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          16538
+        </td>
+        <td>
+          2508
+          -
+          2514
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Rfc5234.dquote
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Rfc5234.dquote
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          17034
+        </td>
+        <td>
+          2621
+          -
+          2624
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ' '
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          13298
+        </td>
+        <td>
+          2626
+          -
+          2630
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          33
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          19493
+        </td>
+        <td>
+          2626
+          -
+          2637
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          33.toChar
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          18966
+        </td>
+        <td>
+          2615
+          -
+          2619
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          '\t'
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          15775
+        </td>
+        <td>
+          2660
+          -
+          2664
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          33
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          18980
+        </td>
+        <td>
+          2653
+          -
+          2687
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.charIn
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn(scala.Predef.charWrapper(33.toChar).to(39.toChar))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          16264
+        </td>
+        <td>
+          2675
+          -
+          2686
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          39.toChar
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          22706
+        </td>
+        <td>
+          2660
+          -
+          2686
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.runtime.IntegralProxy.to
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.charWrapper(33.toChar).to(39.toChar)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          22526
+        </td>
+        <td>
+          2660
+          -
+          2671
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          33.toChar
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          20249
+        </td>
+        <td>
+          2675
+          -
+          2679
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          39
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          22549
+        </td>
+        <td>
+          2710
+          -
+          2736
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.runtime.IntegralProxy.to
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.charWrapper(42.toChar).to(91.toChar)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          15648
+        </td>
+        <td>
+          2725
+          -
+          2736
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          91.toChar
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          13159
+        </td>
+        <td>
+          2710
+          -
+          2721
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          42.toChar
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          19511
+        </td>
+        <td>
+          2725
+          -
+          2729
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          91
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          19998
+        </td>
+        <td>
+          2703
+          -
+          2737
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.charIn
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn(scala.Predef.charWrapper(42.toChar).to(91.toChar))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          16777
+        </td>
+        <td>
+          2710
+          -
+          2714
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          42
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          19220
+        </td>
+        <td>
+          2775
+          -
+          2779
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          126
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          15481
+        </td>
+        <td>
+          2775
+          -
+          2786
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          126.toChar
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          13274
+        </td>
+        <td>
+          2760
+          -
+          2786
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.runtime.IntegralProxy.to
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.charWrapper(93.toChar).to(126.toChar)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          16154
+        </td>
+        <td>
+          2760
+          -
+          2764
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          93
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          22721
+        </td>
+        <td>
+          2760
+          -
+          2771
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          93.toChar
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          19389
+        </td>
+        <td>
+          2753
+          -
+          2787
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.charIn
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn(scala.Predef.charWrapper(93.toChar).to(126.toChar))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          15666
+        </td>
+        <td>
+          2803
+          -
+          2810
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.obsText
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.obsText
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          21927
+        </td>
+        <td>
+          2608
+          -
+          2811
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.charIn('\t', ' ', 33.toChar).orElse[Char](cats.parse.Parser.charIn(scala.Predef.charWrapper(33.toChar).to(39.toChar))).orElse[Char](cats.parse.Parser.charIn(scala.Predef.charWrapper(42.toChar).to(91.toChar))).orElse[Char](cats.parse.Parser.charIn(scala.Predef.charWrapper(93.toChar).to(126.toChar))).orElse[Char](Rfc7230.this.obsText)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          13132
+        </td>
+        <td>
+          2896
+          -
+          3043
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.recursive
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.recursive[String](((comment: cats.parse.Parser[String]) =&gt; Rfc7230.this.between[String](cats.parse.Parser.char('('), Rfc7230.this.cText.orElse[Char](Rfc7230.this.quotedPair).orElse[Any](comment).rep0.string, cats.parse.Parser.char(')'))))
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          20509
+        </td>
+        <td>
+          2964
+          -
+          2973
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('(')
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          19235
+        </td>
+        <td>
+          3029
+          -
+          3038
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(')')
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          22592
+        </td>
+        <td>
+          2975
+          -
+          3027
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.string
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.cText.orElse[Char](Rfc7230.this.quotedPair).orElse[Any](comment).rep0.string
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          16536
+        </td>
+        <td>
+          2988
+          -
+          2998
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.quotedPair
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.quotedPair
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          14848
+        </td>
+        <td>
+          2956
+          -
+          3039
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.between
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.h2.hpacksuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.between[String](cats.parse.Parser.char('('), Rfc7230.this.cText.orElse[Char](Rfc7230.this.quotedPair).orElse[Any](comment).rep0.string, cats.parse.Parser.char(')'))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          19779
+        </td>
+        <td>
+          3141
+          -
+          3154
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.List.empty
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.empty[A]
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          22429
+        </td>
+        <td>
+          3134
+          -
+          3165
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.fold
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.fold[List[A]](scala.`package`.List.empty[A])(((x$2: cats.data.NonEmptyList[A]) =&gt; x$2.toList))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          20244
+        </td>
+        <td>
+          3108
+          -
+          3166
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser0.map
+        </td>
+        <td>
+          org.http4s.headers.acceptpostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.headerRep1[A](element).?.map[List[A]](((x$1: Option[cats.data.NonEmptyList[A]]) =&gt; x$1.fold[List[A]](scala.`package`.List.empty[A])(((x$2: cats.data.NonEmptyList[A]) =&gt; x$2.toList))))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          16033
+        </td>
+        <td>
+          3156
+          -
+          3164
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyList.toList
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.toList
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          16396
+        </td>
+        <td>
+          3334
+          -
+          3337
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          ','
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          22977
+        </td>
+        <td>
+          3342
+          -
+          3345
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.ows
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          19254
+        </td>
+        <td>
+          3328
+          -
+          3351
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep0
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.parser.rangeparsersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(',').&lt;*[Unit](Rfc7230.this.ows).rep0
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          13154
+        </td>
+        <td>
+          3397
+          -
+          3421
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.?
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.ows.with1.*&gt;[A](element).?
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          19652
+        </td>
+        <td>
+          3370
+          -
+          3427
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser.rep0
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.ows.with1.*&gt;[Unit](cats.parse.Parser.char(',')).*&gt;[Option[A]](Rfc7230.this.ows.with1.*&gt;[A](element).?).rep0
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          15363
+        </td>
+        <td>
+          3384
+          -
+          3393
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(',')
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          22450
+        </td>
+        <td>
+          3455
+          -
+          3486
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.collect
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.parser.rangeparsersuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$3.collect[A](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Option[A],A] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Option[A] =&gt; A&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Option[A], B1 &gt;: A](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Option[A]]: Option[A]): Option[A] @unchecked) match {
+      case (value: A): Some[A]((x @ _)) =&gt; x
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Option[A]): Boolean = ((x1.asInstanceOf[Option[A]]: Option[A]): Option[A] @unchecked) match {
+      case (value: A): Some[A]((x @ _)) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Option[A],A]))
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          18314
+        </td>
+        <td>
+          3443
+          -
+          3487
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser0.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          tailOpt.map[List[A]](((x$3: List[Option[A]]) =&gt; x$3.collect[A](({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Option[A],A] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Option[A] =&gt; A&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Option[A], B1 &gt;: A](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Option[A]]: Option[A]): Option[A] @unchecked) match {
+      case (value: A): Some[A]((x @ _)) =&gt; x
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Option[A]): Boolean = ((x1.asInstanceOf[Option[A]]: Option[A]): Option[A] @unchecked) match {
+      case (value: A): Some[A]((x @ _)) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Option[A],A]))))
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          15642
+        </td>
+        <td>
+          3465
+          -
+          3465
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.parser.rangeparsersuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          18863
+        </td>
+        <td>
+          3493
+          -
+          3578
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          prelude.with1.*&gt;[(A, List[A])](element.~[List[A]](tail)).map[cats.data.NonEmptyList[A]](((x0$1: (A, List[A])) =&gt; x0$1 match {
+  case (_1: A, _2: List[A]): (A, List[A])((h @ _), (t @ _)) =&gt; cats.data.NonEmptyList.apply[A](h, t)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          16419
+        </td>
+        <td>
+          3511
+          -
+          3525
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          element.~[List[A]](tail)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          22717
+        </td>
+        <td>
+          3554
+          -
+          3572
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.apply
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.parser.rangeparsersuite,org.http4s.dsl.responsegeneratorsuite,org.http4s.ember.client.internal.clienthelperssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.apply[A](h, t)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          19673
+        </td>
+        <td>
+          3614
+          -
+          3648
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.surroundedBy
+        </td>
+        <td>
+          org.http4s.parser.cachecontrolspec,org.http4s.server.middleware.staticheaderssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(',').surroundedBy(Rfc7230.this.ows)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          13028
+        </td>
+        <td>
+          3644
+          -
+          3647
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.ows
+        </td>
+        <td>
+          org.http4s.parser.cachecontrolspec,org.http4s.server.middleware.staticheaderssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Rfc7230.this.ows
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          15387
+        </td>
+        <td>
+          3626
+          -
+          3629
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.cachecontrolspec,org.http4s.server.middleware.staticheaderssuite
+        </td>
+        <td style="background: #AEF1AE">
+          ','
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

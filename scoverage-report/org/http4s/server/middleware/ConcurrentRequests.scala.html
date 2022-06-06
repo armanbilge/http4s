@@ -1,0 +1,417 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/ConcurrentRequests.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server.middleware
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data._
+</span>20 <span style=''>import cats.effect._
+</span>21 <span style=''>import cats.implicits._
+</span>22 <span style=''>import org.http4s._
+</span>23 <span style=''>import org.http4s.server._
+</span>24 <span style=''>
+</span>25 <span style=''>/** Middlewares for tracking the quantity of concurrent requests.
+</span>26 <span style=''>  *
+</span>27 <span style=''>  * These are generalized middlewares and can be used to implement metrics,
+</span>28 <span style=''>  * logging, max concurrent requests, etc.
+</span>29 <span style=''>  *
+</span>30 <span style=''>  * @note The concurrent request count is decremented on the completion of the
+</span>31 <span style=''>  *       Response body, or in the event of any error, and is guaranteed to
+</span>32 <span style=''>  *       only occur once.
+</span>33 <span style=''>  */
+</span>34 <span style=''>object ConcurrentRequests {
+</span>35 <span style=''>
+</span>36 <span style=''>  /** Run a side effect each time the concurrent request count increments and
+</span>37 <span style=''>    * decrements.
+</span>38 <span style=''>    *
+</span>39 <span style=''>    * @note Each side effect is given the current number of concurrent
+</span>40 <span style=''>    *       requests as an argument.
+</span>41 <span style=''>    *
+</span>42 <span style=''>    * @note `onIncrement` should never be &lt; 1 and `onDecrement` should never
+</span>43 <span style=''>    *       be value &lt; 0.
+</span>44 <span style=''>    *
+</span>45 <span style=''>    * @note This is the same as [[route]], but allows for the inner and outer
+</span>46 <span style=''>    *       effect types to differ.
+</span>47 <span style=''>    */
+</span>48 <span style=''>  def route2[F[_]: Sync, G[_]: Async]( // TODO (ce3-ra): Sync + MonadCancel
+</span>49 <span style=''>      onIncrement: Long =&gt; G[Unit],
+</span>50 <span style=''>      onDecrement: Long =&gt; G[Unit],
+</span>51 <span style=''>  ): F[ContextMiddleware[G, Long]] =
+</span>52 <span style=''>    </span><span style='background: #AEF1AE'>Ref
+</span>53 <span style=''></span><span style='background: #AEF1AE'>      .in[F, G, Long](0L)
+</span>54 <span style=''></span><span style='background: #AEF1AE'>      .map(ref =&gt;
+</span>55 <span style=''></span><span style='background: #AEF1AE'>        BracketRequestResponse.bracketRequestResponseRoutes[G, Long](
+</span>56 <span style=''></span><span style='background: #AEF1AE'>          ref.updateAndGet(_ + 1L).flatTap(onIncrement)
+</span>57 <span style=''></span><span style='background: #AEF1AE'>        )(Function.const(ref.updateAndGet(_ - 1L).flatMap(onDecrement)))
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>59 <span style=''>
+</span>60 <span style=''>  /** Run a side effect each time the concurrent request count increments and
+</span>61 <span style=''>    * decrements.
+</span>62 <span style=''>    *
+</span>63 <span style=''>    * @note Each side effect is given the current number of concurrent
+</span>64 <span style=''>    *       requests as an argument.
+</span>65 <span style=''>    *
+</span>66 <span style=''>    * @note `onIncrement` should never be &lt; 1 and `onDecrement` should never
+</span>67 <span style=''>    *       be value &lt; 0.
+</span>68 <span style=''>    */
+</span>69 <span style=''>  def route[F[_]: Async](
+</span>70 <span style=''>      onIncrement: Long =&gt; F[Unit],
+</span>71 <span style=''>      onDecrement: Long =&gt; F[Unit],
+</span>72 <span style=''>  ): F[ContextMiddleware[F, Long]] =
+</span>73 <span style=''>    </span><span style='background: #F0ADAD'>route2[F, F](onIncrement, onDecrement)</span><span style=''>
+</span>74 <span style=''>
+</span>75 <span style=''>  /** As [[route]], but runs the same effect on increment and decrement of the concurrent request count. */
+</span>76 <span style=''>  def onChangeRoute[F[_]: Async](onChange: Long =&gt; F[Unit]): F[ContextMiddleware[F, Long]] =
+</span>77 <span style=''>    </span><span style='background: #F0ADAD'>route[F](onChange, onChange)</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>  /** Run a side effect each time the concurrent request count increments and
+</span>80 <span style=''>    * decrements.
+</span>81 <span style=''>    *
+</span>82 <span style=''>    * @note Each side effect is given the current number of concurrent
+</span>83 <span style=''>    *       requests as an argument.
+</span>84 <span style=''>    *
+</span>85 <span style=''>    * @note `onIncrement` should never be &lt; 1 and `onDecrement` should never
+</span>86 <span style=''>    *       be value &lt; 0.
+</span>87 <span style=''>    *
+</span>88 <span style=''>    * @note This is the same as [[app]], but allows for the inner and outer
+</span>89 <span style=''>    *       effect types to differ.
+</span>90 <span style=''>    */
+</span>91 <span style=''>  def app2[F[_]: Sync, G[_]: Async](
+</span>92 <span style=''>      onIncrement: Long =&gt; G[Unit],
+</span>93 <span style=''>      onDecrement: Long =&gt; G[Unit],
+</span>94 <span style=''>  ): F[Kleisli[G, ContextRequest[G, Long], Response[G]] =&gt; Kleisli[G, Request[G], Response[G]]] =
+</span>95 <span style=''>    </span><span style='background: #AEF1AE'>Ref
+</span>96 <span style=''></span><span style='background: #AEF1AE'>      .in[F, G, Long](0L)
+</span>97 <span style=''></span><span style='background: #AEF1AE'>      .map(ref =&gt;
+</span>98 <span style=''></span><span style='background: #AEF1AE'>        BracketRequestResponse.bracketRequestResponseApp[G, Long](
+</span>99 <span style=''></span><span style='background: #AEF1AE'>          ref.updateAndGet(_ + 1L).flatTap(onIncrement)
+</span>100 <span style=''></span><span style='background: #AEF1AE'>        )(Function.const(ref.updateAndGet(_ - 1L).flatMap(onDecrement)))
+</span>101 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>102 <span style=''>
+</span>103 <span style=''>  /** Run a side effect each time the concurrent request count increments and
+</span>104 <span style=''>    * decrements.
+</span>105 <span style=''>    *
+</span>106 <span style=''>    * @note Each side effect is given the current number of concurrent
+</span>107 <span style=''>    *       requests as an argument.
+</span>108 <span style=''>    *
+</span>109 <span style=''>    * @note `onIncrement` should never be &lt; 1 and `onDecrement` should never
+</span>110 <span style=''>    *       be value &lt; 0.
+</span>111 <span style=''>    */
+</span>112 <span style=''>  def app[F[_]: Async](
+</span>113 <span style=''>      onIncrement: Long =&gt; F[Unit],
+</span>114 <span style=''>      onDecrement: Long =&gt; F[Unit],
+</span>115 <span style=''>  ): F[Kleisli[F, ContextRequest[F, Long], Response[F]] =&gt; Kleisli[F, Request[F], Response[F]]] =
+</span>116 <span style=''>    </span><span style='background: #F0ADAD'>app2[F, F](onIncrement, onDecrement)</span><span style=''>
+</span>117 <span style=''>
+</span>118 <span style=''>  /** As [[app]], but runs the same effect on increment and decrement of the concurrent request count. */
+</span>119 <span style=''>  def onChangeApp[F[_]: Async](
+</span>120 <span style=''>      onChange: Long =&gt; F[Unit]
+</span>121 <span style=''>  ): F[Kleisli[F, ContextRequest[F, Long], Response[F]] =&gt; Kleisli[F, Request[F], Response[F]]] =
+</span>122 <span style=''>    </span><span style='background: #F0ADAD'>app[F](onChange, onChange)</span><span style=''>
+</span>123 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8922
+        </td>
+        <td>
+          1789
+          -
+          1818
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Ref.in
+        </td>
+        <td>
+          org.http4s.server.middleware.maxactiverequestssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Ref.in[F, G, Long](0L)(evidence$1, evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          9653
+        </td>
+        <td>
+          1789
+          -
+          2043
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.maxactiverequestssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFunctorOps[F, cats.effect.kernel.Ref[G,Long]](cats.effect.`package`.Ref.in[F, G, Long](0L)(evidence$1, evidence$2))(evidence$1).map[org.http4s.server.ContextMiddleware[G,Long]](((ref: cats.effect.kernel.Ref[G,Long]) =&gt; BracketRequestResponse.bracketRequestResponseRoutes[G, Long](cats.implicits.toFlatMapOps[G, Long](ref.updateAndGet(((x$1: Long) =&gt; x$1.+(1L))))(evidence$2).flatTap[Unit](onIncrement))({
+  &lt;synthetic&gt; val eta$0$1: G[Unit] = cats.implicits.toFlatMapOps[G, Long](ref.updateAndGet(((x$2: Long) =&gt; x$2.-(1L))))(evidence$2).flatMap[Unit](onDecrement);
+  ((y: Long) =&gt; scala.Function.const[G[Unit], Long](eta$0$1)(y))
+})(evidence$2)))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          7765
+        </td>
+        <td>
+          1845
+          -
+          2035
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.BracketRequestResponse.bracketRequestResponseRoutes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          BracketRequestResponse.bracketRequestResponseRoutes[G, Long](cats.implicits.toFlatMapOps[G, Long](ref.updateAndGet(((x$1: Long) =&gt; x$1.+(1L))))(evidence$2).flatTap[Unit](onIncrement))({
+  &lt;synthetic&gt; val eta$0$1: G[Unit] = cats.implicits.toFlatMapOps[G, Long](ref.updateAndGet(((x$2: Long) =&gt; x$2.-(1L))))(evidence$2).flatMap[Unit](onDecrement);
+  ((y: Long) =&gt; scala.Function.const[G[Unit], Long](eta$0$1)(y))
+})(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          8479
+        </td>
+        <td>
+          2510
+          -
+          2548
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ConcurrentRequests.route2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ConcurrentRequests.this.route2[F, F](onIncrement, onDecrement)(evidence$3, evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          7951
+        </td>
+        <td>
+          2755
+          -
+          2783
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ConcurrentRequests.route
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ConcurrentRequests.this.route[F](onChange, onChange)(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          9889
+        </td>
+        <td>
+          3440
+          -
+          3469
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Ref.in
+        </td>
+        <td>
+          org.http4s.server.middleware.maxactiverequestssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Ref.in[F, G, Long](0L)(evidence$5, evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          7673
+        </td>
+        <td>
+          3440
+          -
+          3691
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.maxactiverequestssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.implicits.toFunctorOps[F, cats.effect.kernel.Ref[G,Long]](cats.effect.`package`.Ref.in[F, G, Long](0L)(evidence$5, evidence$6))(evidence$5).map[cats.data.Kleisli[G,org.http4s.ContextRequest[G,Long],org.http4s.Response[G]] =&gt; cats.data.Kleisli[G,org.http4s.Request[G],org.http4s.Response[G]]](((ref: cats.effect.kernel.Ref[G,Long]) =&gt; BracketRequestResponse.bracketRequestResponseApp[G, Long](cats.implicits.toFlatMapOps[G, Long](ref.updateAndGet(((x$3: Long) =&gt; x$3.+(1L))))(evidence$6).flatTap[Unit](onIncrement))({
+  &lt;synthetic&gt; val eta$0$1: G[Unit] = cats.implicits.toFlatMapOps[G, Long](ref.updateAndGet(((x$4: Long) =&gt; x$4.-(1L))))(evidence$6).flatMap[Unit](onDecrement);
+  ((y: Long) =&gt; scala.Function.const[G[Unit], Long](eta$0$1)(y))
+})(evidence$6)))
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          8679
+        </td>
+        <td>
+          3496
+          -
+          3683
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.BracketRequestResponse.bracketRequestResponseApp
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          BracketRequestResponse.bracketRequestResponseApp[G, Long](cats.implicits.toFlatMapOps[G, Long](ref.updateAndGet(((x$3: Long) =&gt; x$3.+(1L))))(evidence$6).flatTap[Unit](onIncrement))({
+  &lt;synthetic&gt; val eta$0$1: G[Unit] = cats.implicits.toFlatMapOps[G, Long](ref.updateAndGet(((x$4: Long) =&gt; x$4.-(1L))))(evidence$6).flatMap[Unit](onDecrement);
+  ((y: Long) =&gt; scala.Function.const[G[Unit], Long](eta$0$1)(y))
+})(evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          9397
+        </td>
+        <td>
+          4217
+          -
+          4253
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ConcurrentRequests.app2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ConcurrentRequests.this.app2[F, F](onIncrement, onDecrement)(evidence$7, evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          8860
+        </td>
+        <td>
+          4527
+          -
+          4553
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ConcurrentRequests.app
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ConcurrentRequests.this.app[F](onChange, onChange)(evidence$8)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

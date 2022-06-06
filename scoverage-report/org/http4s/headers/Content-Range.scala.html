@@ -1,0 +1,1111 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/Content-Range.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package headers
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.parse.Numbers
+</span>21 <span style=''>import cats.parse.{Parser =&gt; P}
+</span>22 <span style=''>import org.http4s.headers.Range.SubRange
+</span>23 <span style=''>import org.http4s.internal.parsing.Rfc7230
+</span>24 <span style=''>import org.http4s.util.Renderable
+</span>25 <span style=''>import org.http4s.util.Writer
+</span>26 <span style=''>import org.typelevel.ci._
+</span>27 <span style=''>
+</span>28 <span style=''>object `Content-Range` {
+</span>29 <span style=''>  def apply(range: Range.SubRange, length: Option[Long] = None): `Content-Range` =
+</span>30 <span style=''>    </span><span style='background: #AEF1AE'>`Content-Range`(RangeUnit.Bytes, range, length)</span><span style=''>
+</span>31 <span style=''>
+</span>32 <span style=''>  def apply(start: Long, end: Long): `Content-Range` = </span><span style='background: #F0ADAD'>apply(Range.SubRange(start, Some(end)), None)</span><span style=''>
+</span>33 <span style=''>
+</span>34 <span style=''>  def apply(start: Long): `Content-Range` =
+</span>35 <span style=''>    </span><span style='background: #F0ADAD'>apply(Range.SubRange(start, None), None)</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  def parse(s: String): ParseResult[`Content-Range`] =
+</span>38 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Content-Range header&quot;)(s)</span><span style=''>
+</span>39 <span style=''>
+</span>40 <span style=''>  val parser: P[`Content-Range`] = {
+</span>41 <span style=''>
+</span>42 <span style=''>    val nonNegativeLong = </span><span style='background: #AEF1AE'>Numbers.digits
+</span>43 <span style=''></span><span style='background: #AEF1AE'>      .mapFilter { ds =&gt;
+</span>44 <span style=''></span><span style='background: #AEF1AE'>        try Some(ds.toLong)
+</span>45 <span style=''></span><span style='background: #AEF1AE'>        catch { case _: NumberFormatException =&gt; </span><span style='background: #F0ADAD'>None</span><span style='background: #AEF1AE'> }
+</span>46 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>47 <span style=''>
+</span>48 <span style=''>    // byte-range = first-byte-pos &quot;-&quot; last-byte-pos
+</span>49 <span style=''>    val byteRange = </span><span style='background: #AEF1AE'>((nonNegativeLong &lt;* P.char('-')) ~ nonNegativeLong)
+</span>50 <span style=''></span><span style='background: #AEF1AE'>      .map { case (first, last) =&gt; SubRange(first, last) }</span><span style=''>
+</span>51 <span style=''>
+</span>52 <span style=''>    // byte-range-resp = byte-range &quot;/&quot; ( complete-length / &quot;*&quot; )
+</span>53 <span style=''>    val byteRangeResp =
+</span>54 <span style=''>      </span><span style='background: #AEF1AE'>(byteRange &lt;* P.char('/')) ~ nonNegativeLong.map(Some(_)).orElse(P.char('*').as(None))</span><span style=''>
+</span>55 <span style=''>
+</span>56 <span style=''>    // byte-content-range = bytes-unit SP ( byte-range-resp / unsatisfied-range )
+</span>57 <span style=''>    // `unsatisfied-range` is not represented
+</span>58 <span style=''>    val byteContentRange =
+</span>59 <span style=''>      </span><span style='background: #AEF1AE'>((Rfc7230.token.map(RangeUnit(_)) &lt;* P.char(' ')) ~ byteRangeResp)
+</span>60 <span style=''></span><span style='background: #AEF1AE'>        .map { case (unit, (range, length)) =&gt; `Content-Range`(unit, range, length) }</span><span style=''>
+</span>61 <span style=''>
+</span>62 <span style=''>    // Content-Range = byte-content-range / other-content-range
+</span>63 <span style=''>    // other types of ranges are not supported, `other-content-range` is ignored
+</span>64 <span style=''>    byteContentRange
+</span>65 <span style=''>  }
+</span>66 <span style=''>
+</span>67 <span style=''>  val name: CIString = </span><span style='background: #AEF1AE'>ci&quot;Content-Range&quot;</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>  implicit val headerInstance: Header[`Content-Range`, Header.Single] =
+</span>70 <span style=''>    </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>71 <span style=''></span><span style='background: #AEF1AE'>      name,
+</span>72 <span style=''></span><span style='background: #AEF1AE'>      h =&gt;
+</span>73 <span style=''></span><span style='background: #AEF1AE'>        new Renderable {
+</span>74 <span style=''></span><span style='background: #AEF1AE'>          def render(writer: Writer): writer.type = {
+</span>75 <span style=''></span><span style='background: #AEF1AE'>            writer &lt;&lt; h.unit &lt;&lt; ' ' &lt;&lt; h.range &lt;&lt; '/'
+</span>76 <span style=''></span><span style='background: #AEF1AE'>            h.length match {
+</span>77 <span style=''></span><span style='background: #AEF1AE'>              case Some(l) =&gt; writer &lt;&lt; l
+</span>78 <span style=''></span><span style='background: #AEF1AE'>              case None =&gt; writer &lt;&lt; '*'
+</span>79 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>80 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>81 <span style=''></span><span style='background: #AEF1AE'>        },
+</span>82 <span style=''></span><span style='background: #AEF1AE'>      parse,
+</span>83 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>84 <span style=''>}
+</span>85 <span style=''>
+</span>86 <span style=''>final case class `Content-Range`(unit: RangeUnit, range: Range.SubRange, length: Option[Long])
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          30
+        </td>
+        <td>
+          18326
+        </td>
+        <td>
+          976
+          -
+          1023
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Content-Range.apply(RangeUnit.Bytes, range, length)
+        </td>
+      </tr><tr>
+        <td>
+          30
+        </td>
+        <td>
+          22302
+        </td>
+        <td>
+          992
+          -
+          1007
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RangeUnit.Bytes
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          RangeUnit.Bytes
+        </td>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          22907
+        </td>
+        <td>
+          1086
+          -
+          1118
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Range.SubRange.apply(start, scala.Some.apply[Long](end))
+        </td>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          14769
+        </td>
+        <td>
+          1108
+          -
+          1117
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[Long](end)
+        </td>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          19144
+        </td>
+        <td>
+          1120
+          -
+          1124
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          14981
+        </td>
+        <td>
+          1080
+          -
+          1125
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Content-Range.this.apply(Range.SubRange.apply(start, scala.Some.apply[Long](end)), scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          21553
+        </td>
+        <td>
+          1203
+          -
+          1207
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          22321
+        </td>
+        <td>
+          1175
+          -
+          1215
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Content-Range.this.apply(Range.SubRange.apply(start, scala.None), scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          15837
+        </td>
+        <td>
+          1210
+          -
+          1214
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          19958
+        </td>
+        <td>
+          1181
+          -
+          1208
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Range.SubRange.apply(start, scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          18210
+        </td>
+        <td>
+          1276
+          -
+          1341
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.headers.Content-Range](Content-Range.this.parser, &quot;Invalid Content-Range header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          21419
+        </td>
+        <td>
+          1407
+          -
+          1538
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.parser.rangeparsersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Numbers.digits.mapFilter[Long](((ds: String) =&gt; try {
+  scala.Some.apply[Long](scala.Predef.augmentString(ds).toLong)
+} catch {
+  case (_: NumberFormatException) =&gt; scala.None
+}))
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          19039
+        </td>
+        <td>
+          1459
+          -
+          1474
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](scala.Predef.augmentString(ds).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          14490
+        </td>
+        <td>
+          1464
+          -
+          1473
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toLong
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(ds).toLong
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          22923
+        </td>
+        <td>
+          1459
+          -
+          1474
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](scala.Predef.augmentString(ds).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          14990
+        </td>
+        <td>
+          1524
+          -
+          1528
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          17439
+        </td>
+        <td>
+          1634
+          -
+          1645
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.parser.rangeparsersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('-')
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          15852
+        </td>
+        <td>
+          1701
+          -
+          1722
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Range.SubRange.apply(first, last)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          21979
+        </td>
+        <td>
+          1613
+          -
+          1724
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          nonNegativeLong.&lt;*[Unit](cats.parse.Parser.char('-')).~[Long](nonNegativeLong).map[org.http4s.headers.Range.SubRange](((x0$1: (Long, Long)) =&gt; x0$1 match {
+  case (_1: Long, _2: Long): (Long, Long)((first @ _), (last @ _)) =&gt; org.http4s.headers.Range.SubRange.apply(first, last)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          21439
+        </td>
+        <td>
+          1851
+          -
+          1908
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          nonNegativeLong.map[Some[Long]](((x$1: Long) =&gt; scala.Some.apply[Long](x$1))).orElse[Option[Long]](cats.parse.Parser.char('*').as[None.type](scala.None))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          18224
+        </td>
+        <td>
+          1836
+          -
+          1847
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('/')
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          14895
+        </td>
+        <td>
+          1887
+          -
+          1907
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.as
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('*').as[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          17455
+        </td>
+        <td>
+          1822
+          -
+          1908
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.~
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          byteRange.&lt;*[Unit](cats.parse.Parser.char('/')).~[Option[Long]](nonNegativeLong.map[Some[Long]](((x$1: Long) =&gt; scala.Some.apply[Long](x$1))).orElse[Option[Long]](cats.parse.Parser.char('*').as[None.type](scala.None)))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          23116
+        </td>
+        <td>
+          1894
+          -
+          1897
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          '*'
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          14511
+        </td>
+        <td>
+          1871
+          -
+          1878
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](x$1)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          19056
+        </td>
+        <td>
+          1902
+          -
+          1906
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          21995
+        </td>
+        <td>
+          2108
+          -
+          2119
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.parser.rangeparsersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char(' ')
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          16048
+        </td>
+        <td>
+          2091
+          -
+          2103
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RangeUnit.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          RangeUnit.apply(x$2)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          14764
+        </td>
+        <td>
+          2071
+          -
+          2223
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.map[org.http4s.RangeUnit](((x$2: String) =&gt; RangeUnit.apply(x$2))).&lt;*[Unit](cats.parse.Parser.char(' ')).~[(org.http4s.headers.Range.SubRange, Option[Long])](byteRangeResp).map[org.http4s.headers.Content-Range](((x0$2: (org.http4s.RangeUnit, (org.http4s.headers.Range.SubRange, Option[Long]))) =&gt; x0$2 match {
+  case (_1: org.http4s.RangeUnit, _2: (org.http4s.headers.Range.SubRange, Option[Long])): (org.http4s.RangeUnit, (org.http4s.headers.Range.SubRange, Option[Long]))((unit @ _), (_1: org.http4s.headers.Range.SubRange, _2: Option[Long]): (org.http4s.headers.Range.SubRange, Option[Long])((range @ _), (length @ _))) =&gt; Content-Range.apply(unit, range, length)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          18240
+        </td>
+        <td>
+          2185
+          -
+          2221
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Content-Range.apply(unit, range, length)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          23138
+        </td>
+        <td>
+          2419
+          -
+          2436
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Content-Range&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          21181
+        </td>
+        <td>
+          2514
+          -
+          2860
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.createRendered[org.http4s.headers.Content-Range, org.http4s.Header.Single, org.http4s.util.Renderable](Content-Range.this.name, ((h: org.http4s.headers.Content-Range) =&gt; {
+  final class $anon extends AnyRef with org.http4s.util.Renderable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.util.Renderable&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def render(writer: org.http4s.util.Writer): writer.type = {
+      writer.&lt;&lt;[org.http4s.RangeUnit](h.unit)(util.this.Renderable.renderableInst[org.http4s.RangeUnit]).&lt;&lt;(' ').&lt;&lt;[org.http4s.headers.Range.SubRange](h.range)(util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange]).&lt;&lt;('/');
+      h.length match {
+        case (value: Long): Some[Long]((l @ _)) =&gt; writer.&lt;&lt;(l)
+        case scala.None =&gt; writer.&lt;&lt;('*')
+      }
+    }
+  };
+  new $anon()
+}), ((s: String) =&gt; Content-Range.this.parse(s)))(util.this.Renderable.renderableInst[org.http4s.util.Renderable])
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          14778
+        </td>
+        <td>
+          2535
+          -
+          2535
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.util.Renderable]
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          19018
+        </td>
+        <td>
+          2543
+          -
+          2547
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.name
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.parser.rangeparsersuite,org.http4s.client.middleware.followredirectsuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Content-Range.this.name
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          22188
+        </td>
+        <td>
+          2568
+          -
+          2571
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          14910
+        </td>
+        <td>
+          2651
+          -
+          2692
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;[org.http4s.RangeUnit](h.unit)(util.this.Renderable.renderableInst[org.http4s.RangeUnit]).&lt;&lt;(' ').&lt;&lt;[org.http4s.headers.Range.SubRange](h.range)(util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange]).&lt;&lt;('/')
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          21458
+        </td>
+        <td>
+          2705
+          -
+          2713
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.length
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.length
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          17993
+        </td>
+        <td>
+          2752
+          -
+          2763
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(l)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          16068
+        </td>
+        <td>
+          2791
+          -
+          2804
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;('*')
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          18147
+        </td>
+        <td>
+          2848
+          -
+          2853
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.parse
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Content-Range.this.parse(s)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

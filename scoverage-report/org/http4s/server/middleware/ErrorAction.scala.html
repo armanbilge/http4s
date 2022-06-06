@@ -1,0 +1,456 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/ErrorAction.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server
+</span>18 <span style=''>package middleware
+</span>19 <span style=''>
+</span>20 <span style=''>import cats._
+</span>21 <span style=''>import cats.data.Kleisli
+</span>22 <span style=''>import cats.data.OptionT
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import org.http4s._
+</span>25 <span style=''>
+</span>26 <span style=''>object ErrorAction {
+</span>27 <span style=''>  def apply[F[_]: ApplicativeThrow, G[_], B](
+</span>28 <span style=''>      k: Kleisli[F, Request[G], B],
+</span>29 <span style=''>      f: (Request[G], Throwable) =&gt; F[Unit],
+</span>30 <span style=''>  ): Kleisli[F, Request[G], B] =
+</span>31 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>32 <span style=''></span><span style='background: #AEF1AE'>      k.run(req).onError { case e =&gt; f(req, e) }
+</span>33 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>34 <span style=''>
+</span>35 <span style=''>  def log[F[_]: ApplicativeThrow, G[_], B](
+</span>36 <span style=''>      http: Kleisli[F, Request[G], B],
+</span>37 <span style=''>      messageFailureLogAction: (Throwable, =&gt; String) =&gt; F[Unit],
+</span>38 <span style=''>      serviceErrorLogAction: (Throwable, =&gt; String) =&gt; F[Unit],
+</span>39 <span style=''>  ): Kleisli[F, Request[G], B] =
+</span>40 <span style=''>    </span><span style='background: #AEF1AE'>apply(
+</span>41 <span style=''></span><span style='background: #AEF1AE'>      http,
+</span>42 <span style=''></span><span style='background: #AEF1AE'>      {
+</span>43 <span style=''></span><span style='background: #AEF1AE'>        case (req, mf: MessageFailure) =&gt;
+</span>44 <span style=''></span><span style='background: #AEF1AE'>          messageFailureLogAction(
+</span>45 <span style=''></span><span style='background: #AEF1AE'>            mf,
+</span>46 <span style=''></span><span style='background: #AEF1AE'>            s&quot;&quot;&quot;Message failure handling request: ${req.method} ${req.pathInfo} from ${req.remoteAddr
+</span>47 <span style=''></span><span style='background: #AEF1AE'>                .getOrElse(&quot;&lt;unknown&gt;&quot;)}&quot;&quot;&quot;,
+</span>48 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>49 <span style=''></span><span style='background: #AEF1AE'>        case (req, e) =&gt;
+</span>50 <span style=''></span><span style='background: #AEF1AE'>          serviceErrorLogAction(
+</span>51 <span style=''></span><span style='background: #AEF1AE'>            e,
+</span>52 <span style=''></span><span style='background: #AEF1AE'>            s&quot;&quot;&quot;Error servicing request: ${req.method} ${req.pathInfo} from ${req.remoteAddr
+</span>53 <span style=''></span><span style='background: #AEF1AE'>                .getOrElse(&quot;&lt;unknown&gt;&quot;)}&quot;&quot;&quot;,
+</span>54 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>55 <span style=''></span><span style='background: #AEF1AE'>      },
+</span>56 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>57 <span style=''>
+</span>58 <span style=''>  object httpApp {
+</span>59 <span style=''>    def apply[F[_]: ApplicativeThrow](
+</span>60 <span style=''>        httpApp: HttpApp[F],
+</span>61 <span style=''>        f: (Request[F], Throwable) =&gt; F[Unit],
+</span>62 <span style=''>    ): HttpApp[F] =
+</span>63 <span style=''>      </span><span style='background: #AEF1AE'>ErrorAction(httpApp, f)</span><span style=''>
+</span>64 <span style=''>
+</span>65 <span style=''>    def log[F[_]: ApplicativeThrow, G[_], B](
+</span>66 <span style=''>        httpApp: HttpApp[F],
+</span>67 <span style=''>        messageFailureLogAction: (Throwable, =&gt; String) =&gt; F[Unit],
+</span>68 <span style=''>        serviceErrorLogAction: (Throwable, =&gt; String) =&gt; F[Unit],
+</span>69 <span style=''>    ): HttpApp[F] =
+</span>70 <span style=''>      </span><span style='background: #F0ADAD'>ErrorAction.log(httpApp, messageFailureLogAction, serviceErrorLogAction)</span><span style=''>
+</span>71 <span style=''>  }
+</span>72 <span style=''>
+</span>73 <span style=''>  object httpRoutes {
+</span>74 <span style=''>    def apply[F[_]: MonadThrow](
+</span>75 <span style=''>        httpRoutes: HttpRoutes[F],
+</span>76 <span style=''>        f: (Request[F], Throwable) =&gt; F[Unit],
+</span>77 <span style=''>    ): HttpRoutes[F] =
+</span>78 <span style=''>      </span><span style='background: #AEF1AE'>ErrorAction(httpRoutes, (t, msg) =&gt; OptionT.liftF(f(t, msg)))</span><span style=''>
+</span>79 <span style=''>
+</span>80 <span style=''>    def log[F[_]: MonadThrow](
+</span>81 <span style=''>        httpRoutes: HttpRoutes[F],
+</span>82 <span style=''>        messageFailureLogAction: (Throwable, =&gt; String) =&gt; F[Unit],
+</span>83 <span style=''>        serviceErrorLogAction: (Throwable, =&gt; String) =&gt; F[Unit],
+</span>84 <span style=''>    ): HttpRoutes[F] =
+</span>85 <span style=''>      </span><span style='background: #AEF1AE'>ErrorAction.log(
+</span>86 <span style=''></span><span style='background: #AEF1AE'>        httpRoutes,
+</span>87 <span style=''></span><span style='background: #AEF1AE'>        (t, msg) =&gt; </span><span style='background: #F0ADAD'>OptionT.liftF(messageFailureLogAction(t, msg))</span><span style='background: #AEF1AE'>,
+</span>88 <span style=''></span><span style='background: #AEF1AE'>        (t, msg) =&gt; OptionT.liftF(serviceErrorLogAction(t, msg)),
+</span>89 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>90 <span style=''>  }
+</span>91 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          31
+        </td>
+        <td>
+          9575
+        </td>
+        <td>
+          936
+          -
+          1007
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.erroractionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], B](((req: org.http4s.Request[G]) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, B](k.run.apply(req))(evidence$1).onError(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,F[Unit]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; F[Unit]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: F[Unit]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (e @ _) =&gt; f.apply(req, e)
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (e @ _) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,F[Unit]]))(evidence$1)))
+        </td>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          7796
+        </td>
+        <td>
+          959
+          -
+          1001
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.onError
+        </td>
+        <td>
+          org.http4s.server.middleware.erroractionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, B](k.run.apply(req))(evidence$1).onError(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,F[Unit]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; F[Unit]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: F[Unit]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (e @ _) =&gt; f.apply(req, e)
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (e @ _) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,F[Unit]]))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          8551
+        </td>
+        <td>
+          1259
+          -
+          1775
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ErrorAction.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.erroractionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ErrorAction.this.apply[F, [_]G[_], B](http, ((x0$1: org.http4s.Request[[_]G[_]], x1$1: Throwable) =&gt; scala.Tuple2.apply[org.http4s.Request[[_]G[_]], Throwable](x0$1, x1$1) match {
+  case (_1: org.http4s.Request[[_]G[_]], _2: Throwable): (org.http4s.Request[[_]G[_]], Throwable)((req @ _), (mf @ (_: org.http4s.MessageFailure))) =&gt; messageFailureLogAction.apply(mf, (&quot;Message failure handling request: &quot;.+(req.method).+(&quot; &quot;).+(req.pathInfo).+(&quot; from &quot;).+(req.remoteAddr.getOrElse[Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Object]] with java.io.Serializable](&quot;&lt;unknown&gt;&quot;)): String))
+  case (_1: org.http4s.Request[[_]G[_]], _2: Throwable): (org.http4s.Request[[_]G[_]], Throwable)((req @ _), (e @ _)) =&gt; serviceErrorLogAction.apply(e, (&quot;Error servicing request: &quot;.+(req.method).+(&quot; &quot;).+(req.pathInfo).+(&quot; from &quot;).+(req.remoteAddr.getOrElse[Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Comparable[_ &gt;: com.comcast.ip4s.Host with String &lt;: Object]] with java.io.Serializable](&quot;&lt;unknown&gt;&quot;)): String))
+}))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          7529
+        </td>
+        <td>
+          1937
+          -
+          1960
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ErrorAction.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.erroractionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ErrorAction.apply[F, [_]F[_], org.http4s.Response[F]](httpApp, f)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          9210
+        </td>
+        <td>
+          2197
+          -
+          2269
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ErrorAction.log
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ErrorAction.log[F, [_]F[_], org.http4s.Response[F]](httpApp, messageFailureLogAction, serviceErrorLogAction)(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          8784
+        </td>
+        <td>
+          2477
+          -
+          2501
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftF[F, Unit](f.apply(t, msg))(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7585
+        </td>
+        <td>
+          2452
+          -
+          2452
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.erroractionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9537
+        </td>
+        <td>
+          2441
+          -
+          2502
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ErrorAction.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.erroractionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ErrorAction.apply[[A]cats.data.OptionT[F,A], [_]F[_], org.http4s.Response[F]](httpRoutes, ((t: org.http4s.Request[[_]F[_]], msg: Throwable) =&gt; cats.data.OptionT.liftF[F, Unit](f.apply(t, msg))(evidence$5)))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$5))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          9701
+        </td>
+        <td>
+          2748
+          -
+          2748
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.erroractionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          8604
+        </td>
+        <td>
+          2733
+          -
+          2911
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ErrorAction.log
+        </td>
+        <td>
+          org.http4s.server.middleware.erroractionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ErrorAction.log[[A]cats.data.OptionT[F,A], [_]F[_], org.http4s.Response[F]](httpRoutes, ((t: Throwable, msg: =&gt; String) =&gt; cats.data.OptionT.liftF[F, Unit](messageFailureLogAction.apply(t, msg))(evidence$6)), ((t: Throwable, msg: =&gt; String) =&gt; cats.data.OptionT.liftF[F, Unit](serviceErrorLogAction.apply(t, msg))(evidence$6)))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$6))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          8444
+        </td>
+        <td>
+          2790
+          -
+          2836
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.liftF[F, Unit](messageFailureLogAction.apply(t, msg))(evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          7803
+        </td>
+        <td>
+          2858
+          -
+          2902
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftF[F, Unit](serviceErrorLogAction.apply(t, msg))(evidence$6)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

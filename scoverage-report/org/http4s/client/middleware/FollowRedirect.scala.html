@@ -1,0 +1,1888 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/middleware/FollowRedirect.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package client
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.effect._
+</span>22 <span style=''>import cats.effect.std.Hotswap
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import org.http4s.Method._
+</span>25 <span style=''>import org.http4s.headers._
+</span>26 <span style=''>import org.typelevel.ci.CIString
+</span>27 <span style=''>import org.typelevel.vault._
+</span>28 <span style=''>
+</span>29 <span style=''>/** Client middleware to follow redirect responses.
+</span>30 <span style=''>  *
+</span>31 <span style=''>  * A 301 or 302 response is followed by:
+</span>32 <span style=''>  * - a GET if the request was GET or POST
+</span>33 <span style=''>  * - a HEAD if the request was a HEAD
+</span>34 <span style=''>  * - the original request method and body if the body had no effects
+</span>35 <span style=''>  * - the redirect is not followed otherwise
+</span>36 <span style=''>  *
+</span>37 <span style=''>  * A 303 response is followed by:
+</span>38 <span style=''>  * - a HEAD if the request was a HEAD
+</span>39 <span style=''>  * - a GET for all other methods
+</span>40 <span style=''>  *
+</span>41 <span style=''>  * A 307 or 308 response is followed by:
+</span>42 <span style=''>  * - the original request method and body, if the body had no effects
+</span>43 <span style=''>  * - the redirect is not followed otherwise
+</span>44 <span style=''>  *
+</span>45 <span style=''>  * Whenever we follow with a GET or HEAD, an empty body is sent, and
+</span>46 <span style=''>  * all payload headers defined in https://datatracker.ietf.org/doc/html/rfc7231#section-3.3
+</span>47 <span style=''>  * are stripped.
+</span>48 <span style=''>  *
+</span>49 <span style=''>  * If the response does not contain a valid Location header, the redirect is
+</span>50 <span style=''>  * not followed.
+</span>51 <span style=''>  *
+</span>52 <span style=''>  * Headers whose names match `sensitiveHeaderFilter` are not exposed when
+</span>53 <span style=''>  * redirecting to a different authority.
+</span>54 <span style=''>  */
+</span>55 <span style=''>object FollowRedirect {
+</span>56 <span style=''>  def apply[F[_]](
+</span>57 <span style=''>      maxRedirects: Int,
+</span>58 <span style=''>      sensitiveHeaderFilter: CIString =&gt; Boolean = Headers.SensitiveHeaders,
+</span>59 <span style=''>  )(client: Client[F])(implicit F: Concurrent[F]): Client[F] = {
+</span>60 <span style=''>    def nextRequest(
+</span>61 <span style=''>        req: Request[F],
+</span>62 <span style=''>        uri: Uri,
+</span>63 <span style=''>        method: Method,
+</span>64 <span style=''>        cookies: List[ResponseCookie],
+</span>65 <span style=''>    ): Request[F] = {
+</span>66 <span style=''>      // https://datatracker.ietf.org/doc/html/rfc7231#section-7.1
+</span>67 <span style=''>      val nextUri = </span><span style='background: #AEF1AE'>uri.copy(
+</span>68 <span style=''></span><span style='background: #AEF1AE'>        scheme = uri.scheme.orElse(req.uri.scheme),
+</span>69 <span style=''></span><span style='background: #AEF1AE'>        authority = uri.authority.orElse(req.uri.authority),
+</span>70 <span style=''></span><span style='background: #AEF1AE'>        fragment = uri.fragment.orElse(req.uri.fragment),
+</span>71 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>72 <span style=''>
+</span>73 <span style=''>      def stripSensitiveHeaders(req: Request[F]): Request[F] =
+</span>74 <span style=''>        if (</span><span style='background: #AEF1AE'>req.uri.authority != nextUri.authority</span><span style=''>)
+</span>75 <span style=''>          </span><span style='background: #AEF1AE'>req.transformHeaders(hs =&gt;
+</span>76 <span style=''></span><span style='background: #AEF1AE'>            Headers(hs.headers.filterNot(h =&gt; sensitiveHeaderFilter(h.name)))
+</span>77 <span style=''></span><span style='background: #AEF1AE'>          )</span><span style=''>
+</span>78 <span style=''>        else
+</span>79 <span style=''>          </span><span style='background: #AEF1AE'>req</span><span style=''>
+</span>80 <span style=''>
+</span>81 <span style=''>      def propagateCookies(req: Request[F]): Request[F] =
+</span>82 <span style=''>        if (</span><span style='background: #AEF1AE'>req.uri.authority == nextUri.authority</span><span style=''>)
+</span>83 <span style=''>          </span><span style='background: #AEF1AE'>cookies.foldLeft(req) { case (nextReq, cookie) =&gt;
+</span>84 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>nextReq.addCookie(cookie.name, cookie.content)</span><span style='background: #AEF1AE'>
+</span>85 <span style=''></span><span style='background: #AEF1AE'>          }</span><span style=''>
+</span>86 <span style=''>        else
+</span>87 <span style=''>          </span><span style='background: #AEF1AE'>req</span><span style=''>
+</span>88 <span style=''>
+</span>89 <span style=''>      def clearBodyFromGetHead(req: Request[F]): Request[F] =
+</span>90 <span style=''>        method match {
+</span>91 <span style=''>          case GET | HEAD =&gt; </span><span style='background: #AEF1AE'>req.withEmptyBody</span><span style=''>
+</span>92 <span style=''>          case _ =&gt; req
+</span>93 <span style=''>        }
+</span>94 <span style=''>
+</span>95 <span style=''>      </span><span style='background: #AEF1AE'>clearBodyFromGetHead(
+</span>96 <span style=''></span><span style='background: #AEF1AE'>        propagateCookies(stripSensitiveHeaders(req)).withMethod(method).withUri(nextUri)
+</span>97 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>98 <span style=''>    }
+</span>99 <span style=''>
+</span>100 <span style=''>    def redirectLoop(
+</span>101 <span style=''>        req: Request[F],
+</span>102 <span style=''>        redirects: Int,
+</span>103 <span style=''>        hotswap: Hotswap[F, Response[F]],
+</span>104 <span style=''>    ): F[Response[F]] =
+</span>105 <span style=''>      </span><span style='background: #AEF1AE'>hotswap.clear *&gt; // Release the prior connection before allocating a new
+</span>106 <span style=''></span><span style='background: #AEF1AE'>        hotswap.swap(client.run(req)).flatMap { resp =&gt;
+</span>107 <span style=''></span><span style='background: #AEF1AE'>          val l: Option[Location] = resp.headers.get[Location]
+</span>108 <span style=''></span><span style='background: #AEF1AE'>          (methodForRedirect(req, resp), l) match {
+</span>109 <span style=''></span><span style='background: #AEF1AE'>            case (Some(method), Some(loc)) if redirects &lt; maxRedirects =&gt;
+</span>110 <span style=''></span><span style='background: #AEF1AE'>              val nextReq = nextRequest(req, loc.uri, method, resp.cookies)
+</span>111 <span style=''></span><span style='background: #AEF1AE'>              redirectLoop(nextReq, redirects + 1, hotswap)
+</span>112 <span style=''></span><span style='background: #AEF1AE'>                .map(res =&gt; res.withAttribute(redirectUrisKey, nextReq.uri +: getRedirectUris(res)))
+</span>113 <span style=''></span><span style='background: #AEF1AE'>            case _ =&gt;
+</span>114 <span style=''></span><span style='background: #AEF1AE'>              // IF the response is missing the Location header, OR there is no method to redirect,
+</span>115 <span style=''></span><span style='background: #AEF1AE'>              // OR we have exceeded max number of redirections, THEN we redirect no more
+</span>116 <span style=''></span><span style='background: #AEF1AE'>              resp.pure[F]
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>118 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>119 <span style=''>
+</span>120 <span style=''>    </span><span style='background: #AEF1AE'>Client { req =&gt;
+</span>121 <span style=''></span><span style='background: #AEF1AE'>      Hotswap.create[F, Response[F]].flatMap { case hotswap =&gt;
+</span>122 <span style=''></span><span style='background: #AEF1AE'>        Resource.eval(redirectLoop(req, 0, hotswap))
+</span>123 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>124 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>125 <span style=''>  }
+</span>126 <span style=''>
+</span>127 <span style=''>  private def methodForRedirect[F[_]](req: Request[F], resp: Response[F]): Option[Method] =
+</span>128 <span style=''>    </span><span style='background: #AEF1AE'>resp.status.code</span><span style=''> match {
+</span>129 <span style=''>      case 301 | 302 =&gt;
+</span>130 <span style=''>        </span><span style='background: #AEF1AE'>req.method</span><span style=''> match {
+</span>131 <span style=''>          case POST =&gt;
+</span>132 <span style=''>            // &quot;For historical reasons, a user agent MAY change the request method
+</span>133 <span style=''>            // from POST to GET for the subsequent request.&quot; -- RFC 7231
+</span>134 <span style=''>            //
+</span>135 <span style=''>            // This is common practice, so we do.
+</span>136 <span style=''>            //
+</span>137 <span style=''>            // TODO In a future version, configure this behavior through a
+</span>138 <span style=''>            // redirect config.
+</span>139 <span style=''>            </span><span style='background: #F0ADAD'>Some(GET)</span><span style=''>
+</span>140 <span style=''>
+</span>141 <span style=''>          case m =&gt;
+</span>142 <span style=''>            </span><span style='background: #AEF1AE'>Some(m)</span><span style=''>
+</span>143 <span style=''>        }
+</span>144 <span style=''>
+</span>145 <span style=''>      case 303 =&gt;
+</span>146 <span style=''>        // &quot;303 (See Other) status code indicates that the server is
+</span>147 <span style=''>        // redirecting the user agent to a different resource, as indicated
+</span>148 <span style=''>        // by a URI in the Location header field, which is intended to
+</span>149 <span style=''>        // provide an indirect response to the original request.  A user
+</span>150 <span style=''>        // agent can perform a retrieval request targeting that URI (a GET
+</span>151 <span style=''>        // or HEAD request if using HTTP)&quot; -- RFC 7231
+</span>152 <span style=''>        </span><span style='background: #AEF1AE'>req.method</span><span style=''> match {
+</span>153 <span style=''>          case HEAD =&gt; </span><span style='background: #F0ADAD'>Some(HEAD)</span><span style=''>
+</span>154 <span style=''>          case _ =&gt; </span><span style='background: #AEF1AE'>Some(GET)</span><span style=''>
+</span>155 <span style=''>        }
+</span>156 <span style=''>
+</span>157 <span style=''>      case 307 | 308 =&gt;
+</span>158 <span style=''>        // &quot;Note: This status code is similar to 302 (Found), except that
+</span>159 <span style=''>        // it does not allow changing the request method from POST to GET.
+</span>160 <span style=''>        // This specification defines no equivalent counterpart for 301
+</span>161 <span style=''>        // (Moved Permanently) ([RFC7238], however, defines the status code
+</span>162 <span style=''>        // 308 (Permanent Redirect) for this purpose). These status codes
+</span>163 <span style=''>        // may not change the method.&quot; -- RFC 7231
+</span>164 <span style=''>        //
+</span>165 <span style=''>        </span><span style='background: #AEF1AE'>Some(req.method)</span><span style=''>
+</span>166 <span style=''>
+</span>167 <span style=''>      case _ =&gt;
+</span>168 <span style=''>        </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>169 <span style=''>    }
+</span>170 <span style=''>
+</span>171 <span style=''>  private val redirectUrisKey = </span><span style='background: #AEF1AE'>Key.newKey[SyncIO, List[Uri]].unsafeRunSync()</span><span style=''>
+</span>172 <span style=''>
+</span>173 <span style=''>  /** Get the redirection URIs for a `response`.
+</span>174 <span style=''>    * Excludes the initial request URI
+</span>175 <span style=''>    */
+</span>176 <span style=''>  def getRedirectUris[F[_]](response: Response[F]): List[Uri] =
+</span>177 <span style=''>    </span><span style='background: #AEF1AE'>response.attributes.lookup(redirectUrisKey).getOrElse(Nil)</span><span style=''>
+</span>178 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          11139
+        </td>
+        <td>
+          2270
+          -
+          2458
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          uri.copy(x$1, x$2, x$4, x$5, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          11963
+        </td>
+        <td>
+          2274
+          -
+          2274
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          uri.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          11580
+        </td>
+        <td>
+          2274
+          -
+          2274
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          uri.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          11593
+        </td>
+        <td>
+          2297
+          -
+          2330
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          uri.scheme.orElse[org.http4s.Uri.Scheme](req.uri.scheme)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          12044
+        </td>
+        <td>
+          2315
+          -
+          2329
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.scheme
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.scheme
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          11189
+        </td>
+        <td>
+          2373
+          -
+          2390
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.authority
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.authority
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          11936
+        </td>
+        <td>
+          2352
+          -
+          2391
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          uri.authority.orElse[org.http4s.Uri.Authority](req.uri.authority)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          11722
+        </td>
+        <td>
+          2432
+          -
+          2448
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.fragment
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.fragment
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          11282
+        </td>
+        <td>
+          2412
+          -
+          2449
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          uri.fragment.orElse[org.http4s.Uri.Fragment](req.uri.fragment)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          11650
+        </td>
+        <td>
+          2535
+          -
+          2573
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.!=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.authority.!=(nextUri.authority)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          12050
+        </td>
+        <td>
+          2556
+          -
+          2573
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.authority
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nextUri.authority
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          12051
+        </td>
+        <td>
+          2585
+          -
+          2701
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.Message.transformHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.transformHeaders(((hs: org.http4s.Headers) =&gt; Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](hs.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; sensitiveHeaderFilter.apply(h.name))))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          11144
+        </td>
+        <td>
+          2585
+          -
+          2701
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.transformHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.transformHeaders(((hs: org.http4s.Headers) =&gt; Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](hs.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; sensitiveHeaderFilter.apply(h.name))))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          11265
+        </td>
+        <td>
+          2652
+          -
+          2652
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          12009
+        </td>
+        <td>
+          2632
+          -
+          2688
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](hs.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; sensitiveHeaderFilter.apply(h.name))))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          11207
+        </td>
+        <td>
+          2680
+          -
+          2686
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          11559
+        </td>
+        <td>
+          2624
+          -
+          2689
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.Raw](hs.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; sensitiveHeaderFilter.apply(h.name))))(((h: org.http4s.Header.Raw) =&gt; Header.this.ToRaw.rawToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          11941
+        </td>
+        <td>
+          2658
+          -
+          2687
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sensitiveHeaderFilter.apply(h.name)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          11672
+        </td>
+        <td>
+          2632
+          -
+          2688
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.filterNot
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hs.headers.filterNot(((h: org.http4s.Header.Raw) =&gt; sensitiveHeaderFilter.apply(h.name)))
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          11634
+        </td>
+        <td>
+          2725
+          -
+          2728
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.client.middleware.FollowRedirect.req
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          11915
+        </td>
+        <td>
+          2800
+          -
+          2838
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.authority.==(nextUri.authority)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          11185
+        </td>
+        <td>
+          2821
+          -
+          2838
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.authority
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nextUri.authority
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11069
+        </td>
+        <td>
+          2850
+          -
+          2970
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cookies.foldLeft[org.http4s.Request[F]](req)(((x0$1: org.http4s.Request[F], x1$1: org.http4s.ResponseCookie) =&gt; scala.Tuple2.apply[org.http4s.Request[F], org.http4s.ResponseCookie](x0$1, x1$1) match {
+  case (_1: org.http4s.Request[F], _2: org.http4s.ResponseCookie): (org.http4s.Request[F], org.http4s.ResponseCookie)((nextReq @ _), (cookie @ _)) =&gt; nextReq.addCookie(cookie.name, cookie.content)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          11541
+        </td>
+        <td>
+          2850
+          -
+          2970
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cookies.foldLeft[org.http4s.Request[F]](req)(((x0$1: org.http4s.Request[F], x1$1: org.http4s.ResponseCookie) =&gt; scala.Tuple2.apply[org.http4s.Request[F], org.http4s.ResponseCookie](x0$1, x1$1) match {
+  case (_1: org.http4s.Request[F], _2: org.http4s.ResponseCookie): (org.http4s.Request[F], org.http4s.ResponseCookie)((nextReq @ _), (cookie @ _)) =&gt; nextReq.addCookie(cookie.name, cookie.content)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          11675
+        </td>
+        <td>
+          2930
+          -
+          2941
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cookie.name
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          11954
+        </td>
+        <td>
+          2912
+          -
+          2958
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.addCookie
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          nextReq.addCookie(cookie.name, cookie.content)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          11269
+        </td>
+        <td>
+          2943
+          -
+          2957
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.content
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cookie.content
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          12032
+        </td>
+        <td>
+          2994
+          -
+          2997
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.client.middleware.FollowRedirect.req
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          11641
+        </td>
+        <td>
+          3113
+          -
+          3130
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Message.withEmptyBody
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.withEmptyBody
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          11890
+        </td>
+        <td>
+          3172
+          -
+          3290
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.FollowRedirect.clearBodyFromGetHead
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          clearBodyFromGetHead(propagateCookies(stripSensitiveHeaders(req)).withMethod(method).withUri(nextUri))
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          11163
+        </td>
+        <td>
+          3202
+          -
+          3282
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.withUri
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          propagateCookies(stripSensitiveHeaders(req)).withMethod(method).withUri(nextUri)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          11505
+        </td>
+        <td>
+          3441
+          -
+          4256
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Apply.Ops.*&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApply[F, Unit](hotswap.clear)(F).*&gt;[org.http4s.Response[F]](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[F]](hotswap.swap(client.run(req)))(F).flatMap[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; {
+  val l: Option[org.http4s.headers.Location] = resp.headers.get[org.http4s.headers.Location](Header.this.Select.singleHeaders[org.http4s.headers.Location](headers.this.Location.headerInstance));
+  scala.Tuple2.apply[Option[org.http4s.Method], Option[org.http4s.headers.Location]](FollowRedirect.this.methodForRedirect[[_]F[_]](req, resp), l) match {
+    case (_1: Option[org.http4s.Method], _2: Option[org.http4s.headers.Location]): (Option[org.http4s.Method], Option[org.http4s.headers.Location])((value: org.http4s.Method): Some[org.http4s.Method]((method @ _)), (value: org.http4s.headers.Location): Some[org.http4s.headers.Location]((loc @ _))) if redirects.&lt;(maxRedirects) =&gt; {
+      val nextReq: org.http4s.Request[F] = nextRequest(req, loc.uri, method, resp.cookies);
+      cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[F]](redirectLoop(nextReq, redirects.+(1), hotswap))(F).map[org.http4s.Response[F]](((res: org.http4s.Response[F]) =&gt; res.withAttribute[List[org.http4s.Uri]](FollowRedirect.this.redirectUrisKey, {
+        final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.Uri = nextReq.uri;
+        FollowRedirect.this.getRedirectUris[[_]F[_]](res).+:[org.http4s.Uri](rassoc$1)
+      })))
+    }
+    case _ =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](resp).pure[F](F)
+  }
+})))
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          11460
+        </td>
+        <td>
+          3441
+          -
+          3454
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.std.Hotswap.clear
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hotswap.clear
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          11914
+        </td>
+        <td>
+          3522
+          -
+          4256
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.Response[F]](hotswap.swap(client.run(req)))(F).flatMap[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; {
+  val l: Option[org.http4s.headers.Location] = resp.headers.get[org.http4s.headers.Location](Header.this.Select.singleHeaders[org.http4s.headers.Location](headers.this.Location.headerInstance));
+  scala.Tuple2.apply[Option[org.http4s.Method], Option[org.http4s.headers.Location]](FollowRedirect.this.methodForRedirect[[_]F[_]](req, resp), l) match {
+    case (_1: Option[org.http4s.Method], _2: Option[org.http4s.headers.Location]): (Option[org.http4s.Method], Option[org.http4s.headers.Location])((value: org.http4s.Method): Some[org.http4s.Method]((method @ _)), (value: org.http4s.headers.Location): Some[org.http4s.headers.Location]((loc @ _))) if redirects.&lt;(maxRedirects) =&gt; {
+      val nextReq: org.http4s.Request[F] = nextRequest(req, loc.uri, method, resp.cookies);
+      cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[F]](redirectLoop(nextReq, redirects.+(1), hotswap))(F).map[org.http4s.Response[F]](((res: org.http4s.Response[F]) =&gt; res.withAttribute[List[org.http4s.Uri]](FollowRedirect.this.redirectUrisKey, {
+        final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.Uri = nextReq.uri;
+        FollowRedirect.this.getRedirectUris[[_]F[_]](res).+:[org.http4s.Uri](rassoc$1)
+      })))
+    }
+    case _ =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](resp).pure[F](F)
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          11246
+        </td>
+        <td>
+          3535
+          -
+          3550
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.run
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          client.run(req)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          11960
+        </td>
+        <td>
+          3522
+          -
+          3551
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.std.Hotswap.swap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hotswap.swap(client.run(req))
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          11524
+        </td>
+        <td>
+          3622
+          -
+          3622
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Location.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Location.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          11140
+        </td>
+        <td>
+          3622
+          -
+          3622
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Location](headers.this.Location.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          12037
+        </td>
+        <td>
+          3606
+          -
+          3632
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers.get[org.http4s.headers.Location](Header.this.Select.singleHeaders[org.http4s.headers.Location](headers.this.Location.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          11656
+        </td>
+        <td>
+          3731
+          -
+          3755
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          redirects.&lt;(maxRedirects)
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          11892
+        </td>
+        <td>
+          3821
+          -
+          3833
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.cookies
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.cookies
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          11503
+        </td>
+        <td>
+          3787
+          -
+          3834
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.FollowRedirect.nextRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nextRequest(req, loc.uri, method, resp.cookies)
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          11167
+        </td>
+        <td>
+          3804
+          -
+          3811
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Location.uri
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          loc.uri
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          11249
+        </td>
+        <td>
+          3871
+          -
+          3884
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          redirects.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          12017
+        </td>
+        <td>
+          3849
+          -
+          3894
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.FollowRedirect.redirectLoop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          redirectLoop(nextReq, redirects.+(1), hotswap)
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          11863
+        </td>
+        <td>
+          3923
+          -
+          3994
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withAttribute
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          res.withAttribute[List[org.http4s.Uri]](FollowRedirect.this.redirectUrisKey, {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.Uri = nextReq.uri;
+  FollowRedirect.this.getRedirectUris[[_]F[_]](res).+:[org.http4s.Uri](rassoc$1)
+})
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          11530
+        </td>
+        <td>
+          3941
+          -
+          3956
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.FollowRedirect.redirectUrisKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          FollowRedirect.this.redirectUrisKey
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          11141
+        </td>
+        <td>
+          3970
+          -
+          3993
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.+:
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          FollowRedirect.this.getRedirectUris[[_]F[_]](res).+:[org.http4s.Uri](rassoc$1)
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          11586
+        </td>
+        <td>
+          3849
+          -
+          3995
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, org.http4s.Response[F]](redirectLoop(nextReq, redirects.+(1), hotswap))(F).map[org.http4s.Response[F]](((res: org.http4s.Response[F]) =&gt; res.withAttribute[List[org.http4s.Uri]](FollowRedirect.this.redirectUrisKey, {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.Uri = nextReq.uri;
+  FollowRedirect.this.getRedirectUris[[_]F[_]](res).+:[org.http4s.Uri](rassoc$1)
+})))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11172
+        </td>
+        <td>
+          4222
+          -
+          4234
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](resp).pure[F](F)
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11239
+        </td>
+        <td>
+          4262
+          -
+          4407
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Client.apply[[_]F[_]](((req: org.http4s.Request[[_]F[_]]) =&gt; cats.effect.std.Hotswap.create[F, org.http4s.Response[F]](F).flatMap[org.http4s.Response[[_]F[_]]](((x0$1: cats.effect.std.Hotswap[F,org.http4s.Response[F]]) =&gt; x0$1 match {
+  case (hotswap @ _) =&gt; cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](redirectLoop(req, 0, hotswap))
+}))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          11949
+        </td>
+        <td>
+          4509
+          -
+          4525
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.code
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.status.code
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          11533
+        </td>
+        <td>
+          4566
+          -
+          4576
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.method
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.method
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          11866
+        </td>
+        <td>
+          4963
+          -
+          4972
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[org.http4s.Method](org.http4s.Method.GET)
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          11111
+        </td>
+        <td>
+          4968
+          -
+          4971
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.GET
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Method.GET
+        </td>
+      </tr><tr>
+        <td>
+          142
+        </td>
+        <td>
+          11611
+        </td>
+        <td>
+          5006
+          -
+          5013
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.Method](m)
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          11153
+        </td>
+        <td>
+          5470
+          -
+          5480
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.method
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.method
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          11919
+        </td>
+        <td>
+          5517
+          -
+          5521
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.HEAD
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Method.HEAD
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          11485
+        </td>
+        <td>
+          5512
+          -
+          5522
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[org.http4s.Method](org.http4s.Method.HEAD)
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          11243
+        </td>
+        <td>
+          5548
+          -
+          5551
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.GET
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Method.GET
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          12004
+        </td>
+        <td>
+          5543
+          -
+          5552
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.Method](org.http4s.Method.GET)
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          11550
+        </td>
+        <td>
+          6034
+          -
+          6044
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.method
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.method
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          11119
+        </td>
+        <td>
+          6029
+          -
+          6045
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.Method](req.method)
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          11807
+        </td>
+        <td>
+          6071
+          -
+          6075
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          11613
+        </td>
+        <td>
+          6115
+          -
+          6160
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.vault.Key.newKey[cats.effect.SyncIO, List[org.http4s.Uri]](effect.this.SyncIO.syncForSyncIO, effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          11489
+        </td>
+        <td>
+          6325
+          -
+          6383
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          response.attributes.lookup[List[org.http4s.Uri]](FollowRedirect.this.redirectUrisKey).getOrElse[List[org.http4s.Uri]](scala.`package`.Nil)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          11898
+        </td>
+        <td>
+          6379
+          -
+          6382
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Nil
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Nil
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          11201
+        </td>
+        <td>
+          6352
+          -
+          6367
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.FollowRedirect.redirectUrisKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          FollowRedirect.this.redirectUrisKey
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

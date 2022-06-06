@@ -1,0 +1,3537 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/Query.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Eval
+</span>20 <span style=''>import cats.Foldable
+</span>21 <span style=''>import cats.Hash
+</span>22 <span style=''>import cats.Order
+</span>23 <span style=''>import cats.Show
+</span>24 <span style=''>import cats.parse.Parser0
+</span>25 <span style=''>import cats.syntax.all._
+</span>26 <span style=''>import org.http4s.Query._
+</span>27 <span style=''>import org.http4s.internal.CollectionCompat
+</span>28 <span style=''>import org.http4s.internal.UriCoding
+</span>29 <span style=''>import org.http4s.internal.parsing.Rfc3986
+</span>30 <span style=''>import org.http4s.parser.QueryParser
+</span>31 <span style=''>import org.http4s.util.Renderable
+</span>32 <span style=''>import org.http4s.util.Writer
+</span>33 <span style=''>
+</span>34 <span style=''>import java.nio.charset.StandardCharsets
+</span>35 <span style=''>import scala.collection.immutable
+</span>36 <span style=''>import scala.collection.mutable
+</span>37 <span style=''>import scala.collection.mutable.ListBuffer
+</span>38 <span style=''>
+</span>39 <span style=''>/** Collection representation of a query string
+</span>40 <span style=''>  *
+</span>41 <span style=''>  * It is a indexed sequence of key and maybe a value pairs which maps
+</span>42 <span style=''>  * precisely to a query string, modulo
+</span>43 <span style=''>  * [[https://datatracker.ietf.org/doc/html/rfc3986#section-2.1 percent-encoding]].
+</span>44 <span style=''>  *
+</span>45 <span style=''>  * When rendered, the resulting `String` will have the pairs separated
+</span>46 <span style=''>  * by '&amp;' while the key is separated from the value with '='
+</span>47 <span style=''>  */
+</span>48 <span style=''>final class Query private (value: Either[Vector[KeyValue], String])
+</span>49 <span style=''>    extends QueryOps
+</span>50 <span style=''>    with Renderable {
+</span>51 <span style=''>  private[this] var _pairs: Vector[KeyValue] = </span><span style='background: #AEF1AE'>null</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>  def pairs: Vector[KeyValue] = {
+</span>54 <span style=''>    if (</span><span style='background: #AEF1AE'>_pairs == null</span><span style=''>) {
+</span>55 <span style=''>      </span><span style='background: #AEF1AE'>_pairs = value.fold(identity, Query.parse)</span><span style=''>
+</span>56 <span style=''>    }
+</span>57 <span style=''>    </span><span style='background: #AEF1AE'>_pairs</span><span style=''>
+</span>58 <span style=''>  }
+</span>59 <span style=''>
+</span>60 <span style=''>  private def this(vec: Vector[KeyValue]) = </span><span style='background: #AEF1AE'>this(Left(vec))</span><span style=''>
+</span>61 <span style=''>
+</span>62 <span style=''>  def apply(idx: Int): KeyValue = </span><span style='background: #F0ADAD'>pairs(idx)</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>  def length: Int = </span><span style='background: #F0ADAD'>pairs.length</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>  def slice(from: Int, until: Int): Query = </span><span style='background: #F0ADAD'>new Query(Left(pairs.slice(from, until)))</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>  def isEmpty: Boolean = </span><span style='background: #AEF1AE'>pairs.isEmpty</span><span style=''>
+</span>69 <span style=''>
+</span>70 <span style=''>  def nonEmpty: Boolean = </span><span style='background: #AEF1AE'>pairs.nonEmpty</span><span style=''>
+</span>71 <span style=''>
+</span>72 <span style=''>  def drop(n: Int): Query = </span><span style='background: #F0ADAD'>new Query(Left(pairs.drop(n)))</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>  def dropRight(n: Int): Query = </span><span style='background: #F0ADAD'>new Query(Left(pairs.dropRight(n)))</span><span style=''>
+</span>75 <span style=''>
+</span>76 <span style=''>  def exists(f: KeyValue =&gt; Boolean): Boolean =
+</span>77 <span style=''>    </span><span style='background: #AEF1AE'>pairs.exists(f)</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>  def filterNot(f: KeyValue =&gt; Boolean): Query =
+</span>80 <span style=''>    </span><span style='background: #AEF1AE'>new Query(Left(pairs.filterNot(f)))</span><span style=''>
+</span>81 <span style=''>
+</span>82 <span style=''>  def filter(f: KeyValue =&gt; Boolean): Query =
+</span>83 <span style=''>    </span><span style='background: #F0ADAD'>new Query(Left(pairs.filter(f)))</span><span style=''>
+</span>84 <span style=''>
+</span>85 <span style=''>  def foreach(f: KeyValue =&gt; Unit): Unit =
+</span>86 <span style=''>    </span><span style='background: #F0ADAD'>pairs.foreach(f)</span><span style=''>
+</span>87 <span style=''>
+</span>88 <span style=''>  def foldLeft[Z](z: Z)(f: (Z, KeyValue) =&gt; Z): Z =
+</span>89 <span style=''>    </span><span style='background: #F0ADAD'>pairs.foldLeft(z)(f)</span><span style=''>
+</span>90 <span style=''>
+</span>91 <span style=''>  def foldRight[Z](z: Eval[Z])(f: (KeyValue, Eval[Z]) =&gt; Eval[Z]): Eval[Z] =
+</span>92 <span style=''>    </span><span style='background: #F0ADAD'>Foldable[Vector].foldRight(pairs, z)(f)</span><span style=''>
+</span>93 <span style=''>
+</span>94 <span style=''>  def +:(elem: KeyValue): Query =
+</span>95 <span style=''>    </span><span style='background: #F0ADAD'>new Query(Left(elem +: pairs))</span><span style=''>
+</span>96 <span style=''>
+</span>97 <span style=''>  def :+(elem: KeyValue): Query =
+</span>98 <span style=''>    </span><span style='background: #F0ADAD'>new Query(Left(pairs :+ elem))</span><span style=''>
+</span>99 <span style=''>
+</span>100 <span style=''>  def ++(pairs: collection.Iterable[(String, Option[String])]): Query =
+</span>101 <span style=''>    </span><span style='background: #F0ADAD'>new Query(Left(this.pairs ++ pairs))</span><span style=''>
+</span>102 <span style=''>
+</span>103 <span style=''>  def toVector: Vector[(String, Option[String])] = </span><span style='background: #AEF1AE'>pairs</span><span style=''>
+</span>104 <span style=''>
+</span>105 <span style=''>  def toList: List[(String, Option[String])] = </span><span style='background: #F0ADAD'>toVector.toList</span><span style=''>
+</span>106 <span style=''>
+</span>107 <span style=''>  /** Render the Query as a `String`.
+</span>108 <span style=''>    *
+</span>109 <span style=''>    * Pairs are separated by '&amp;' and keys are separated from values by '='
+</span>110 <span style=''>    */
+</span>111 <span style=''>  override def render(writer: Writer): writer.type = </span><span style='background: #AEF1AE'>value.fold(
+</span>112 <span style=''></span><span style='background: #AEF1AE'>    { pairs =&gt;
+</span>113 <span style=''></span><span style='background: #AEF1AE'>      var first = true
+</span>114 <span style=''></span><span style='background: #AEF1AE'>
+</span>115 <span style=''></span><span style='background: #AEF1AE'>      def encode(s: String) =
+</span>116 <span style=''></span><span style='background: #AEF1AE'>        UriCoding.encode(
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          s,
+</span>118 <span style=''></span><span style='background: #AEF1AE'>          spaceIsPlus = false,
+</span>119 <span style=''></span><span style='background: #AEF1AE'>          charset = StandardCharsets.UTF_8,
+</span>120 <span style=''></span><span style='background: #AEF1AE'>          toSkip = UriCoding.QueryNoEncode,
+</span>121 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>122 <span style=''></span><span style='background: #AEF1AE'>
+</span>123 <span style=''></span><span style='background: #AEF1AE'>      pairs.foreach {
+</span>124 <span style=''></span><span style='background: #AEF1AE'>        case (n, None) =&gt;
+</span>125 <span style=''></span><span style='background: #AEF1AE'>          if (!first) writer.append('&amp;')
+</span>126 <span style=''></span><span style='background: #AEF1AE'>          else first = false
+</span>127 <span style=''></span><span style='background: #AEF1AE'>          writer.append(encode(n))
+</span>128 <span style=''></span><span style='background: #AEF1AE'>
+</span>129 <span style=''></span><span style='background: #AEF1AE'>        case (n, Some(v)) =&gt;
+</span>130 <span style=''></span><span style='background: #AEF1AE'>          if (!first) writer.append('&amp;')
+</span>131 <span style=''></span><span style='background: #AEF1AE'>          else first = false
+</span>132 <span style=''></span><span style='background: #AEF1AE'>          writer
+</span>133 <span style=''></span><span style='background: #AEF1AE'>            .append(encode(n))
+</span>134 <span style=''></span><span style='background: #AEF1AE'>            .append(&quot;=&quot;)
+</span>135 <span style=''></span><span style='background: #AEF1AE'>            .append(encode(v))
+</span>136 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>137 <span style=''></span><span style='background: #AEF1AE'>      writer
+</span>138 <span style=''></span><span style='background: #AEF1AE'>    },
+</span>139 <span style=''></span><span style='background: #AEF1AE'>    raw =&gt; writer.append(raw),
+</span>140 <span style=''></span><span style='background: #AEF1AE'>  )</span><span style=''>
+</span>141 <span style=''>
+</span>142 <span style=''>  /** Map[String, String] representation of the [[Query]]
+</span>143 <span style=''>    *
+</span>144 <span style=''>    * If multiple values exist for a key, the first is returned. If
+</span>145 <span style=''>    * none exist, the empty `String` &quot;&quot; is returned.
+</span>146 <span style=''>    */
+</span>147 <span style=''>  lazy val params: Map[String, String] =
+</span>148 <span style=''>    CollectionCompat.mapValues(multiParams)(_.headOption.getOrElse(&quot;&quot;))
+</span>149 <span style=''>
+</span>150 <span style=''>  /** Map[String, Seq[String]] representation of the [[Query]]
+</span>151 <span style=''>    *
+</span>152 <span style=''>    * Params are represented as a `Seq[String]` and may be empty.
+</span>153 <span style=''>    */
+</span>154 <span style=''>  lazy val multiParams: Map[String, immutable.Seq[String]] =
+</span>155 <span style=''>    if (toVector.isEmpty) Map.empty
+</span>156 <span style=''>    else {
+</span>157 <span style=''>      val m = mutable.Map.empty[String, ListBuffer[String]]
+</span>158 <span style=''>      toVector.foreach {
+</span>159 <span style=''>        case (k, None) =&gt; m.getOrElseUpdate(k, new ListBuffer)
+</span>160 <span style=''>        case (k, Some(v)) =&gt; m.getOrElseUpdate(k, new ListBuffer) += v
+</span>161 <span style=''>      }
+</span>162 <span style=''>      CollectionCompat.mapValues(m.toMap)(_.toList)
+</span>163 <span style=''>    }
+</span>164 <span style=''>
+</span>165 <span style=''>  override def equals(that: Any): Boolean =
+</span>166 <span style=''>    that match {
+</span>167 <span style=''>      case that: Query =&gt; </span><span style='background: #AEF1AE'>that.toVector == toVector</span><span style=''>
+</span>168 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>false</span><span style=''>
+</span>169 <span style=''>    }
+</span>170 <span style=''>
+</span>171 <span style=''>  override def hashCode: Int = </span><span style='background: #AEF1AE'>31 + toVector.##</span><span style=''>
+</span>172 <span style=''>
+</span>173 <span style=''>  // ///////////////////// QueryOps methods and types /////////////////////////
+</span>174 <span style=''>  override protected type Self = Query
+</span>175 <span style=''>  override protected val query: Query = this
+</span>176 <span style=''>  override protected def self: Self = this
+</span>177 <span style=''>  override protected def replaceQuery(query: Query): Self = query
+</span>178 <span style=''>  // //////////////////////////////////////////////////////////////////////////
+</span>179 <span style=''>}
+</span>180 <span style=''>
+</span>181 <span style=''>object Query {
+</span>182 <span style=''>  type KeyValue = (String, Option[String])
+</span>183 <span style=''>
+</span>184 <span style=''>  /** Represents the absence of a query string. */
+</span>185 <span style=''>  val empty: Query = </span><span style='background: #AEF1AE'>new Query(Vector.empty)</span><span style=''>
+</span>186 <span style=''>
+</span>187 <span style=''>  /** Represents a query string with no keys or values: `?` */
+</span>188 <span style=''>  val blank = </span><span style='background: #AEF1AE'>new Query(Vector(&quot;&quot; -&gt; None))</span><span style=''>
+</span>189 <span style=''>
+</span>190 <span style=''>  def apply(xs: (String, Option[String])*): Query =
+</span>191 <span style=''>    </span><span style='background: #AEF1AE'>new Query(xs.toVector)</span><span style=''>
+</span>192 <span style=''>
+</span>193 <span style=''>  def fromVector(xs: Vector[(String, Option[String])]): Query =
+</span>194 <span style=''>    </span><span style='background: #AEF1AE'>new Query(xs)</span><span style=''>
+</span>195 <span style=''>
+</span>196 <span style=''>  def fromPairs(xs: (String, String)*): Query =
+</span>197 <span style=''>    </span><span style='background: #AEF1AE'>new Query(
+</span>198 <span style=''></span><span style='background: #AEF1AE'>      xs.toList.foldLeft(Vector.empty[KeyValue]) { case (m, (k, s)) =&gt;
+</span>199 <span style=''></span><span style='background: #AEF1AE'>        m :+ (k -&gt; Some(s))
+</span>200 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>201 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>202 <span style=''>
+</span>203 <span style=''>  /** Generate a [[Query]] from its `String` representation
+</span>204 <span style=''>    *
+</span>205 <span style=''>    * If parsing fails, the empty [[Query]] is returned
+</span>206 <span style=''>    */
+</span>207 <span style=''>  def unsafeFromString(query: String): Query =
+</span>208 <span style=''>    if (</span><span style='background: #AEF1AE'>query.isEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>new Query(Vector(&quot;&quot; -&gt; None))</span><span style=''>
+</span>209 <span style=''>    else
+</span>210 <span style=''>      </span><span style='background: #AEF1AE'>QueryParser.parseQueryString(query) match {
+</span>211 <span style=''></span><span style='background: #AEF1AE'>        case Right(query) =&gt; query
+</span>212 <span style=''></span><span style='background: #AEF1AE'>        case Left(_) =&gt; </span><span style='background: #F0ADAD'>Query.empty</span><span style='background: #AEF1AE'>
+</span>213 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>214 <span style=''>
+</span>215 <span style=''>  @deprecated(message = &quot;Use unsafeFromString instead&quot;, since = &quot;0.22.0-M6&quot;)
+</span>216 <span style=''>  def fromString(query: String): Query =
+</span>217 <span style=''>    </span><span style='background: #F0ADAD'>unsafeFromString(query)</span><span style=''>
+</span>218 <span style=''>
+</span>219 <span style=''>  /** Build a [[Query]] from the `Map` structure */
+</span>220 <span style=''>  def fromMap(map: collection.Map[String, collection.Seq[String]]): Query =
+</span>221 <span style=''>    </span><span style='background: #F0ADAD'>new Query(map.foldLeft(Vector.empty[KeyValue]) {
+</span>222 <span style=''></span><span style='background: #F0ADAD'>      case (m, (k, Seq())) =&gt; m :+ (k -&gt; None)
+</span>223 <span style=''></span><span style='background: #F0ADAD'>      case (m, (k, vs)) =&gt; vs.toList.foldLeft(m) { case (m, v) =&gt; m :+ (k -&gt; Some(v)) }
+</span>224 <span style=''></span><span style='background: #F0ADAD'>    })</span><span style=''>
+</span>225 <span style=''>
+</span>226 <span style=''>  private def parse(query: String): Vector[KeyValue] =
+</span>227 <span style=''>    if (</span><span style='background: #AEF1AE'>query.isEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>blank.toVector</span><span style=''>
+</span>228 <span style=''>    else
+</span>229 <span style=''>      </span><span style='background: #AEF1AE'>QueryParser.parseQueryStringVector(query) match {
+</span>230 <span style=''></span><span style='background: #AEF1AE'>        case Right(query) =&gt; query
+</span>231 <span style=''></span><span style='background: #AEF1AE'>        case Left(_) =&gt; </span><span style='background: #F0ADAD'>Vector.empty</span><span style='background: #AEF1AE'>
+</span>232 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>233 <span style=''>
+</span>234 <span style=''>  /* query       = *( pchar / &quot;/&quot; / &quot;?&quot; )
+</span>235 <span style=''>   *
+</span>236 <span style=''>   * These are illegal, but common in the wild.  We will be
+</span>237 <span style=''>   * &quot;conservative in our sending behavior and liberal in our
+</span>238 <span style=''>   * receiving behavior&quot;, and encode them.
+</span>239 <span style=''>   */
+</span>240 <span style=''>  private[http4s] lazy val parser: Parser0[Query] = {
+</span>241 <span style=''>    import cats.parse.Parser.charIn
+</span>242 <span style=''>    import Rfc3986.pchar
+</span>243 <span style=''>
+</span>244 <span style=''>    pchar.orElse(charIn(&quot;/?[]&quot;)).rep0.string.map(pchars =&gt; new Query(Right(pchars)))
+</span>245 <span style=''>  }
+</span>246 <span style=''>
+</span>247 <span style=''>  implicit val catsInstancesForHttp4sQuery: Hash[Query] with Order[Query] with Show[Query] =
+</span>248 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Hash[Query] with Order[Query] with Show[Query] {
+</span>249 <span style=''>      override def hash(x: Query): Int =
+</span>250 <span style=''>        </span><span style='background: #F0ADAD'>x.hashCode</span><span style=''>
+</span>251 <span style=''>
+</span>252 <span style=''>      override def compare(x: Query, y: Query): Int =
+</span>253 <span style=''>        </span><span style='background: #AEF1AE'>x.toVector.compare(y.toVector)</span><span style=''>
+</span>254 <span style=''>
+</span>255 <span style=''>      override def show(a: Query): String =
+</span>256 <span style=''>        </span><span style='background: #F0ADAD'>a.renderString</span><span style=''>
+</span>257 <span style=''>    }
+</span>258 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          22807
+        </td>
+        <td>
+          1707
+          -
+          1711
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          null
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          20583
+        </td>
+        <td>
+          1751
+          -
+          1751
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.corsdeprecatedsuite,munit.scalachecksuite,org.http4s.parser.originheadersuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          18809
+        </td>
+        <td>
+          1755
+          -
+          1769
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this._pairs.==(null)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          21997
+        </td>
+        <td>
+          1751
+          -
+          1751
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.corsdeprecatedsuite,munit.scalachecksuite,org.http4s.parser.originheadersuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          15742
+        </td>
+        <td>
+          1779
+          -
+          1821
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this._pairs = Query.this.value.fold[Vector[org.http4s.Query.KeyValue]](((x: Vector[org.http4s.Query.KeyValue]) =&gt; scala.Predef.identity[Vector[org.http4s.Query.KeyValue]](x)), ((query: String) =&gt; Query.parse(query)))
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          19458
+        </td>
+        <td>
+          1788
+          -
+          1821
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.value.fold[Vector[org.http4s.Query.KeyValue]](((x: Vector[org.http4s.Query.KeyValue]) =&gt; scala.Predef.identity[Vector[org.http4s.Query.KeyValue]](x)), ((query: String) =&gt; Query.parse(query)))
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          17361
+        </td>
+        <td>
+          1799
+          -
+          1807
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[Vector[org.http4s.Query.KeyValue]](x)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          13356
+        </td>
+        <td>
+          1809
+          -
+          1820
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.parse
+        </td>
+        <td>
+          munit.funsuite,munit.scalachecksuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.parse(query)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          16604
+        </td>
+        <td>
+          1832
+          -
+          1838
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Query._pairs
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this._pairs
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          22827
+        </td>
+        <td>
+          1893
+          -
+          1902
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[Vector[org.http4s.Query.KeyValue], Nothing](vec)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          19311
+        </td>
+        <td>
+          1888
+          -
+          1903
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.&lt;init&gt;(scala.`package`.Left.apply[Vector[org.http4s.Query.KeyValue], Nothing](vec))
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          17382
+        </td>
+        <td>
+          1888
+          -
+          1888
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          13213
+        </td>
+        <td>
+          1939
+          -
+          1949
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.apply(idx)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          19842
+        </td>
+        <td>
+          1971
+          -
+          1983
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.immutable.Vector.length
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.length
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          20313
+        </td>
+        <td>
+          2029
+          -
+          2070
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new Query(scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.slice(from, until)))
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          16104
+        </td>
+        <td>
+          2044
+          -
+          2068
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.IndexedSeqOps.slice
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.slice(from, until)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          22510
+        </td>
+        <td>
+          2039
+          -
+          2069
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.slice(from, until))
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          16477
+        </td>
+        <td>
+          2097
+          -
+          2110
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.SeqOps.isEmpty
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite,org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.pairs.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          23036
+        </td>
+        <td>
+          2138
+          -
+          2152
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.nonEmpty
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.server.middleware.corsdeprecatedsuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.pairs.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          15443
+        </td>
+        <td>
+          2192
+          -
+          2211
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.drop(n))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          13231
+        </td>
+        <td>
+          2182
+          -
+          2212
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new Query(scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.drop(n)))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          19331
+        </td>
+        <td>
+          2197
+          -
+          2210
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.drop
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.drop(n)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          15717
+        </td>
+        <td>
+          2257
+          -
+          2281
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.dropRight(n))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          19856
+        </td>
+        <td>
+          2262
+          -
+          2280
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.dropRight
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.dropRight(n)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          22532
+        </td>
+        <td>
+          2247
+          -
+          2282
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new Query(scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.dropRight(n)))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          20200
+        </td>
+        <td>
+          2336
+          -
+          2351
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.exists
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.pairs.exists(f)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          16502
+        </td>
+        <td>
+          2421
+          -
+          2439
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.filterNot
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.pairs.filterNot(f)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          22800
+        </td>
+        <td>
+          2416
+          -
+          2440
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.filterNot(f))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          18930
+        </td>
+        <td>
+          2406
+          -
+          2441
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          new Query(scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.filterNot(f)))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          13104
+        </td>
+        <td>
+          2503
+          -
+          2524
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.filter(f))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          15466
+        </td>
+        <td>
+          2508
+          -
+          2523
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.filter
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.filter(f)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          19750
+        </td>
+        <td>
+          2493
+          -
+          2525
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new Query(scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.filter(f)))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          15735
+        </td>
+        <td>
+          2574
+          -
+          2590
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.foreach[Unit](f)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          22102
+        </td>
+        <td>
+          2648
+          -
+          2668
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.foldLeft[Z](z)(f)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          20211
+        </td>
+        <td>
+          2751
+          -
+          2790
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Foldable.foldRight
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.Foldable.apply[Vector](cats.this.UnorderedFoldable.catsTraverseForVector).foldRight[org.http4s.Query.KeyValue, Z](Query.this.pairs, z)(f)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          22665
+        </td>
+        <td>
+          2840
+          -
+          2859
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing]({
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.Query.KeyValue = elem;
+  Query.this.pairs.+:[org.http4s.Query.KeyValue](rassoc$1)
+})
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          18946
+        </td>
+        <td>
+          2830
+          -
+          2860
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new Query(scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing]({
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.Query.KeyValue = elem;
+  Query.this.pairs.+:[org.http4s.Query.KeyValue](rassoc$1)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          16520
+        </td>
+        <td>
+          2850
+          -
+          2858
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.+:
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.+:[org.http4s.Query.KeyValue](rassoc$1)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          15416
+        </td>
+        <td>
+          2915
+          -
+          2928
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.pairs.:+[org.http4s.Query.KeyValue](elem)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          19474
+        </td>
+        <td>
+          2900
+          -
+          2930
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new Query(scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.:+[org.http4s.Query.KeyValue](elem)))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          13119
+        </td>
+        <td>
+          2910
+          -
+          2929
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](Query.this.pairs.:+[org.http4s.Query.KeyValue](elem))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          18143
+        </td>
+        <td>
+          3008
+          -
+          3044
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new Query(scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](this.pairs.++[org.http4s.Query.KeyValue](pairs)))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          15606
+        </td>
+        <td>
+          3023
+          -
+          3042
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.++
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          this.pairs.++[org.http4s.Query.KeyValue](pairs)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          22116
+        </td>
+        <td>
+          3018
+          -
+          3043
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], Nothing](this.pairs.++[org.http4s.Query.KeyValue](pairs))
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          16381
+        </td>
+        <td>
+          3097
+          -
+          3102
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Query.pairs
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,munit.funsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.pairs
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          22686
+        </td>
+        <td>
+          3151
+          -
+          3166
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.toVector.toList
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          22407
+        </td>
+        <td>
+          3347
+          -
+          4016
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,org.http4s.ember.core.encodersuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.value.fold[writer.type](((pairs: Vector[org.http4s.Query.KeyValue]) =&gt; {
+  var first: Boolean = true;
+  def encode(s: String): String = {
+    &lt;artifact&gt; val x$1: String = s;
+    &lt;artifact&gt; val x$2: Boolean(false) = false;
+    &lt;artifact&gt; val x$3: java.nio.charset.Charset = java.nio.charset.StandardCharsets.UTF_8;
+    &lt;artifact&gt; val x$4: org.http4s.internal.CharPredicate = org.http4s.internal.UriCoding.QueryNoEncode;
+    org.http4s.internal.UriCoding.encode(x$1, x$3, false, x$4)
+  };
+  pairs.foreach[org.http4s.util.Writer](((x0$1: org.http4s.Query.KeyValue) =&gt; x0$1 match {
+    case (_1: String, _2: Option[String]): (String, Option[String])((n @ _), scala.None) =&gt; {
+      if (first.unary_!)
+        writer.append('&amp;')
+      else
+        first = false;
+      writer.append(encode(n))
+    }
+    case (_1: String, _2: Option[String]): (String, Option[String])((n @ _), (value: String): Some[String]((v @ _))) =&gt; {
+      if (first.unary_!)
+        writer.append('&amp;')
+      else
+        first = false;
+      writer.append(encode(n)).append(&quot;=&quot;).append(encode(v))
+    }
+  }));
+  writer
+}), ((raw: String) =&gt; writer.append(raw)))
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          18834
+        </td>
+        <td>
+          3392
+          -
+          3396
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          15630
+        </td>
+        <td>
+          3436
+          -
+          3595
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.UriCoding.encode
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.UriCoding.encode(x$1, x$3, false, x$4)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          15439
+        </td>
+        <td>
+          3491
+          -
+          3496
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          119
+        </td>
+        <td>
+          13514
+        </td>
+        <td>
+          3518
+          -
+          3540
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.charset.StandardCharsets.UTF_8
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          19985
+        </td>
+        <td>
+          3561
+          -
+          3584
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.UriCoding.QueryNoEncode
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.UriCoding.QueryNoEncode
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          19612
+        </td>
+        <td>
+          3603
+          -
+          3961
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.foreach
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          pairs.foreach[org.http4s.util.Writer](((x0$1: org.http4s.Query.KeyValue) =&gt; x0$1 match {
+  case (_1: String, _2: Option[String]): (String, Option[String])((n @ _), scala.None) =&gt; {
+    if (first.unary_!)
+      writer.append('&amp;')
+    else
+      first = false;
+    writer.append(encode(n))
+  }
+  case (_1: String, _2: Option[String]): (String, Option[String])((n @ _), (value: String): Some[String]((v @ _))) =&gt; {
+    if (first.unary_!)
+      writer.append('&amp;')
+    else
+      first = false;
+    writer.append(encode(n)).append(&quot;=&quot;).append(encode(v))
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          16493
+        </td>
+        <td>
+          3667
+          -
+          3685
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append('&amp;')
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          22366
+        </td>
+        <td>
+          3659
+          -
+          3665
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          first.unary_!
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          18680
+        </td>
+        <td>
+          3667
+          -
+          3685
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append('&amp;')
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          18851
+        </td>
+        <td>
+          3701
+          -
+          3714
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urispec,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          first = false
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          23193
+        </td>
+        <td>
+          3709
+          -
+          3714
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urispec,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          13395
+        </td>
+        <td>
+          3725
+          -
+          3749
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append(encode(n))
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          15459
+        </td>
+        <td>
+          3739
+          -
+          3748
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.encode
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          encode(n)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          19742
+        </td>
+        <td>
+          3794
+          -
+          3800
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          first.unary_!
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          22391
+        </td>
+        <td>
+          3802
+          -
+          3820
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append('&amp;')
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          16128
+        </td>
+        <td>
+          3802
+          -
+          3820
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append('&amp;')
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          18698
+        </td>
+        <td>
+          3844
+          -
+          3849
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          16359
+        </td>
+        <td>
+          3836
+          -
+          3849
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          first = false
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          22943
+        </td>
+        <td>
+          3887
+          -
+          3896
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.encode
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          encode(n)
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          19086
+        </td>
+        <td>
+          3918
+          -
+          3921
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;=&quot;
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          21633
+        </td>
+        <td>
+          3860
+          -
+          3953
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append(encode(n)).append(&quot;=&quot;).append(encode(v))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          15322
+        </td>
+        <td>
+          3943
+          -
+          3952
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.encode
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.queryopsdoctest,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          encode(v)
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          15866
+        </td>
+        <td>
+          3993
+          -
+          4011
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.ember.core.encodersuite,org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append(raw)
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          18569
+        </td>
+        <td>
+          4964
+          -
+          4972
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Query.toVector
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,munit.funsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.toVector
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          16374
+        </td>
+        <td>
+          4947
+          -
+          4972
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,munit.funsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          that.toVector.==(Query.this.toVector)
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          22826
+        </td>
+        <td>
+          4989
+          -
+          4994
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          18828
+        </td>
+        <td>
+          5033
+          -
+          5035
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          31
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          15341
+        </td>
+        <td>
+          5038
+          -
+          5049
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.lang.Object.##
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.toVector.##
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          21495
+        </td>
+        <td>
+          5033
+          -
+          5049
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          31.+(Query.this.toVector.##)
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          19632
+        </td>
+        <td>
+          5548
+          -
+          5560
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.empty
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Vector.empty[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          15620
+        </td>
+        <td>
+          5538
+          -
+          5561
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Query(scala.`package`.Vector.empty[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          22845
+        </td>
+        <td>
+          5650
+          -
+          5668
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Vector.apply[(String, None.type)](scala.Predef.ArrowAssoc[String](&quot;&quot;).-&gt;[None.type](scala.None))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          18592
+        </td>
+        <td>
+          5663
+          -
+          5667
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          14429
+        </td>
+        <td>
+          5657
+          -
+          5667
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;&quot;).-&gt;[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          18845
+        </td>
+        <td>
+          5640
+          -
+          5669
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Query(scala.`package`.Vector.apply[(String, None.type)](scala.Predef.ArrowAssoc[String](&quot;&quot;).-&gt;[None.type](scala.None)))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          22012
+        </td>
+        <td>
+          5657
+          -
+          5659
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          21516
+        </td>
+        <td>
+          5727
+          -
+          5749
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          munit.scalachecksuite,munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Query(xs.toVector)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          14923
+        </td>
+        <td>
+          5737
+          -
+          5748
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toVector
+        </td>
+        <td>
+          munit.scalachecksuite,munit.scalacheckeffectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          xs.toVector
+        </td>
+      </tr><tr>
+        <td>
+          194
+        </td>
+        <td>
+          19500
+        </td>
+        <td>
+          5819
+          -
+          5832
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Query(xs)
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          19351
+        </td>
+        <td>
+          5886
+          -
+          6009
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          new Query(xs.toList.foldLeft[scala.collection.immutable.Vector[org.http4s.Query.KeyValue]](scala.`package`.Vector.empty[org.http4s.Query.KeyValue])(((x0$1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], x1$1: (String, String)) =&gt; scala.Tuple2.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, String)](x0$1, x1$1) match {
+  case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: (String, String)): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, String))((m @ _), (_1: String, _2: String): (String, String)((k @ _), (s @ _))) =&gt; m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](s)))
+})))
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          16123
+        </td>
+        <td>
+          5922
+          -
+          5944
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.empty
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Vector.empty[org.http4s.Query.KeyValue]
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          22568
+        </td>
+        <td>
+          5903
+          -
+          6003
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          xs.toList.foldLeft[scala.collection.immutable.Vector[org.http4s.Query.KeyValue]](scala.`package`.Vector.empty[org.http4s.Query.KeyValue])(((x0$1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], x1$1: (String, String)) =&gt; scala.Tuple2.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, String)](x0$1, x1$1) match {
+  case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: (String, String)): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, String))((m @ _), (_1: String, _2: String): (String, String)((k @ _), (s @ _))) =&gt; m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](s)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          18547
+        </td>
+        <td>
+          5982
+          -
+          5994
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](s))
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          14449
+        </td>
+        <td>
+          5976
+          -
+          5995
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](s)))
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          22026
+        </td>
+        <td>
+          5987
+          -
+          5994
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[String](s)
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          14937
+        </td>
+        <td>
+          6195
+          -
+          6208
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          query.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          15499
+        </td>
+        <td>
+          6227
+          -
+          6237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;&quot;).-&gt;[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          14811
+        </td>
+        <td>
+          6210
+          -
+          6239
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Query(scala.`package`.Vector.apply[(String, None.type)](scala.Predef.ArrowAssoc[String](&quot;&quot;).-&gt;[None.type](scala.None)))
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          18564
+        </td>
+        <td>
+          6210
+          -
+          6239
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new Query(scala.`package`.Vector.apply[(String, None.type)](scala.Predef.ArrowAssoc[String](&quot;&quot;).-&gt;[None.type](scala.None)))
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          22553
+        </td>
+        <td>
+          6220
+          -
+          6238
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Vector.apply[(String, None.type)](scala.Predef.ArrowAssoc[String](&quot;&quot;).-&gt;[None.type](scala.None))
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          19517
+        </td>
+        <td>
+          6233
+          -
+          6237
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          21760
+        </td>
+        <td>
+          6227
+          -
+          6229
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          18735
+        </td>
+        <td>
+          6255
+          -
+          6290
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.parser.QueryParser.parseQueryString
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.parser.QueryParser.parseQueryString(query, org.http4s.parser.QueryParser.parseQueryString$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          23089
+        </td>
+        <td>
+          6267
+          -
+          6267
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.parser.QueryParser.parseQueryString$default$2
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.parser.QueryParser.parseQueryString$default$2
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          21781
+        </td>
+        <td>
+          6255
+          -
+          6377
+        </td>
+        <td>
+          Match
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.urispec,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.parser.QueryParser.parseQueryString(query, org.http4s.parser.QueryParser.parseQueryString$default$2) match {
+  case (value: org.http4s.Query): scala.util.Right[org.http4s.ParseFailure,org.http4s.Query]((query @ _)) =&gt; query
+  case (value: org.http4s.ParseFailure): scala.util.Left[org.http4s.ParseFailure,org.http4s.Query](_) =&gt; Query.empty
+}
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          15180
+        </td>
+        <td>
+          6358
+          -
+          6369
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Query.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.empty
+        </td>
+      </tr><tr>
+        <td>
+          217
+        </td>
+        <td>
+          17801
+        </td>
+        <td>
+          6501
+          -
+          6524
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.unsafeFromString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Query.this.unsafeFromString(query)
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          17671
+        </td>
+        <td>
+          6668
+          -
+          6847
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          map.foldLeft[scala.collection.immutable.Vector[org.http4s.Query.KeyValue]](scala.`package`.Vector.empty[org.http4s.Query.KeyValue])(((x0$1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], x1$1: (String, scala.collection.Seq[String])) =&gt; scala.Tuple2.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, scala.collection.Seq[String])](x0$1, x1$1) match {
+  case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: (String, scala.collection.Seq[String])): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, scala.collection.Seq[String]))((m @ _), (_1: String, _2: scala.collection.Seq[String]): (String, scala.collection.Seq[String])((k @ _), scala.`package`.Seq.unapplySeq[A](&lt;unapply-selector&gt;) &lt;unapply&gt; ())) =&gt; m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[None.type](scala.None))
+  case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: (String, scala.collection.Seq[String])): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, scala.collection.Seq[String]))((m @ _), (_1: String, _2: scala.collection.Seq[String]): (String, scala.collection.Seq[String])((k @ _), (vs @ _))) =&gt; vs.toList.foldLeft[scala.collection.immutable.Vector[org.http4s.Query.KeyValue]](m)(((x0$2: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], x1$2: String) =&gt; scala.Tuple2.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], String](x0$2, x1$2) match {
+    case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: String): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], String)((m @ _), (v @ _)) =&gt; m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](v)))
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          16019
+        </td>
+        <td>
+          6681
+          -
+          6703
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Vector.empty[org.http4s.Query.KeyValue]
+        </td>
+      </tr><tr>
+        <td>
+          221
+        </td>
+        <td>
+          15773
+        </td>
+        <td>
+          6658
+          -
+          6848
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new Query(map.foldLeft[scala.collection.immutable.Vector[org.http4s.Query.KeyValue]](scala.`package`.Vector.empty[org.http4s.Query.KeyValue])(((x0$1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], x1$1: (String, scala.collection.Seq[String])) =&gt; scala.Tuple2.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, scala.collection.Seq[String])](x0$1, x1$1) match {
+  case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: (String, scala.collection.Seq[String])): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, scala.collection.Seq[String]))((m @ _), (_1: String, _2: scala.collection.Seq[String]): (String, scala.collection.Seq[String])((k @ _), scala.`package`.Seq.unapplySeq[A](&lt;unapply-selector&gt;) &lt;unapply&gt; ())) =&gt; m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[None.type](scala.None))
+  case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: (String, scala.collection.Seq[String])): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], (String, scala.collection.Seq[String]))((m @ _), (_1: String, _2: scala.collection.Seq[String]): (String, scala.collection.Seq[String])((k @ _), (vs @ _))) =&gt; vs.toList.foldLeft[scala.collection.immutable.Vector[org.http4s.Query.KeyValue]](m)(((x0$2: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], x1$2: String) =&gt; scala.Tuple2.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], String](x0$2, x1$2) match {
+    case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: String): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], String)((m @ _), (v @ _)) =&gt; m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](v)))
+  }))
+})))
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          18430
+        </td>
+        <td>
+          6743
+          -
+          6752
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](k).-&gt;[None.type](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          21932
+        </td>
+        <td>
+          6748
+          -
+          6752
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          14711
+        </td>
+        <td>
+          6737
+          -
+          6753
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[None.type](scala.None))
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          19238
+        </td>
+        <td>
+          6826
+          -
+          6838
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](v))
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          15201
+        </td>
+        <td>
+          6820
+          -
+          6839
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](v)))
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          22838
+        </td>
+        <td>
+          6831
+          -
+          6838
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Some.apply[String](v)
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          21799
+        </td>
+        <td>
+          6781
+          -
+          6841
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          vs.toList.foldLeft[scala.collection.immutable.Vector[org.http4s.Query.KeyValue]](m)(((x0$2: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], x1$2: String) =&gt; scala.Tuple2.apply[scala.collection.immutable.Vector[org.http4s.Query.KeyValue], String](x0$2, x1$2) match {
+  case (_1: scala.collection.immutable.Vector[org.http4s.Query.KeyValue], _2: String): (scala.collection.immutable.Vector[org.http4s.Query.KeyValue], String)((m @ _), (v @ _)) =&gt; m.:+[org.http4s.Query.KeyValue](scala.Predef.ArrowAssoc[String](k).-&gt;[Some[String]](scala.Some.apply[String](v)))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          22157
+        </td>
+        <td>
+          6913
+          -
+          6926
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          munit.funsuite,munit.scalachecksuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          query.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          18453
+        </td>
+        <td>
+          6928
+          -
+          6942
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Query.toVector
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.blank.toVector
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          14445
+        </td>
+        <td>
+          6928
+          -
+          6942
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.Query.toVector
+        </td>
+        <td>
+          org.http4s.urispec
+        </td>
+        <td style="background: #AEF1AE">
+          Query.this.blank.toVector
+        </td>
+      </tr><tr>
+        <td>
+          229
+        </td>
+        <td>
+          18978
+        </td>
+        <td>
+          6958
+          -
+          6999
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.parser.QueryParser.parseQueryStringVector
+        </td>
+        <td>
+          munit.funsuite,org.http4s.ember.core.responsesplittingsuite,munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.parser.QueryParser.parseQueryStringVector(query, org.http4s.parser.QueryParser.parseQueryStringVector$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          229
+        </td>
+        <td>
+          22703
+        </td>
+        <td>
+          6970
+          -
+          6970
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.parser.QueryParser.parseQueryStringVector$default$2
+        </td>
+        <td>
+          munit.funsuite,org.http4s.ember.core.responsesplittingsuite,munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.parser.QueryParser.parseQueryStringVector$default$2
+        </td>
+      </tr><tr>
+        <td>
+          229
+        </td>
+        <td>
+          21679
+        </td>
+        <td>
+          6958
+          -
+          7087
+        </td>
+        <td>
+          Match
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.funsuite,org.http4s.ember.core.responsesplittingsuite,munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.oauth1.oauthsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.parser.QueryParser.parseQueryStringVector(query, org.http4s.parser.QueryParser.parseQueryStringVector$default$2) match {
+  case (value: Vector[org.http4s.Query.KeyValue]): scala.util.Right[org.http4s.ParseFailure,Vector[org.http4s.Query.KeyValue]]((query @ _)) =&gt; query
+  case (value: org.http4s.ParseFailure): scala.util.Left[org.http4s.ParseFailure,Vector[org.http4s.Query.KeyValue]](_) =&gt; scala.`package`.Vector.empty[Nothing]
+}
+        </td>
+      </tr><tr>
+        <td>
+          231
+        </td>
+        <td>
+          15072
+        </td>
+        <td>
+          7067
+          -
+          7079
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Vector.empty[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          15662
+        </td>
+        <td>
+          7610
+          -
+          7613
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          17691
+        </td>
+        <td>
+          7712
+          -
+          7722
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Query.hashCode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x.hashCode()
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          21774
+        </td>
+        <td>
+          7786
+          -
+          7816
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.OrderOps.compare
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOrder[Vector[(String, Option[String])]](x.toVector)(kernel.this.Eq.catsKernelOrderForVector[(String, Option[String])](kernel.this.Eq.catsKernelOrderForTuple2[String, Option[String]](kernel.this.Eq.catsKernelInstancesForString, kernel.this.Eq.catsKernelOrderForOption[String](kernel.this.Eq.catsKernelInstancesForString)))).compare(y.toVector)
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          20900
+        </td>
+        <td>
+          7788
+          -
+          7788
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.instances.TupleOrderInstances.catsKernelOrderForTuple2
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelOrderForTuple2[String, Option[String]](kernel.this.Eq.catsKernelInstancesForString, kernel.this.Eq.catsKernelOrderForOption[String](kernel.this.Eq.catsKernelInstancesForString))
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          14308
+        </td>
+        <td>
+          7788
+          -
+          7788
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.Eq.catsKernelOrderForOption
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelOrderForOption[String](kernel.this.Eq.catsKernelInstancesForString)
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          15645
+        </td>
+        <td>
+          7786
+          -
+          7796
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Query.toVector
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          x.toVector
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          15477
+        </td>
+        <td>
+          7805
+          -
+          7815
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Query.toVector
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          y.toVector
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          22547
+        </td>
+        <td>
+          7788
+          -
+          7788
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Eq.catsKernelInstancesForString
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelInstancesForString
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          19218
+        </td>
+        <td>
+          7788
+          -
+          7788
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.Eq.catsKernelOrderForVector
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelOrderForVector[(String, Option[String])](kernel.this.Eq.catsKernelOrderForTuple2[String, Option[String]](kernel.this.Eq.catsKernelInstancesForString, kernel.this.Eq.catsKernelOrderForOption[String](kernel.this.Eq.catsKernelInstancesForString)))
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          18473
+        </td>
+        <td>
+          7788
+          -
+          7788
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Eq.catsKernelInstancesForString
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelInstancesForString
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          17558
+        </td>
+        <td>
+          7870
+          -
+          7884
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          a.renderString
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

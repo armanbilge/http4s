@@ -1,0 +1,2624 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/Client.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package client
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.data._
+</span>21 <span style=''>import cats.effect.Ref
+</span>22 <span style=''>import cats.effect._
+</span>23 <span style=''>import cats.effect.kernel.CancelScope
+</span>24 <span style=''>import cats.effect.kernel.Poll
+</span>25 <span style=''>import cats.syntax.all._
+</span>26 <span style=''>import cats.~&gt;
+</span>27 <span style=''>import fs2._
+</span>28 <span style=''>import org.http4s.headers.Host
+</span>29 <span style=''>
+</span>30 <span style=''>import java.io.IOException
+</span>31 <span style=''>import scala.util.control.NoStackTrace
+</span>32 <span style=''>
+</span>33 <span style=''>/** A [[Client]] submits [[Request]]s to a server and processes the [[Response]].
+</span>34 <span style=''>  *
+</span>35 <span style=''>  * When a connection is &quot;released&quot; and the HTTP semantics of the
+</span>36 <span style=''>  * request and response permit, the connection may be kept alive by
+</span>37 <span style=''>  * the backend and used for a subsequent request.  When HTTP
+</span>38 <span style=''>  * semantics require it, or at the backend's discretion, a released
+</span>39 <span style=''>  * connection may also be closed.
+</span>40 <span style=''>  */
+</span>41 <span style=''>trait Client[F[_]] {
+</span>42 <span style=''>  def run(req: Request[F]): Resource[F, Response[F]]
+</span>43 <span style=''>
+</span>44 <span style=''>  /** Submits a request, and provides a callback to process the response.
+</span>45 <span style=''>    *
+</span>46 <span style=''>    * @param req The request to submit
+</span>47 <span style=''>    * @param f   A callback for the response to req.  The underlying HTTP connection
+</span>48 <span style=''>    *            is released when the returned task completes.  Attempts to read the
+</span>49 <span style=''>    *            response body afterward will result in an error.
+</span>50 <span style=''>    * @return The result of applying f to the response to req
+</span>51 <span style=''>    */
+</span>52 <span style=''>  @deprecated(&quot;Use run(req).use(f)&quot;, &quot;0.21.5&quot;)
+</span>53 <span style=''>  def fetch[A](req: Request[F])(f: Response[F] =&gt; F[A]): F[A]
+</span>54 <span style=''>
+</span>55 <span style=''>  /** Submits a request, and provides a callback to process the response.
+</span>56 <span style=''>    *
+</span>57 <span style=''>    * @param req An effect of the request to submit
+</span>58 <span style=''>    * @param f A callback for the response to req.  The underlying HTTP connection
+</span>59 <span style=''>    *          is released when the returned task completes.  Attempts to read the
+</span>60 <span style=''>    *          response body afterward will result in an error.
+</span>61 <span style=''>    * @return The result of applying f to the response to req
+</span>62 <span style=''>    */
+</span>63 <span style=''>  @deprecated(&quot;Use req.flatMap(run(_).use(f))&quot;, &quot;0.21.5&quot;)
+</span>64 <span style=''>  def fetch[A](req: F[Request[F]])(f: Response[F] =&gt; F[A]): F[A]
+</span>65 <span style=''>
+</span>66 <span style=''>  /** Returns this client as a [[cats.data.Kleisli]].  All connections created
+</span>67 <span style=''>    * by this service are released on completion of callback task f.
+</span>68 <span style=''>    *
+</span>69 <span style=''>    * This method effectively reverses the arguments to `run` followed by `use`, and is
+</span>70 <span style=''>    * preferred when an HTTP client is composed into a larger Kleisli function,
+</span>71 <span style=''>    * or when a common response callback is used by many call sites.
+</span>72 <span style=''>    */
+</span>73 <span style=''>  def toKleisli[A](f: Response[F] =&gt; F[A]): Kleisli[F, Request[F], A]
+</span>74 <span style=''>
+</span>75 <span style=''>  /** Returns this client as an [[HttpApp]].  It is the responsibility
+</span>76 <span style=''>    * of callers of this service to run the response body to release
+</span>77 <span style=''>    * the underlying HTTP connection.
+</span>78 <span style=''>    *
+</span>79 <span style=''>    * This is intended for use in proxy servers.  [[run]], [[fetchAs[A](req:org\.http4s\.Request[F])*]],
+</span>80 <span style=''>    * [[toKleisli]], and [[stream]] are safer alternatives, as their
+</span>81 <span style=''>    * signatures guarantee release of the HTTP connection.
+</span>82 <span style=''>    */
+</span>83 <span style=''>  def toHttpApp: HttpApp[F]
+</span>84 <span style=''>
+</span>85 <span style=''>  /** Run the request as a stream.  The response lifecycle is equivalent
+</span>86 <span style=''>    * to the returned Stream's.
+</span>87 <span style=''>    */
+</span>88 <span style=''>  def stream(req: Request[F]): Stream[F, Response[F]]
+</span>89 <span style=''>
+</span>90 <span style=''>  def expectOr[A](req: Request[F])(onError: Response[F] =&gt; F[Throwable])(implicit
+</span>91 <span style=''>      d: EntityDecoder[F, A]
+</span>92 <span style=''>  ): F[A]
+</span>93 <span style=''>
+</span>94 <span style=''>  /** Submits a request and decodes the response on success.  On failure, the
+</span>95 <span style=''>    * status code is returned.  The underlying HTTP connection is released at the
+</span>96 <span style=''>    * completion of the decoding.
+</span>97 <span style=''>    */
+</span>98 <span style=''>  def expect[A](req: Request[F])(implicit d: EntityDecoder[F, A]): F[A]
+</span>99 <span style=''>
+</span>100 <span style=''>  def expectOr[A](req: F[Request[F]])(onError: Response[F] =&gt; F[Throwable])(implicit
+</span>101 <span style=''>      d: EntityDecoder[F, A]
+</span>102 <span style=''>  ): F[A]
+</span>103 <span style=''>
+</span>104 <span style=''>  def expect[A](req: F[Request[F]])(implicit d: EntityDecoder[F, A]): F[A]
+</span>105 <span style=''>
+</span>106 <span style=''>  def expectOr[A](uri: Uri)(onError: Response[F] =&gt; F[Throwable])(implicit
+</span>107 <span style=''>      d: EntityDecoder[F, A]
+</span>108 <span style=''>  ): F[A]
+</span>109 <span style=''>
+</span>110 <span style=''>  /** Submits a GET request to the specified URI and decodes the response on
+</span>111 <span style=''>    * success.  On failure, the status code is returned.  The underlying HTTP
+</span>112 <span style=''>    * connection is released at the completion of the decoding.
+</span>113 <span style=''>    */
+</span>114 <span style=''>  def expect[A](uri: Uri)(implicit d: EntityDecoder[F, A]): F[A]
+</span>115 <span style=''>
+</span>116 <span style=''>  def expectOr[A](s: String)(onError: Response[F] =&gt; F[Throwable])(implicit
+</span>117 <span style=''>      d: EntityDecoder[F, A]
+</span>118 <span style=''>  ): F[A]
+</span>119 <span style=''>
+</span>120 <span style=''>  /** Submits a GET request to the URI specified by the String and decodes the
+</span>121 <span style=''>    * response on success.  On failure, the status code is returned.  The
+</span>122 <span style=''>    * underlying HTTP connection is released at the completion of the decoding.
+</span>123 <span style=''>    */
+</span>124 <span style=''>  def expect[A](s: String)(implicit d: EntityDecoder[F, A]): F[A]
+</span>125 <span style=''>
+</span>126 <span style=''>  def expectOptionOr[A](req: Request[F])(onError: Response[F] =&gt; F[Throwable])(implicit
+</span>127 <span style=''>      d: EntityDecoder[F, A]
+</span>128 <span style=''>  ): F[Option[A]]
+</span>129 <span style=''>
+</span>130 <span style=''>  def expectOption[A](req: Request[F])(implicit d: EntityDecoder[F, A]): F[Option[A]]
+</span>131 <span style=''>
+</span>132 <span style=''>  /** Submits a request and decodes the response, regardless of the status code.
+</span>133 <span style=''>    * The underlying HTTP connection is released at the completion of the
+</span>134 <span style=''>    * decoding.
+</span>135 <span style=''>    */
+</span>136 <span style=''>  def fetchAs[A](req: Request[F])(implicit d: EntityDecoder[F, A]): F[A]
+</span>137 <span style=''>
+</span>138 <span style=''>  /** Submits a request and decodes the response, regardless of the status code.
+</span>139 <span style=''>    * The underlying HTTP connection is released at the completion of the
+</span>140 <span style=''>    * decoding.
+</span>141 <span style=''>    */
+</span>142 <span style=''>  def fetchAs[A](req: F[Request[F]])(implicit d: EntityDecoder[F, A]): F[A]
+</span>143 <span style=''>
+</span>144 <span style=''>  /** Submits a request and returns the response status */
+</span>145 <span style=''>  def status(req: Request[F]): F[Status]
+</span>146 <span style=''>
+</span>147 <span style=''>  /** Submits a request and returns the response status */
+</span>148 <span style=''>  def status(req: F[Request[F]]): F[Status]
+</span>149 <span style=''>
+</span>150 <span style=''>  /** Submits a GET request to the URI and returns the response status */
+</span>151 <span style=''>  def statusFromUri(uri: Uri): F[Status]
+</span>152 <span style=''>
+</span>153 <span style=''>  /** Submits a GET request to the URI and returns the response status */
+</span>154 <span style=''>  def statusFromString(s: String): F[Status]
+</span>155 <span style=''>
+</span>156 <span style=''>  /** Submits a request and returns true if and only if the response status is
+</span>157 <span style=''>    * successful
+</span>158 <span style=''>    */
+</span>159 <span style=''>  def successful(req: Request[F]): F[Boolean]
+</span>160 <span style=''>
+</span>161 <span style=''>  /** Submits a request and returns true if and only if the response status is
+</span>162 <span style=''>    * successful
+</span>163 <span style=''>    */
+</span>164 <span style=''>  def successful(req: F[Request[F]]): F[Boolean]
+</span>165 <span style=''>
+</span>166 <span style=''>  /** Submits a GET request, and provides a callback to process the response.
+</span>167 <span style=''>    *
+</span>168 <span style=''>    * @param uri The URI to GET
+</span>169 <span style=''>    * @param f A callback for the response to a GET on uri.  The underlying HTTP connection
+</span>170 <span style=''>    *          is released when the returned task completes.  Attempts to read the
+</span>171 <span style=''>    *          response body afterward will result in an error.
+</span>172 <span style=''>    * @return The result of applying f to the response to req
+</span>173 <span style=''>    */
+</span>174 <span style=''>  def get[A](uri: Uri)(f: Response[F] =&gt; F[A]): F[A]
+</span>175 <span style=''>
+</span>176 <span style=''>  /** Submits a request and decodes the response on success.  On failure, the
+</span>177 <span style=''>    * status code is returned.  The underlying HTTP connection is released at the
+</span>178 <span style=''>    * completion of the decoding.
+</span>179 <span style=''>    */
+</span>180 <span style=''>  def get[A](s: String)(f: Response[F] =&gt; F[A]): F[A]
+</span>181 <span style=''>
+</span>182 <span style=''>  /** As [[#expectOptionOr]], but defined in terms of [[cats.data.OptionT]]. */
+</span>183 <span style=''>  final def expectOptionOrT[A](req: Request[F])(onError: Response[F] =&gt; F[Throwable])(implicit
+</span>184 <span style=''>      d: EntityDecoder[F, A]
+</span>185 <span style=''>  ): OptionT[F, A] =
+</span>186 <span style=''>    </span><span style='background: #F0ADAD'>OptionT(expectOptionOr(req)(onError)(d))</span><span style=''>
+</span>187 <span style=''>
+</span>188 <span style=''>  /** As [[#expectOption]], but defined in terms of [[cats.data.OptionT]]. */
+</span>189 <span style=''>  final def expectOptionT[A](req: Request[F])(implicit d: EntityDecoder[F, A]): OptionT[F, A] =
+</span>190 <span style=''>    </span><span style='background: #F0ADAD'>OptionT(expectOption[A](req)(d))</span><span style=''>
+</span>191 <span style=''>
+</span>192 <span style=''>  @deprecated(&quot;use public method with MonadCancelThrow instead&quot;, since = &quot;0.23.7&quot;)
+</span>193 <span style=''>  private[client] def translate[G[_]: Async](
+</span>194 <span style=''>      fk: F ~&gt; G
+</span>195 <span style=''>  )(gK: G ~&gt; F)(implicit F: MonadCancelThrow[F]): Client[G] = </span><span style='background: #F0ADAD'>translateImpl(fk)(gK)</span><span style=''>
+</span>196 <span style=''>
+</span>197 <span style=''>  /** Translates the effect type of this client from F to G
+</span>198 <span style=''>    */
+</span>199 <span style=''>  @deprecated(&quot;use public method without MonadCancelThrow[G] constraint instead&quot;, since = &quot;0.23.12&quot;)
+</span>200 <span style=''>  private[client] def translate[G[_]: MonadCancelThrow](
+</span>201 <span style=''>      fk: F ~&gt; G
+</span>202 <span style=''>  )(gK: G ~&gt; F)(implicit F: MonadCancelThrow[F]): Client[G] = </span><span style='background: #F0ADAD'>translateImpl(fk)(gK)</span><span style=''>
+</span>203 <span style=''>
+</span>204 <span style=''>  /** Translates the effect type of this client from F to G
+</span>205 <span style=''>    */
+</span>206 <span style=''>  def translate[G[_]](
+</span>207 <span style=''>      fk: F ~&gt; G
+</span>208 <span style=''>  )(gK: G ~&gt; F)(implicit F: MonadCancelThrow[F]): Client[G] = </span><span style='background: #F0ADAD'>translateImpl(fk)(gK)</span><span style=''>
+</span>209 <span style=''>
+</span>210 <span style=''>  private[client] def translateImpl[G[_]](
+</span>211 <span style=''>      fk: F ~&gt; G
+</span>212 <span style=''>  )(gK: G ~&gt; F)(implicit F: MonadCancelThrow[F]): Client[G] = {
+</span>213 <span style=''>    implicit val G: MonadCancelThrow[G] = </span><span style='background: #AEF1AE'>liftMonadCancel(F)(fk)(gK)</span><span style=''>
+</span>214 <span style=''>    </span><span style='background: #AEF1AE'>Client[G]((req: Request[G]) =&gt;
+</span>215 <span style=''></span><span style='background: #AEF1AE'>      run(
+</span>216 <span style=''></span><span style='background: #AEF1AE'>        req.mapK(gK)
+</span>217 <span style=''></span><span style='background: #AEF1AE'>      ).mapK(fk)
+</span>218 <span style=''></span><span style='background: #AEF1AE'>        .map(_.mapK(fk))
+</span>219 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>220 <span style=''>  }
+</span>221 <span style=''>
+</span>222 <span style=''>  private[this] def liftMonadCancel[G[_]](
+</span>223 <span style=''>      F: MonadCancelThrow[F]
+</span>224 <span style=''>  )(fk: F ~&gt; G)(gk: G ~&gt; F): MonadCancelThrow[G] =
+</span>225 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> MonadCancelThrow[G] {
+</span>226 <span style=''>      def pure[A](x: A): G[A] = </span><span style='background: #AEF1AE'>fk(F.pure(x))</span><span style=''>
+</span>227 <span style=''>
+</span>228 <span style=''>      // Members declared in cats.ApplicativeError
+</span>229 <span style=''>      def handleErrorWith[A](ga: G[A])(f: Throwable =&gt; G[A]): G[A] =
+</span>230 <span style=''>        </span><span style='background: #AEF1AE'>fk(F.handleErrorWith(gk(ga))(ex =&gt; gk(f(ex))))</span><span style=''>
+</span>231 <span style=''>
+</span>232 <span style=''>      def raiseError[A](e: Throwable): G[A] = </span><span style='background: #AEF1AE'>fk(F.raiseError[A](e))</span><span style=''>
+</span>233 <span style=''>
+</span>234 <span style=''>      // Members declared in cats.FlatMap
+</span>235 <span style=''>      def flatMap[A, B](ga: G[A])(f: A =&gt; G[B]): G[B] =
+</span>236 <span style=''>        </span><span style='background: #AEF1AE'>fk(F.flatMap(gk(ga))(a =&gt; gk(f(a))))</span><span style=''>
+</span>237 <span style=''>
+</span>238 <span style=''>      def tailRecM[A, B](a: A)(f: A =&gt; G[Either[A, B]]): G[B] =
+</span>239 <span style=''>        </span><span style='background: #F0ADAD'>fk(F.tailRecM(a)(a =&gt; gk(f(a))))</span><span style=''>
+</span>240 <span style=''>
+</span>241 <span style=''>      // Members declared in cats.effect.kernel.MonadCancel
+</span>242 <span style=''>      def canceled: G[Unit] = </span><span style='background: #F0ADAD'>fk(F.canceled)</span><span style=''>
+</span>243 <span style=''>
+</span>244 <span style=''>      def forceR[A, B](ga: G[A])(gb: G[B]): G[B] =
+</span>245 <span style=''>        </span><span style='background: #F0ADAD'>fk(F.forceR(gk(ga))(gk(gb)))</span><span style=''>
+</span>246 <span style=''>
+</span>247 <span style=''>      def onCancel[A](ga: G[A], fin: G[Unit]): G[A] =
+</span>248 <span style=''>        </span><span style='background: #AEF1AE'>fk(F.onCancel(gk(ga), gk(fin)))</span><span style=''>
+</span>249 <span style=''>
+</span>250 <span style=''>      def rootCancelScope: CancelScope = </span><span style='background: #F0ADAD'>F.rootCancelScope</span><span style=''>
+</span>251 <span style=''>
+</span>252 <span style=''>      def uncancelable[A](body: Poll[G] =&gt; G[A]): G[A] =
+</span>253 <span style=''>        </span><span style='background: #AEF1AE'>fk(F.uncancelable { pollF =&gt;
+</span>254 <span style=''></span><span style='background: #AEF1AE'>          gk(body(new Poll[G] {
+</span>255 <span style=''></span><span style='background: #AEF1AE'>            def apply[B](gb: G[B]): G[B] = fk(pollF(gk(gb)))
+</span>256 <span style=''></span><span style='background: #AEF1AE'>          }))
+</span>257 <span style=''></span><span style='background: #AEF1AE'>        })</span><span style=''>
+</span>258 <span style=''>    }
+</span>259 <span style=''>}
+</span>260 <span style=''>
+</span>261 <span style=''>object Client {
+</span>262 <span style=''>  def apply[F[_]](
+</span>263 <span style=''>      f: Request[F] =&gt; Resource[F, Response[F]]
+</span>264 <span style=''>  )(implicit F: MonadCancelThrow[F]): Client[F] =
+</span>265 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> DefaultClient[F] {
+</span>266 <span style=''>      def run(req: Request[F]): Resource[F, Response[F]] = </span><span style='background: #AEF1AE'>f(req)</span><span style=''>
+</span>267 <span style=''>    }
+</span>268 <span style=''>
+</span>269 <span style=''>  /** Creates a client from the specified [[HttpApp]].  Useful for
+</span>270 <span style=''>    * generating pre-determined responses for requests in testing.
+</span>271 <span style=''>    *
+</span>272 <span style=''>    * @param app the [[HttpApp]] to respond to requests to this client
+</span>273 <span style=''>    */
+</span>274 <span style=''>  def fromHttpApp[F[_]](app: HttpApp[F])(implicit F: Async[F]): Client[F] = {
+</span>275 <span style=''>    def until[A](disposed: Ref[F, Boolean])(source: Stream[F, A]): Stream[F, A] = {
+</span>276 <span style=''>      def go(stream: Stream[F, A]): Pull[F, A, Unit] =
+</span>277 <span style=''>        </span><span style='background: #AEF1AE'>stream.pull.uncons.flatMap {
+</span>278 <span style=''></span><span style='background: #AEF1AE'>          case Some((chunk, stream)) =&gt;
+</span>279 <span style=''></span><span style='background: #AEF1AE'>            Pull.eval(disposed.get).flatMap {
+</span>280 <span style=''></span><span style='background: #AEF1AE'>              case true =&gt; Pull.raiseError[F](new IOException(&quot;response was disposed&quot;))
+</span>281 <span style=''></span><span style='background: #AEF1AE'>              case false =&gt; Pull.output(chunk) &gt;&gt; go(stream)
+</span>282 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>283 <span style=''></span><span style='background: #AEF1AE'>          case None =&gt; Pull.done
+</span>284 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>285 <span style=''>      </span><span style='background: #AEF1AE'>go(source).stream</span><span style=''>
+</span>286 <span style=''>    }
+</span>287 <span style=''>
+</span>288 <span style=''>    def runOrDispose(req: Request[F]): F[Resource[F, Response[F]]] =
+</span>289 <span style=''>      </span><span style='background: #AEF1AE'>Ref[F].of(false).map { disposed =&gt;
+</span>290 <span style=''></span><span style='background: #AEF1AE'>        val req0 = addHostHeaderIfUriIsAbsolute(req.pipeBodyThrough(until(disposed)))
+</span>291 <span style=''></span><span style='background: #AEF1AE'>        Resource
+</span>292 <span style=''></span><span style='background: #AEF1AE'>          .eval(app(req0))
+</span>293 <span style=''></span><span style='background: #AEF1AE'>          .onFinalize(disposed.set(true))
+</span>294 <span style=''></span><span style='background: #AEF1AE'>          .map(_.pipeBodyThrough(until(disposed)))
+</span>295 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>296 <span style=''>
+</span>297 <span style=''>    </span><span style='background: #AEF1AE'>Client((req: Request[F]) =&gt; Resource.suspend(runOrDispose(req)))</span><span style=''>
+</span>298 <span style=''>  }
+</span>299 <span style=''>
+</span>300 <span style=''>  /** This method introduces an important way for the effectful backends to allow tracing. As Kleisli types
+</span>301 <span style=''>    * form the backend of tracing and these transformations are non-trivial.
+</span>302 <span style=''>    */
+</span>303 <span style=''>  def liftKleisli[F[_]: MonadCancelThrow, A](client: Client[F]): Client[Kleisli[F, A, *]] =
+</span>304 <span style=''>    </span><span style='background: #F0ADAD'>Client { (req: Request[Kleisli[F, A, *]]) =&gt;
+</span>305 <span style=''></span><span style='background: #F0ADAD'>      Resource.eval(Kleisli.ask[F, A]).flatMap { a =&gt;
+</span>306 <span style=''></span><span style='background: #F0ADAD'>        client
+</span>307 <span style=''></span><span style='background: #F0ADAD'>          .run(req.mapK(Kleisli.applyK(a)))
+</span>308 <span style=''></span><span style='background: #F0ADAD'>          .mapK(Kleisli.liftK[F, A])
+</span>309 <span style=''></span><span style='background: #F0ADAD'>          .map(_.mapK(Kleisli.liftK))
+</span>310 <span style=''></span><span style='background: #F0ADAD'>      }
+</span>311 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>312 <span style=''>
+</span>313 <span style=''>  private def addHostHeaderIfUriIsAbsolute[F[_]](req: Request[F]): Request[F] =
+</span>314 <span style=''>    </span><span style='background: #AEF1AE'>req.uri.host</span><span style=''> match {
+</span>315 <span style=''>      case Some(host) if </span><span style='background: #AEF1AE'>!req.headers.contains[Host]</span><span style=''> =&gt;
+</span>316 <span style=''>        </span><span style='background: #AEF1AE'>req.withHeaders(req.headers.put(Host(host.value, req.uri.port)))</span><span style=''>
+</span>317 <span style=''>      case _ =&gt; req
+</span>318 <span style=''>    }
+</span>319 <span style=''>}
+</span>320 <span style=''>
+</span>321 <span style=''>final case class UnexpectedStatus(status: Status, requestMethod: Method, requestUri: Uri)
+</span>322 <span style=''>    extends RuntimeException
+</span>323 <span style=''>    with NoStackTrace {
+</span>324 <span style=''>  override def getMessage: String =
+</span>325 <span style=''>    s&quot;unexpected HTTP status: $status for request $requestMethod $requestUri&quot;
+</span>326 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          11953
+        </td>
+        <td>
+          7423
+          -
+          7463
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.apply[F, A](Client.this.expectOptionOr[A](req)(onError)(d))
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          11237
+        </td>
+        <td>
+          7431
+          -
+          7462
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.expectOptionOr
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Client.this.expectOptionOr[A](req)(onError)(d)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          11307
+        </td>
+        <td>
+          7643
+          -
+          7675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.OptionT.apply[F, A](Client.this.expectOption[A](req)(d))
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          11742
+        </td>
+        <td>
+          7651
+          -
+          7674
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.expectOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Client.this.expectOption[A](req)(d)
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          12078
+        </td>
+        <td>
+          7885
+          -
+          7906
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.translateImpl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Client.this.translateImpl[[_]G[_]](fk)(gK)(F)
+        </td>
+      </tr><tr>
+        <td>
+          202
+        </td>
+        <td>
+          11636
+        </td>
+        <td>
+          8212
+          -
+          8233
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.translateImpl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Client.this.translateImpl[[_]G[_]](fk)(gK)(F)
+        </td>
+      </tr><tr>
+        <td>
+          208
+        </td>
+        <td>
+          11428
+        </td>
+        <td>
+          8404
+          -
+          8425
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.translateImpl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Client.this.translateImpl[[_]G[_]](fk)(gK)(F)
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          12103
+        </td>
+        <td>
+          8593
+          -
+          8619
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.liftMonadCancel
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          Client.this.liftMonadCancel[[_]G[_]](F)(fk)(gK)
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          11697
+        </td>
+        <td>
+          8624
+          -
+          8734
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          Client.apply[G](((req: org.http4s.Request[G]) =&gt; Client.this.run(req.mapK[[_]F[_]](gK)).mapK[[_]G[_]](fk)(F, G).map[org.http4s.Response[[_]G[_]]](((x$1: org.http4s.Response[F]) =&gt; x$1.mapK[[_]G[_]](fk)))))(G)
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          11982
+        </td>
+        <td>
+          8867
+          -
+          8870
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          226
+        </td>
+        <td>
+          11956
+        </td>
+        <td>
+          8925
+          -
+          8938
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[A](F.pure[A](x))
+        </td>
+      </tr><tr>
+        <td>
+          226
+        </td>
+        <td>
+          11288
+        </td>
+        <td>
+          8928
+          -
+          8937
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[A](x)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          11624
+        </td>
+        <td>
+          9071
+          -
+          9113
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.handleErrorWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.handleErrorWith[A](gk.apply[A](ga))(((ex: Throwable) =&gt; gk.apply[A](f.apply(ex))))
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          11336
+        </td>
+        <td>
+          9106
+          -
+          9111
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(ex)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          11359
+        </td>
+        <td>
+          9068
+          -
+          9114
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[A](F.handleErrorWith[A](gk.apply[A](ga))(((ex: Throwable) =&gt; gk.apply[A](f.apply(ex)))))
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          11792
+        </td>
+        <td>
+          9089
+          -
+          9095
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          gk.apply[A](ga)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          12064
+        </td>
+        <td>
+          9103
+          -
+          9112
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          gk.apply[A](f.apply(ex))
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          11700
+        </td>
+        <td>
+          9162
+          -
+          9184
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[A](F.raiseError[A](e))
+        </td>
+      </tr><tr>
+        <td>
+          232
+        </td>
+        <td>
+          12148
+        </td>
+        <td>
+          9165
+          -
+          9183
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.raiseError[A](e)
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          11325
+        </td>
+        <td>
+          9295
+          -
+          9327
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.flatMap
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          F.flatMap[A, B](gk.apply[A](ga))(((a: A) =&gt; gk.apply[B](f.apply(a))))
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          11994
+        </td>
+        <td>
+          9321
+          -
+          9325
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          11724
+        </td>
+        <td>
+          9318
+          -
+          9326
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          gk.apply[B](f.apply(a))
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          11290
+        </td>
+        <td>
+          9305
+          -
+          9311
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          gk.apply[A](ga)
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          12070
+        </td>
+        <td>
+          9292
+          -
+          9328
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          org.http4s.client.clientspec
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[B](F.flatMap[A, B](gk.apply[A](ga))(((a: A) =&gt; gk.apply[B](f.apply(a)))))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          11684
+        </td>
+        <td>
+          9402
+          -
+          9434
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fk.apply[B](F.tailRecM[A, B](a)(((a: A) =&gt; gk.apply[Either[A,B]](f.apply(a)))))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          11196
+        </td>
+        <td>
+          9424
+          -
+          9432
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          gk.apply[Either[A,B]](f.apply(a))
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          11629
+        </td>
+        <td>
+          9427
+          -
+          9431
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          12125
+        </td>
+        <td>
+          9405
+          -
+          9433
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.tailRecM
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.tailRecM[A, B](a)(((a: A) =&gt; gk.apply[Either[A,B]](f.apply(a))))
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          11998
+        </td>
+        <td>
+          9526
+          -
+          9540
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fk.apply[Unit](F.canceled)
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          11283
+        </td>
+        <td>
+          9529
+          -
+          9539
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.canceled
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.canceled
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          11606
+        </td>
+        <td>
+          9601
+          -
+          9629
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fk.apply[B](F.forceR[A, B](gk.apply[A](ga))(gk.apply[B](gb)))
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          11328
+        </td>
+        <td>
+          9621
+          -
+          9627
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          gk.apply[B](gb)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          11764
+        </td>
+        <td>
+          9613
+          -
+          9619
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          gk.apply[A](ga)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          12071
+        </td>
+        <td>
+          9604
+          -
+          9628
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.forceR
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.forceR[A, B](gk.apply[A](ga))(gk.apply[B](gb))
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          11199
+        </td>
+        <td>
+          9707
+          -
+          9713
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          gk.apply[A](ga)
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          11240
+        </td>
+        <td>
+          9693
+          -
+          9724
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[A](F.onCancel[A](gk.apply[A](ga), gk.apply[Unit](fin)))
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          11688
+        </td>
+        <td>
+          9696
+          -
+          9723
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.onCancel
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.onCancel[A](gk.apply[A](ga), gk.apply[Unit](fin))
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          12142
+        </td>
+        <td>
+          9715
+          -
+          9722
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          gk.apply[Unit](fin)
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          11979
+        </td>
+        <td>
+          9767
+          -
+          9784
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.rootCancelScope
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.rootCancelScope
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          11666
+        </td>
+        <td>
+          9854
+          -
+          9996
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.uncancelable
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.uncancelable[A](((pollF: cats.effect.kernel.Poll[F]) =&gt; gk.apply[A](body.apply({
+  final class $anon extends AnyRef with cats.effect.kernel.Poll[G] {
+    def &lt;init&gt;(): &lt;$anon: cats.effect.kernel.Poll[G]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def apply[B](gb: G[B]): G[B] = fk.apply[B](pollF.apply[B](gk.apply[B](gb)))
+  };
+  new $anon()
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          11228
+        </td>
+        <td>
+          9851
+          -
+          9997
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[A](F.uncancelable[A](((pollF: cats.effect.kernel.Poll[F]) =&gt; gk.apply[A](body.apply({
+  final class $anon extends AnyRef with cats.effect.kernel.Poll[G] {
+    def &lt;init&gt;(): &lt;$anon: cats.effect.kernel.Poll[G]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def apply[B](gb: G[B]): G[B] = fk.apply[B](pollF.apply[B](gk.apply[B](gb)))
+  };
+  new $anon()
+})))))
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          11612
+        </td>
+        <td>
+          9898
+          -
+          9901
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.$anon.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          11186
+        </td>
+        <td>
+          9893
+          -
+          9985
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          body.apply({
+  final class $anon extends AnyRef with cats.effect.kernel.Poll[G] {
+    def &lt;init&gt;(): &lt;$anon: cats.effect.kernel.Poll[G]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def apply[B](gb: G[B]): G[B] = fk.apply[B](pollF.apply[B](gk.apply[B](gb)))
+  };
+  new $anon()
+})
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          12146
+        </td>
+        <td>
+          9890
+          -
+          9986
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          gk.apply[A](body.apply({
+  final class $anon extends AnyRef with cats.effect.kernel.Poll[G] {
+    def &lt;init&gt;(): &lt;$anon: cats.effect.kernel.Poll[G]&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def apply[B](gb: G[B]): G[B] = fk.apply[B](pollF.apply[B](gk.apply[B](gb)))
+  };
+  new $anon()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          12054
+        </td>
+        <td>
+          9955
+          -
+          9972
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fk.apply[B](pollF.apply[B](gk.apply[B](gb)))
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          11308
+        </td>
+        <td>
+          9958
+          -
+          9971
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          pollF.apply[B](gk.apply[B](gb))
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          11520
+        </td>
+        <td>
+          9964
+          -
+          9970
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          gk.apply[B](gb)
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          11357
+        </td>
+        <td>
+          10144
+          -
+          10147
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          266
+        </td>
+        <td>
+          11576
+        </td>
+        <td>
+          10226
+          -
+          10232
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          277
+        </td>
+        <td>
+          11292
+        </td>
+        <td>
+          10683
+          -
+          11003
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Stream.InvariantOps[[_]F[_], A](stream).pull.uncons.flatMap[[x]F[x], A, Unit](((x0$1: Option[(fs2.Chunk[A], fs2.Stream[[_]F[_],A])]) =&gt; x0$1 match {
+  case (value: (fs2.Chunk[A], fs2.Stream[[_]F[_],A])): Some[(fs2.Chunk[A], fs2.Stream[[_]F[_],A])]((_1: fs2.Chunk[A], _2: fs2.Stream[[_]F[_],A]): (fs2.Chunk[A], fs2.Stream[[_]F[_],A])((chunk @ _), (stream @ _))) =&gt; fs2.Pull.eval[F, Boolean](disposed.get).flatMap[[x]F[x], A, Unit](((x0$2: Boolean) =&gt; x0$2 match {
+    case true =&gt; fs2.Pull.raiseError[F](new java.io.IOException(&quot;response was disposed&quot;))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+    case false =&gt; fs2.Pull.output[[x]fs2.Pure[x], A](chunk).&gt;&gt;[[_]F[_], A, Unit](go(stream))
+  }))
+  case scala.None =&gt; fs2.Pull.done
+}))
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          11961
+        </td>
+        <td>
+          10764
+          -
+          10960
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.eval[F, Boolean](disposed.get).flatMap[[x]F[x], A, Unit](((x0$2: Boolean) =&gt; x0$2 match {
+  case true =&gt; fs2.Pull.raiseError[F](new java.io.IOException(&quot;response was disposed&quot;))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+  case false =&gt; fs2.Pull.output[[x]fs2.Pure[x], A](chunk).&gt;&gt;[[_]F[_], A, Unit](go(stream))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          12068
+        </td>
+        <td>
+          10774
+          -
+          10786
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.RefSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          disposed.get
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          11594
+        </td>
+        <td>
+          10844
+          -
+          10884
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.IOException.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new java.io.IOException(&quot;response was disposed&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          12083
+        </td>
+        <td>
+          10825
+          -
+          10885
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Pull.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.raiseError[F](new java.io.IOException(&quot;response was disposed&quot;))(fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          11218
+        </td>
+        <td>
+          10843
+          -
+          10843
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.RaiseThrowable.fromApplicativeError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          11281
+        </td>
+        <td>
+          10914
+          -
+          10946
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Pull.&gt;&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.output[[x]fs2.Pure[x], A](chunk).&gt;&gt;[[_]F[_], A, Unit](go(stream))
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          11723
+        </td>
+        <td>
+          10936
+          -
+          10946
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(stream)
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          11581
+        </td>
+        <td>
+          10984
+          -
+          10993
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.done
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Pull.done
+        </td>
+      </tr><tr>
+        <td>
+          285
+        </td>
+        <td>
+          11651
+        </td>
+        <td>
+          11010
+          -
+          11027
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Pull.StreamPullOps.stream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Pull.StreamPullOps[[_]F[_], A](go(source)).stream
+        </td>
+      </tr><tr>
+        <td>
+          285
+        </td>
+        <td>
+          12048
+        </td>
+        <td>
+          11010
+          -
+          11020
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.go
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          go(source)
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          11183
+        </td>
+        <td>
+          11110
+          -
+          11375
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, cats.effect.kernel.Ref[F,Boolean]](cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[Boolean](false))(F).map[cats.effect.kernel.Resource[F,org.http4s.Response[F]]](((disposed: cats.effect.kernel.Ref[F,Boolean]) =&gt; {
+  val req0: org.http4s.Request[[_]F[_]] = Client.this.addHostHeaderIfUriIsAbsolute[[_]F[_]](req.pipeBodyThrough(((source: fs2.Stream[F,Byte]) =&gt; until[Byte](disposed)(source))));
+  cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](app.apply(req0)).onFinalize(disposed.set(true))(F).map[org.http4s.Response[F]](((x$2: org.http4s.Response[F]) =&gt; x$2.pipeBodyThrough(((source: fs2.Stream[F,Byte]) =&gt; until[Byte](disposed)(source)))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          11221
+        </td>
+        <td>
+          11110
+          -
+          11126
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.ApplyBuilders.of
+        </td>
+        <td>
+          org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Ref.apply[F](Ref.this.Make.concurrentInstance[[_]F[_]](F)).of[Boolean](false)
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          11264
+        </td>
+        <td>
+          11164
+          -
+          11230
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.addHostHeaderIfUriIsAbsolute
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Client.this.addHostHeaderIfUriIsAbsolute[[_]F[_]](req.pipeBodyThrough(((source: fs2.Stream[F,Byte]) =&gt; until[Byte](disposed)(source))))
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          11939
+        </td>
+        <td>
+          11213
+          -
+          11228
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.until
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          until[Byte](disposed)(source)
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          11687
+        </td>
+        <td>
+          11193
+          -
+          11229
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.pipeBodyThrough
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.pipeBodyThrough(((source: fs2.Stream[F,Byte]) =&gt; until[Byte](disposed)(source)))
+        </td>
+      </tr><tr>
+        <td>
+          292
+        </td>
+        <td>
+          11977
+        </td>
+        <td>
+          11264
+          -
+          11273
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          app.apply(req0)
+        </td>
+      </tr><tr>
+        <td>
+          293
+        </td>
+        <td>
+          11584
+        </td>
+        <td>
+          11297
+          -
+          11315
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.RefSink.set
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          disposed.set(true)
+        </td>
+      </tr><tr>
+        <td>
+          294
+        </td>
+        <td>
+          11635
+        </td>
+        <td>
+          11239
+          -
+          11367
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](app.apply(req0)).onFinalize(disposed.set(true))(F).map[org.http4s.Response[F]](((x$2: org.http4s.Response[F]) =&gt; x$2.pipeBodyThrough(((source: fs2.Stream[F,Byte]) =&gt; until[Byte](disposed)(source)))))
+        </td>
+      </tr><tr>
+        <td>
+          294
+        </td>
+        <td>
+          12053
+        </td>
+        <td>
+          11332
+          -
+          11366
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.pipeBodyThrough
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.pipeBodyThrough(((source: fs2.Stream[F,Byte]) =&gt; until[Byte](disposed)(source)))
+        </td>
+      </tr><tr>
+        <td>
+          294
+        </td>
+        <td>
+          11340
+        </td>
+        <td>
+          11350
+          -
+          11365
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.Client.until
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          until[Byte](disposed)(source)
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          11868
+        </td>
+        <td>
+          11381
+          -
+          11445
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Client.apply[[_]F[_]](((req: org.http4s.Request[F]) =&gt; cats.effect.`package`.Resource.suspend[F, org.http4s.Response[F]](runOrDispose(req))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          304
+        </td>
+        <td>
+          11244
+        </td>
+        <td>
+          11739
+          -
+          11985
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Client.apply[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]](((req: org.http4s.Request[[γ$1$]cats.data.Kleisli[F,A,γ$1$]]) =&gt; cats.effect.`package`.Resource.eval[[B]cats.data.Kleisli[F,A,B], A](cats.data.Kleisli.ask[F, A](evidence$3)).flatMap[org.http4s.Response[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]]](((a: A) =&gt; client.run(req.mapK[[_]F[_]](cats.data.Kleisli.applyK[[_]F[_], A](a))).mapK[[γ$2$]cats.data.Kleisli[F,A,γ$2$]](cats.data.Kleisli.liftK[F, A])(evidence$3, kernel.this.MonadCancel.monadCancelForKleisli[[_]F[_], A, Throwable](evidence$3)).map[org.http4s.Response[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]]](((x$3: org.http4s.Response[F]) =&gt; x$3.mapK[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]](cats.data.Kleisli.liftK[[_]F[_], A])))))))(kernel.this.MonadCancel.monadCancelForKleisli[[_]F[_], A, Throwable](evidence$3))
+        </td>
+      </tr><tr>
+        <td>
+          304
+        </td>
+        <td>
+          11676
+        </td>
+        <td>
+          11746
+          -
+          11746
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.monadCancelForKleisli
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          kernel.this.MonadCancel.monadCancelForKleisli[[_]F[_], A, Throwable](evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          305
+        </td>
+        <td>
+          11674
+        </td>
+        <td>
+          11804
+          -
+          11821
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.KleisliFunctions.ask
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.ask[F, A](evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          305
+        </td>
+        <td>
+          11891
+        </td>
+        <td>
+          11790
+          -
+          11979
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Resource.eval[[B]cats.data.Kleisli[F,A,B], A](cats.data.Kleisli.ask[F, A](evidence$3)).flatMap[org.http4s.Response[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]]](((a: A) =&gt; client.run(req.mapK[[_]F[_]](cats.data.Kleisli.applyK[[_]F[_], A](a))).mapK[[γ$2$]cats.data.Kleisli[F,A,γ$2$]](cats.data.Kleisli.liftK[F, A])(evidence$3, kernel.this.MonadCancel.monadCancelForKleisli[[_]F[_], A, Throwable](evidence$3)).map[org.http4s.Response[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]]](((x$3: org.http4s.Response[F]) =&gt; x$3.mapK[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]](cats.data.Kleisli.liftK[[_]F[_], A])))))
+        </td>
+      </tr><tr>
+        <td>
+          307
+        </td>
+        <td>
+          11267
+        </td>
+        <td>
+          11877
+          -
+          11894
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.applyK
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.applyK[[_]F[_], A](a)
+        </td>
+      </tr><tr>
+        <td>
+          307
+        </td>
+        <td>
+          11981
+        </td>
+        <td>
+          11868
+          -
+          11895
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.mapK
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          req.mapK[[_]F[_]](cats.data.Kleisli.applyK[[_]F[_], A](a))
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          11540
+        </td>
+        <td>
+          11913
+          -
+          11932
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.KleisliFunctions.liftK
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.liftK[F, A]
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          11322
+        </td>
+        <td>
+          11912
+          -
+          11912
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.MonadCancel.monadCancelForKleisli
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          kernel.this.MonadCancel.monadCancelForKleisli[[_]F[_], A, Throwable](evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          11639
+        </td>
+        <td>
+          11949
+          -
+          11970
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.mapK
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$3.mapK[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]](cats.data.Kleisli.liftK[[_]F[_], A])
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          12033
+        </td>
+        <td>
+          11956
+          -
+          11969
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.data.KleisliFunctions.liftK
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.liftK[[_]F[_], A]
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          11188
+        </td>
+        <td>
+          11846
+          -
+          11971
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          client.run(req.mapK[[_]F[_]](cats.data.Kleisli.applyK[[_]F[_], A](a))).mapK[[γ$2$]cats.data.Kleisli[F,A,γ$2$]](cats.data.Kleisli.liftK[F, A])(evidence$3, kernel.this.MonadCancel.monadCancelForKleisli[[_]F[_], A, Throwable](evidence$3)).map[org.http4s.Response[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]]](((x$3: org.http4s.Response[F]) =&gt; x$3.mapK[[γ$2$]cats.data.Kleisli[[_]F[_],A,γ$2$]](cats.data.Kleisli.liftK[[_]F[_], A])))
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          11959
+        </td>
+        <td>
+          12071
+          -
+          12083
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.host
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.host
+        </td>
+      </tr><tr>
+        <td>
+          315
+        </td>
+        <td>
+          11542
+        </td>
+        <td>
+          12138
+          -
+          12138
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Host.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Host.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          315
+        </td>
+        <td>
+          11138
+        </td>
+        <td>
+          12117
+          -
+          12144
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.contains[org.http4s.headers.Host](headers.this.Host.headerInstance).unary_!
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          11938
+        </td>
+        <td>
+          12192
+          -
+          12192
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Host.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Host.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          11965
+        </td>
+        <td>
+          12156
+          -
+          12220
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.withHeaders(req.headers.put(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Host](org.http4s.headers.Host.apply(host.value, req.uri.port))(headers.this.Host.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          11169
+        </td>
+        <td>
+          12188
+          -
+          12218
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Host.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Host.apply(host.value, req.uri.port)
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          11250
+        </td>
+        <td>
+          12172
+          -
+          12219
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.put
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.put(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Host](org.http4s.headers.Host.apply(host.value, req.uri.port))(headers.this.Host.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          11704
+        </td>
+        <td>
+          12188
+          -
+          12218
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Host](org.http4s.headers.Host.apply(host.value, req.uri.port))(headers.this.Host.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          11595
+        </td>
+        <td>
+          12205
+          -
+          12217
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.port
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.port
+        </td>
+      </tr><tr>
+        <td>
+          316
+        </td>
+        <td>
+          12035
+        </td>
+        <td>
+          12193
+          -
+          12203
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Host.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          host.value
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

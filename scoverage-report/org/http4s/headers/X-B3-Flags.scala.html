@@ -1,0 +1,1127 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/X-B3-Flags.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package headers
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.parse.Numbers
+</span>21 <span style=''>import cats.parse.Parser0
+</span>22 <span style=''>import org.http4s.util.Renderable
+</span>23 <span style=''>import org.http4s.util.Writer
+</span>24 <span style=''>import org.typelevel.ci._
+</span>25 <span style=''>
+</span>26 <span style=''>object `X-B3-Flags` {
+</span>27 <span style=''>
+</span>28 <span style=''>  def parse(s: String): ParseResult[`X-B3-Flags`] =
+</span>29 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid X-B3-Flags header&quot;)(s)</span><span style=''>
+</span>30 <span style=''>
+</span>31 <span style=''>  private[http4s] val parser: Parser0[`X-B3-Flags`] =
+</span>32 <span style=''>    </span><span style='background: #AEF1AE'>Numbers.digits
+</span>33 <span style=''></span><span style='background: #AEF1AE'>      .mapFilter { str =&gt;
+</span>34 <span style=''></span><span style='background: #AEF1AE'>        try Some(str.toLong)
+</span>35 <span style=''></span><span style='background: #AEF1AE'>        catch { case _: NumberFormatException =&gt; </span><span style='background: #F0ADAD'>None</span><span style='background: #AEF1AE'> }
+</span>36 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>37 <span style=''></span><span style='background: #AEF1AE'>      .map(fromLong)</span><span style=''>
+</span>38 <span style=''>
+</span>39 <span style=''>  sealed trait Flag extends Product with Serializable {
+</span>40 <span style=''>    def longValue: Long
+</span>41 <span style=''>  }
+</span>42 <span style=''>
+</span>43 <span style=''>  object Flag {
+</span>44 <span style=''>    case object Debug extends Flag {
+</span>45 <span style=''>      override def longValue: Long = </span><span style='background: #AEF1AE'>1 &lt;&lt; 0</span><span style=''>
+</span>46 <span style=''>    }
+</span>47 <span style=''>    case object SamplingSet extends Flag {
+</span>48 <span style=''>      override def longValue: Long = </span><span style='background: #AEF1AE'>1 &lt;&lt; 1</span><span style=''>
+</span>49 <span style=''>    }
+</span>50 <span style=''>    case object Sampled extends Flag {
+</span>51 <span style=''>      override def longValue: Long = </span><span style='background: #AEF1AE'>1 &lt;&lt; 2</span><span style=''>
+</span>52 <span style=''>    }
+</span>53 <span style=''>  }
+</span>54 <span style=''>
+</span>55 <span style=''>  private def bitIsSet(bit: Long, flagBits: Long): Boolean =
+</span>56 <span style=''>    </span><span style='background: #AEF1AE'>(flagBits &amp; bit) == bit</span><span style=''>
+</span>57 <span style=''>
+</span>58 <span style=''>  // Pure API, despite internal mutation.
+</span>59 <span style=''>  def fromLong(flagBits: Long): `X-B3-Flags` = {
+</span>60 <span style=''>    var flags: Set[`X-B3-Flags`.Flag] = </span><span style='background: #AEF1AE'>Set.empty</span><span style=''>
+</span>61 <span style=''>
+</span>62 <span style=''>    if (</span><span style='background: #AEF1AE'>bitIsSet(Flag.Debug.longValue, flagBits)</span><span style=''>)
+</span>63 <span style=''>      </span><span style='background: #AEF1AE'>flags = flags + Flag.Debug</span><span style=''>
+</span>64 <span style=''>
+</span>65 <span style=''>    if (</span><span style='background: #AEF1AE'>bitIsSet(Flag.SamplingSet.longValue, flagBits)</span><span style=''>)
+</span>66 <span style=''>      </span><span style='background: #AEF1AE'>flags = flags + Flag.SamplingSet</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>    if (</span><span style='background: #AEF1AE'>bitIsSet(Flag.Sampled.longValue, flagBits)</span><span style=''>)
+</span>69 <span style=''>      </span><span style='background: #AEF1AE'>flags = flags + Flag.Sampled</span><span style=''>
+</span>70 <span style=''>
+</span>71 <span style=''>    </span><span style='background: #AEF1AE'>`X-B3-Flags`(flags)</span><span style=''>
+</span>72 <span style=''>  }
+</span>73 <span style=''>
+</span>74 <span style=''>  implicit val headerInstance: Header[`X-B3-Flags`, Header.Single] =
+</span>75 <span style=''>    </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>76 <span style=''></span><span style='background: #AEF1AE'>      ci&quot;X-B3-Flags&quot;,
+</span>77 <span style=''></span><span style='background: #AEF1AE'>      h =&gt;
+</span>78 <span style=''></span><span style='background: #AEF1AE'>        new Renderable {
+</span>79 <span style=''></span><span style='background: #AEF1AE'>          def render(writer: Writer): writer.type =
+</span>80 <span style=''></span><span style='background: #AEF1AE'>            writer.append(h.flags.foldLeft(0L)((sum, next) =&gt; sum + next.longValue).toString)
+</span>81 <span style=''></span><span style='background: #AEF1AE'>
+</span>82 <span style=''></span><span style='background: #AEF1AE'>        },
+</span>83 <span style=''></span><span style='background: #AEF1AE'>      </span><span style='background: #F0ADAD'>parse</span><span style='background: #AEF1AE'>,
+</span>84 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>85 <span style=''>
+</span>86 <span style=''>}
+</span>87 <span style=''>
+</span>88 <span style=''>final case class `X-B3-Flags`(flags: Set[`X-B3-Flags`.Flag])
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          29
+        </td>
+        <td>
+          15404
+        </td>
+        <td>
+          853
+          -
+          915
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.headers.X-B3-Flags](X-B3-Flags.this.parser, &quot;Invalid X-B3-Flags header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          15591
+        </td>
+        <td>
+          1028
+          -
+          1044
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](scala.Predef.augmentString(str).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          12979
+        </td>
+        <td>
+          1033
+          -
+          1043
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toLong
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(str).toLong
+        </td>
+      </tr><tr>
+        <td>
+          34
+        </td>
+        <td>
+          19962
+        </td>
+        <td>
+          1028
+          -
+          1044
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](scala.Predef.augmentString(str).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          22332
+        </td>
+        <td>
+          1094
+          -
+          1098
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          20443
+        </td>
+        <td>
+          1120
+          -
+          1128
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.fromLong
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.fromLong(flagBits)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          16636
+        </td>
+        <td>
+          975
+          -
+          1129
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Numbers.digits.mapFilter[Long](((str: String) =&gt; try {
+  scala.Some.apply[Long](scala.Predef.augmentString(str).toLong)
+} catch {
+  case (_: NumberFormatException) =&gt; scala.None
+})).map[org.http4s.headers.X-B3-Flags](((flagBits: Long) =&gt; X-B3-Flags.this.fromLong(flagBits)))
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          23164
+        </td>
+        <td>
+          1306
+          -
+          1312
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          1L
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          19166
+        </td>
+        <td>
+          1399
+          -
+          1405
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          2L
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          15266
+        </td>
+        <td>
+          1488
+          -
+          1494
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          4L
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          13369
+        </td>
+        <td>
+          1571
+          -
+          1594
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.==
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          flagBits.&amp;(bit).==(bit)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          19975
+        </td>
+        <td>
+          1727
+          -
+          1736
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Set.empty
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Set.empty[org.http4s.headers.X-B3-Flags.Flag]
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          16096
+        </td>
+        <td>
+          1755
+          -
+          1775
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.Flag.Debug.longValue
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.Flag.Debug.longValue
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          15291
+        </td>
+        <td>
+          1742
+          -
+          1742
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          22352
+        </td>
+        <td>
+          1746
+          -
+          1786
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.bitIsSet
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.bitIsSet(X-B3-Flags.this.Flag.Debug.longValue, flagBits)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          19062
+        </td>
+        <td>
+          1742
+          -
+          1742
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          16330
+        </td>
+        <td>
+          1802
+          -
+          1820
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.SetOps.+
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          flags.+(X-B3-Flags.this.Flag.Debug)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          18525
+        </td>
+        <td>
+          1810
+          -
+          1820
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.Flag.Debug
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.Flag.Debug
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          23180
+        </td>
+        <td>
+          1794
+          -
+          1820
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          flags = flags.+(X-B3-Flags.this.Flag.Debug)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          16349
+        </td>
+        <td>
+          1826
+          -
+          1826
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          22791
+        </td>
+        <td>
+          1826
+          -
+          1826
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          19582
+        </td>
+        <td>
+          1830
+          -
+          1876
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.bitIsSet
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.bitIsSet(X-B3-Flags.this.Flag.SamplingSet.longValue, flagBits)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          12960
+        </td>
+        <td>
+          1839
+          -
+          1865
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.Flag.SamplingSet.longValue
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.Flag.SamplingSet.longValue
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          16114
+        </td>
+        <td>
+          1900
+          -
+          1916
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.Flag.SamplingSet
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.Flag.SamplingSet
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          18542
+        </td>
+        <td>
+          1884
+          -
+          1916
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          flags = flags.+(X-B3-Flags.this.Flag.SamplingSet)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          22232
+        </td>
+        <td>
+          1892
+          -
+          1916
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.SetOps.+
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          flags.+(X-B3-Flags.this.Flag.SamplingSet)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          18268
+        </td>
+        <td>
+          1922
+          -
+          1922
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          22248
+        </td>
+        <td>
+          1922
+          -
+          1922
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          15151
+        </td>
+        <td>
+          1926
+          -
+          1968
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.bitIsSet
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.bitIsSet(X-B3-Flags.this.Flag.Sampled.longValue, flagBits)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          19077
+        </td>
+        <td>
+          1935
+          -
+          1957
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.Flag.Sampled.longValue
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.Flag.Sampled.longValue
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          16074
+        </td>
+        <td>
+          1976
+          -
+          2004
+        </td>
+        <td>
+          Assign
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          flags = flags.+(X-B3-Flags.this.Flag.Sampled)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          12971
+        </td>
+        <td>
+          1992
+          -
+          2004
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.Flag.Sampled
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.this.Flag.Sampled
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          19601
+        </td>
+        <td>
+          1984
+          -
+          2004
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.SetOps.+
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          flags.+(X-B3-Flags.this.Flag.Sampled)
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          16223
+        </td>
+        <td>
+          2010
+          -
+          2029
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.apply
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          X-B3-Flags.apply(flags)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          22495
+        </td>
+        <td>
+          2108
+          -
+          2365
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.createRendered[org.http4s.headers.X-B3-Flags, org.http4s.Header.Single, org.http4s.util.Renderable](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;X-B3-Flags&quot;)).ci(), ((h: org.http4s.headers.X-B3-Flags) =&gt; {
+  final class $anon extends AnyRef with org.http4s.util.Renderable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.util.Renderable&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def render(writer: org.http4s.util.Writer): writer.type = writer.append(h.flags.foldLeft[Long](0L)(((sum: Long, next: org.http4s.headers.X-B3-Flags.Flag) =&gt; sum.+(next.longValue))).toString())
+  };
+  new $anon()
+}), ((s: String) =&gt; X-B3-Flags.this.parse(s)))(util.this.Renderable.renderableInst[org.http4s.util.Renderable])
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          16092
+        </td>
+        <td>
+          2129
+          -
+          2129
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.util.Renderable]
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          22815
+        </td>
+        <td>
+          2137
+          -
+          2151
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;X-B3-Flags&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          21485
+        </td>
+        <td>
+          2172
+          -
+          2175
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          15172
+        </td>
+        <td>
+          2253
+          -
+          2334
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.append(h.flags.foldLeft[Long](0L)(((sum: Long, next: org.http4s.headers.X-B3-Flags.Flag) =&gt; sum.+(next.longValue))).toString())
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          19298
+        </td>
+        <td>
+          2267
+          -
+          2333
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          org.http4s.headers.zipkinheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.flags.foldLeft[Long](0L)(((sum: Long, next: org.http4s.headers.X-B3-Flags.Flag) =&gt; sum.+(next.longValue))).toString()
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          19465
+        </td>
+        <td>
+          2353
+          -
+          2358
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.X-B3-Flags.parse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          X-B3-Flags.this.parse(s)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

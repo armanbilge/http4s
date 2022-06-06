@@ -1,0 +1,1349 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/internal/threads.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import java.lang.Thread.UncaughtExceptionHandler
+</span>20 <span style=''>import java.util.concurrent._
+</span>21 <span style=''>import java.util.concurrent.atomic.AtomicLong
+</span>22 <span style=''>import scala.concurrent.ExecutionContext
+</span>23 <span style=''>import scala.concurrent.duration._
+</span>24 <span style=''>
+</span>25 <span style=''>private[http4s] object threads {
+</span>26 <span style=''>  final case class ThreadPriority(toInt: Int)
+</span>27 <span style=''>  case object ThreadPriority {
+</span>28 <span style=''>    val Min: ThreadPriority = </span><span style='background: #F0ADAD'>ThreadPriority(Thread.MIN_PRIORITY)</span><span style=''>
+</span>29 <span style=''>    val Norm: ThreadPriority = </span><span style='background: #F0ADAD'>ThreadPriority(Thread.NORM_PRIORITY)</span><span style=''>
+</span>30 <span style=''>    val Max: ThreadPriority = </span><span style='background: #F0ADAD'>ThreadPriority(Thread.MAX_PRIORITY)</span><span style=''>
+</span>31 <span style=''>  }
+</span>32 <span style=''>
+</span>33 <span style=''>  def threadFactory(
+</span>34 <span style=''>      name: Long =&gt; String = { l =&gt;
+</span>35 <span style=''>        s&quot;http4s-$l&quot;
+</span>36 <span style=''>      },
+</span>37 <span style=''>      daemon: Boolean = false,
+</span>38 <span style=''>      priority: ThreadPriority = ThreadPriority.Norm,
+</span>39 <span style=''>      uncaughtExceptionHandler: PartialFunction[(Thread, Throwable), Unit] = PartialFunction.empty,
+</span>40 <span style=''>      backingThreadFactory: ThreadFactory = Executors.defaultThreadFactory,
+</span>41 <span style=''>  ): ThreadFactory =
+</span>42 <span style=''>    </span><span style='background: #F0ADAD'>new</span><span style=''> ThreadFactory {
+</span>43 <span style=''>      val count = </span><span style='background: #F0ADAD'>new AtomicLong(0)</span><span style=''>
+</span>44 <span style=''>      override def newThread(r: Runnable): Thread = {
+</span>45 <span style=''>        val thread = </span><span style='background: #F0ADAD'>backingThreadFactory.newThread(r)</span><span style=''>
+</span>46 <span style=''>        </span><span style='background: #F0ADAD'>thread.setName(name(count.getAndIncrement))</span><span style=''>
+</span>47 <span style=''>        </span><span style='background: #F0ADAD'>thread.setDaemon(daemon)</span><span style=''>
+</span>48 <span style=''>        </span><span style='background: #F0ADAD'>thread.setPriority(priority.toInt)</span><span style=''>
+</span>49 <span style=''>        </span><span style='background: #F0ADAD'>thread.setUncaughtExceptionHandler(new UncaughtExceptionHandler {
+</span>50 <span style=''></span><span style='background: #F0ADAD'>          override def uncaughtException(t: Thread, e: Throwable): Unit =
+</span>51 <span style=''></span><span style='background: #F0ADAD'>            uncaughtExceptionHandler.orElse(fallthrough)((t, e))
+</span>52 <span style=''></span><span style='background: #F0ADAD'>          val fallthrough: PartialFunction[(Thread, Throwable), Unit] = {
+</span>53 <span style=''></span><span style='background: #F0ADAD'>            case (t: Thread, e: Throwable) =&gt;
+</span>54 <span style=''></span><span style='background: #F0ADAD'>              Option(t.getThreadGroup)
+</span>55 <span style=''></span><span style='background: #F0ADAD'>                .getOrElse(Thread.getDefaultUncaughtExceptionHandler)
+</span>56 <span style=''></span><span style='background: #F0ADAD'>                .uncaughtException(t, e)
+</span>57 <span style=''></span><span style='background: #F0ADAD'>          }
+</span>58 <span style=''></span><span style='background: #F0ADAD'>        })</span><span style=''>
+</span>59 <span style=''>        thread
+</span>60 <span style=''>      }
+</span>61 <span style=''>    }
+</span>62 <span style=''>
+</span>63 <span style=''>  def newDaemonPool(
+</span>64 <span style=''>      name: String,
+</span>65 <span style=''>      min: Int = 4,
+</span>66 <span style=''>      cpuFactor: Double = 3.0,
+</span>67 <span style=''>      timeout: Boolean = false,
+</span>68 <span style=''>  ): ThreadPoolExecutor = {
+</span>69 <span style=''>    val cpus = </span><span style='background: #F0ADAD'>Runtime.getRuntime.availableProcessors</span><span style=''>
+</span>70 <span style=''>    val exec = </span><span style='background: #F0ADAD'>new ThreadPoolExecutor(
+</span>71 <span style=''></span><span style='background: #F0ADAD'>      math.max(min, cpus),
+</span>72 <span style=''></span><span style='background: #F0ADAD'>      math.max(min, (cpus * cpuFactor).ceil.toInt),
+</span>73 <span style=''></span><span style='background: #F0ADAD'>      10L,
+</span>74 <span style=''></span><span style='background: #F0ADAD'>      TimeUnit.SECONDS,
+</span>75 <span style=''></span><span style='background: #F0ADAD'>      new LinkedBlockingQueue[Runnable],
+</span>76 <span style=''></span><span style='background: #F0ADAD'>      threadFactory(i =&gt; s&quot;$name-$i&quot;, daemon = true),
+</span>77 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>78 <span style=''>    </span><span style='background: #F0ADAD'>exec.allowCoreThreadTimeOut(timeout)</span><span style=''>
+</span>79 <span style=''>    exec
+</span>80 <span style=''>  }
+</span>81 <span style=''>
+</span>82 <span style=''>  def newDaemonPoolExecutionContext(
+</span>83 <span style=''>      name: String,
+</span>84 <span style=''>      min: Int = 4,
+</span>85 <span style=''>      cpuFactor: Double = 3.0,
+</span>86 <span style=''>      timeout: Boolean = false,
+</span>87 <span style=''>  ): ExecutionContext =
+</span>88 <span style=''>    </span><span style='background: #F0ADAD'>ExecutionContext.fromExecutorService(newDaemonPool(name, min, cpuFactor, timeout))</span><span style=''>
+</span>89 <span style=''>
+</span>90 <span style=''>  def newBlockingPool(name: String): ExecutorService = {
+</span>91 <span style=''>    val CorePoolSize = </span><span style='background: #F0ADAD'>0</span><span style=''>
+</span>92 <span style=''>    val MaxPoolSize = </span><span style='background: #F0ADAD'>Int.MaxValue</span><span style=''>
+</span>93 <span style=''>    val KeepAliveTime = </span><span style='background: #F0ADAD'>1.minute</span><span style=''>
+</span>94 <span style=''>
+</span>95 <span style=''>    </span><span style='background: #F0ADAD'>new ThreadPoolExecutor(
+</span>96 <span style=''></span><span style='background: #F0ADAD'>      CorePoolSize,
+</span>97 <span style=''></span><span style='background: #F0ADAD'>      MaxPoolSize,
+</span>98 <span style=''></span><span style='background: #F0ADAD'>      KeepAliveTime.toSeconds,
+</span>99 <span style=''></span><span style='background: #F0ADAD'>      TimeUnit.SECONDS,
+</span>100 <span style=''></span><span style='background: #F0ADAD'>      new SynchronousQueue[Runnable](false),
+</span>101 <span style=''></span><span style='background: #F0ADAD'>      threadFactory(i =&gt; s&quot;$name-$i&quot;, daemon = true),
+</span>102 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>103 <span style=''>  }
+</span>104 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          28
+        </td>
+        <td>
+          14491
+        </td>
+        <td>
+          966
+          -
+          1001
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.ThreadPriority.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.ThreadPriority.apply(1)
+        </td>
+      </tr><tr>
+        <td>
+          29
+        </td>
+        <td>
+          22742
+        </td>
+        <td>
+          1033
+          -
+          1069
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.ThreadPriority.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.ThreadPriority.apply(5)
+        </td>
+      </tr><tr>
+        <td>
+          30
+        </td>
+        <td>
+          18749
+        </td>
+        <td>
+          1100
+          -
+          1135
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.ThreadPriority.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.ThreadPriority.apply(10)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          14373
+        </td>
+        <td>
+          1514
+          -
+          1517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          15256
+        </td>
+        <td>
+          1552
+          -
+          1569
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.atomic.AtomicLong.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.util.concurrent.atomic.AtomicLong(0L)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          21420
+        </td>
+        <td>
+          1645
+          -
+          1678
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.ThreadFactory.newThread
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          backingThreadFactory.newThread(r)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          16032
+        </td>
+        <td>
+          1702
+          -
+          1729
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          name.apply($anon.this.count.getAndIncrement())
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          21944
+        </td>
+        <td>
+          1687
+          -
+          1730
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Thread.setName
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          thread.setName(name.apply($anon.this.count.getAndIncrement()))
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          17736
+        </td>
+        <td>
+          1707
+          -
+          1728
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.atomic.AtomicLong.getAndIncrement
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          $anon.this.count.getAndIncrement()
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          18225
+        </td>
+        <td>
+          1739
+          -
+          1763
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Thread.setDaemon
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          thread.setDaemon(daemon)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          22768
+        </td>
+        <td>
+          1772
+          -
+          1806
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Thread.setPriority
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          thread.setPriority(priority.toInt)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          14352
+        </td>
+        <td>
+          1791
+          -
+          1805
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.threads.ThreadPriority.toInt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          priority.toInt
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          18466
+        </td>
+        <td>
+          1815
+          -
+          2312
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Thread.setUncaughtExceptionHandler
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          thread.setUncaughtExceptionHandler({
+  final class $anon extends Object with Thread.UncaughtExceptionHandler {
+    def &lt;init&gt;(): &lt;$anon: Thread.UncaughtExceptionHandler&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    override def uncaughtException(t: Thread, e: Throwable): Unit = uncaughtExceptionHandler.orElse[(Thread, Throwable), Unit]($anon.this.fallthrough).apply(scala.Tuple2.apply[Thread, Throwable](t, e));
+    private[this] val fallthrough: PartialFunction[(Thread, Throwable),Unit] = ({
+      @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[(Thread, Throwable),Unit] with java.io.Serializable {
+        def &lt;init&gt;(): &lt;$anon: ((Thread, Throwable)) =&gt; Unit&gt; = {
+          $anonfun.super.&lt;init&gt;();
+          ()
+        };
+        final override def applyOrElse[A1 &lt;: (Thread, Throwable), B1 &gt;: Unit](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[(Thread, Throwable)]: (Thread, Throwable)): (Thread, Throwable) @unchecked) match {
+          case (_1: Thread, _2: Throwable): (Thread, Throwable)((t @ (_: Thread)), (e @ (_: Throwable))) =&gt; scala.Option.apply[ThreadGroup](t.getThreadGroup()).getOrElse[Thread.UncaughtExceptionHandler](java.lang.Thread.getDefaultUncaughtExceptionHandler()).uncaughtException(t, e)
+          case (defaultCase$ @ _) =&gt; default.apply(x1)
+        };
+        final def isDefinedAt(x1: (Thread, Throwable)): Boolean = ((x1.asInstanceOf[(Thread, Throwable)]: (Thread, Throwable)): (Thread, Throwable) @unchecked) match {
+          case (_1: Thread, _2: Throwable): (Thread, Throwable)((t @ (_: Thread)), (e @ (_: Throwable))) =&gt; true
+          case (defaultCase$ @ _) =&gt; false
+        }
+      };
+      new $anonfun()
+    }: PartialFunction[(Thread, Throwable),Unit]);
+    &lt;stable&gt; &lt;accessor&gt; private def fallthrough: PartialFunction[(Thread, Throwable),Unit] = $anon.this.fallthrough
+  };
+  new $anon()
+})
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          21960
+        </td>
+        <td>
+          1850
+          -
+          1853
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.$anon.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          14862
+        </td>
+        <td>
+          2012
+          -
+          2018
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Tuple2.apply[Thread, Throwable](t, e)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          18770
+        </td>
+        <td>
+          1999
+          -
+          2010
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.threads.$anon.$anon.fallthrough
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          $anon.this.fallthrough
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          21437
+        </td>
+        <td>
+          1967
+          -
+          2019
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          uncaughtExceptionHandler.orElse[(Thread, Throwable), Unit]($anon.this.fallthrough).apply(scala.Tuple2.apply[Thread, Throwable](t, e))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          16046
+        </td>
+        <td>
+          2092
+          -
+          2092
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.$anon.$anon.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          17602
+        </td>
+        <td>
+          2154
+          -
+          2289
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Thread.UncaughtExceptionHandler.uncaughtException
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Option.apply[ThreadGroup](t.getThreadGroup()).getOrElse[Thread.UncaughtExceptionHandler](java.lang.Thread.getDefaultUncaughtExceptionHandler()).uncaughtException(t, e)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          23137
+        </td>
+        <td>
+          2510
+          -
+          2548
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Runtime.availableProcessors
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.Runtime.getRuntime().availableProcessors()
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          17727
+        </td>
+        <td>
+          2564
+          -
+          2802
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.ThreadPoolExecutor.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.util.concurrent.ThreadPoolExecutor(scala.math.`package`.max(min, cpus), scala.math.`package`.max(min, scala.Predef.doubleWrapper(cpus.*(cpuFactor)).ceil.toInt), 10L, SECONDS, new java.util.concurrent.LinkedBlockingQueue[Runnable](), threads.this.threadFactory(((i: Long) =&gt; (&quot;&quot;.+(name).+(&quot;-&quot;).+(i): String)), true, threads.this.threadFactory$default$3, threads.this.threadFactory$default$4, threads.this.threadFactory$default$5))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          19271
+        </td>
+        <td>
+          2594
+          -
+          2613
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.math.max
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.math.`package`.max(min, cpus)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          21693
+        </td>
+        <td>
+          2635
+          -
+          2664
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Double.toInt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.doubleWrapper(cpus.*(cpuFactor)).ceil.toInt
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          14876
+        </td>
+        <td>
+          2636
+          -
+          2652
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.*
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cpus.*(cpuFactor)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          17624
+        </td>
+        <td>
+          2621
+          -
+          2665
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.math.max
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.math.`package`.max(min, scala.Predef.doubleWrapper(cpus.*(cpuFactor)).ceil.toInt)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          16067
+        </td>
+        <td>
+          2673
+          -
+          2676
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          10L
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          22470
+        </td>
+        <td>
+          2684
+          -
+          2700
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          SECONDS
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          18485
+        </td>
+        <td>
+          2708
+          -
+          2741
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.LinkedBlockingQueue.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.util.concurrent.LinkedBlockingQueue[Runnable]()
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          14629
+        </td>
+        <td>
+          2790
+          -
+          2794
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          19291
+        </td>
+        <td>
+          2749
+          -
+          2749
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.threads.threadFactory$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.threadFactory$default$4
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          15104
+        </td>
+        <td>
+          2749
+          -
+          2749
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.threads.threadFactory$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.threadFactory$default$5
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          21712
+        </td>
+        <td>
+          2749
+          -
+          2795
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.threadFactory
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.threadFactory(((i: Long) =&gt; (&quot;&quot;.+(name).+(&quot;-&quot;).+(i): String)), true, threads.this.threadFactory$default$3, threads.this.threadFactory$default$4, threads.this.threadFactory$default$5)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          21182
+        </td>
+        <td>
+          2749
+          -
+          2749
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.threads.threadFactory$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.threadFactory$default$3
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          15953
+        </td>
+        <td>
+          2807
+          -
+          2843
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.ThreadPoolExecutor.allowCoreThreadTimeOut
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          exec.allowCoreThreadTimeOut(timeout)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          22488
+        </td>
+        <td>
+          3063
+          -
+          3107
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.newDaemonPool
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.newDaemonPool(name, min, cpuFactor, timeout)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          18349
+        </td>
+        <td>
+          3026
+          -
+          3108
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.concurrent.ExecutionContext.fromExecutorService
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.concurrent.ExecutionContext.fromExecutorService(threads.this.newDaemonPool(name, min, cpuFactor, timeout))
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          14644
+        </td>
+        <td>
+          3190
+          -
+          3191
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          20923
+        </td>
+        <td>
+          3214
+          -
+          3226
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          2147483647
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          15119
+        </td>
+        <td>
+          3251
+          -
+          3259
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.DurationConversions.minute
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.concurrent.duration.`package`.DurationInt(1).minute
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          19162
+        </td>
+        <td>
+          3251
+          -
+          3252
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          1
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          15007
+        </td>
+        <td>
+          3265
+          -
+          3487
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.ThreadPoolExecutor.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.util.concurrent.ThreadPoolExecutor(CorePoolSize, MaxPoolSize, KeepAliveTime.toSeconds, SECONDS, new java.util.concurrent.SynchronousQueue[Runnable](false), threads.this.threadFactory(((i: Long) =&gt; (&quot;&quot;.+(name).+(&quot;-&quot;).+(i): String)), true, threads.this.threadFactory$default$3, threads.this.threadFactory$default$4, threads.this.threadFactory$default$5))
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          21578
+        </td>
+        <td>
+          3334
+          -
+          3357
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.toSeconds
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          KeepAliveTime.toSeconds
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          17595
+        </td>
+        <td>
+          3365
+          -
+          3381
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          SECONDS
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          15701
+        </td>
+        <td>
+          3389
+          -
+          3426
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.util.concurrent.SynchronousQueue.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.util.concurrent.SynchronousQueue[Runnable](false)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          22100
+        </td>
+        <td>
+          3475
+          -
+          3479
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          14363
+        </td>
+        <td>
+          3434
+          -
+          3434
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.threads.threadFactory$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.threadFactory$default$4
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          18364
+        </td>
+        <td>
+          3434
+          -
+          3434
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.threads.threadFactory$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.threadFactory$default$3
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          20810
+        </td>
+        <td>
+          3434
+          -
+          3434
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.threads.threadFactory$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.threadFactory$default$5
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          18917
+        </td>
+        <td>
+          3434
+          -
+          3480
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.threads.threadFactory
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          threads.this.threadFactory(((i: Long) =&gt; (&quot;&quot;.+(name).+(&quot;-&quot;).+(i): String)), true, threads.this.threadFactory$default$3, threads.this.threadFactory$default$4, threads.this.threadFactory$default$5)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

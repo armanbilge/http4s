@@ -1,0 +1,1714 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/MessageFailure.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Eq
+</span>20 <span style=''>import cats.MonadError
+</span>21 <span style=''>import cats.instances.either._
+</span>22 <span style=''>import cats.parse.Parser0
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>
+</span>25 <span style=''>import scala.util.control.NoStackTrace
+</span>26 <span style=''>import scala.util.control.NonFatal
+</span>27 <span style=''>
+</span>28 <span style=''>/** Indicates a failure to handle an HTTP [[Message]]. */
+</span>29 <span style=''>trait MessageFailure extends RuntimeException {
+</span>30 <span style=''>
+</span>31 <span style=''>  /** Provides a message appropriate for logging. */
+</span>32 <span style=''>  def message: String
+</span>33 <span style=''>
+</span>34 <span style=''>  /* Overridden for sensible logging of the failure */
+</span>35 <span style=''>  override final def getMessage: String = </span><span style='background: #AEF1AE'>message</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  def cause: Option[Throwable]
+</span>38 <span style=''>
+</span>39 <span style=''>  override final def getCause: Throwable = </span><span style='background: #AEF1AE'>cause.orNull</span><span style=''>
+</span>40 <span style=''>
+</span>41 <span style=''>  /** Provides a default rendering of this failure as a [[Response]]. */
+</span>42 <span style=''>  def toHttpResponse[F[_]](httpVersion: HttpVersion): Response[F]
+</span>43 <span style=''>}
+</span>44 <span style=''>
+</span>45 <span style=''>/** Indicates an error parsing an HTTP [[Message]].
+</span>46 <span style=''>  *
+</span>47 <span style=''>  * @param sanitized May safely be displayed to a client to describe an error
+</span>48 <span style=''>  *                  condition.  Should not echo any part of a Request.
+</span>49 <span style=''>  * @param details Contains any relevant details omitted from the sanitized
+</span>50 <span style=''>  *                version of the error.  This may freely echo a Request.
+</span>51 <span style=''>  */
+</span>52 <span style=''>final case class ParseFailure(sanitized: String, details: String)
+</span>53 <span style=''>    extends MessageFailure
+</span>54 <span style=''>    with NoStackTrace {
+</span>55 <span style=''>  def message: String =
+</span>56 <span style=''>    if (</span><span style='background: #AEF1AE'>sanitized.isEmpty</span><span style=''>) </span><span style='background: #F0ADAD'>details</span><span style=''>
+</span>57 <span style=''>    else </span><span style='background: #AEF1AE'>if (details.isEmpty) </span><span style='background: #F0ADAD'>sanitized</span><span style='background: #AEF1AE'>
+</span>58 <span style=''></span><span style='background: #AEF1AE'>    else s&quot;$sanitized: $details&quot;</span><span style=''>
+</span>59 <span style=''>
+</span>60 <span style=''>  def cause: Option[Throwable] = </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>61 <span style=''>
+</span>62 <span style=''>  def toHttpResponse[F[_]](httpVersion: HttpVersion): Response[F] =
+</span>63 <span style=''>    </span><span style='background: #AEF1AE'>Response(Status.BadRequest, httpVersion)
+</span>64 <span style=''></span><span style='background: #AEF1AE'>      .withEntity(sanitized)(EntityEncoder.stringEncoder[F])</span><span style=''>
+</span>65 <span style=''>}
+</span>66 <span style=''>
+</span>67 <span style=''>object ParseFailure {
+</span>68 <span style=''>  implicit val eq: Eq[ParseFailure] = </span><span style='background: #AEF1AE'>Eq.fromUniversalEquals[ParseFailure]</span><span style=''>
+</span>69 <span style=''>}
+</span>70 <span style=''>
+</span>71 <span style=''>object ParseResult {
+</span>72 <span style=''>  def fail(sanitized: String, details: String): ParseResult[Nothing] =
+</span>73 <span style=''>    </span><span style='background: #AEF1AE'>Left(ParseFailure(sanitized, details))</span><span style=''>
+</span>74 <span style=''>
+</span>75 <span style=''>  def success[A](a: A): ParseResult[A] =
+</span>76 <span style=''>    </span><span style='background: #AEF1AE'>Right(a)</span><span style=''>
+</span>77 <span style=''>
+</span>78 <span style=''>  def fromTryCatchNonFatal[A](sanitized: String)(f: =&gt; A): ParseResult[A] =
+</span>79 <span style=''>    try </span><span style='background: #F0ADAD'>ParseResult.success(f)</span><span style=''>
+</span>80 <span style=''>    catch {
+</span>81 <span style=''>      case NonFatal(e) =&gt; </span><span style='background: #F0ADAD'>Left(ParseFailure(sanitized, e.getMessage))</span><span style=''>
+</span>82 <span style=''>    }
+</span>83 <span style=''>
+</span>84 <span style=''>  private[http4s] def fromParser[A](parser: Parser0[A], errorMessage: =&gt; String)(
+</span>85 <span style=''>      s: String
+</span>86 <span style=''>  ): ParseResult[A] =
+</span>87 <span style=''>    try </span><span style='background: #AEF1AE'>parser.parseAll(s).leftMap(e =&gt; ParseFailure(errorMessage, e.toString))</span><span style=''>
+</span>88 <span style=''>    catch { case p: ParseFailure =&gt; </span><span style='background: #AEF1AE'>p.asLeft[A]</span><span style=''> }
+</span>89 <span style=''>
+</span>90 <span style=''>  implicit val parseResultMonad: MonadError[ParseResult, ParseFailure] =
+</span>91 <span style=''>    </span><span style='background: #AEF1AE'>catsStdInstancesForEither[ParseFailure]</span><span style=''>
+</span>92 <span style=''>}
+</span>93 <span style=''>
+</span>94 <span style=''>/** Indicates a problem decoding a [[Message]].  This may either be a problem with
+</span>95 <span style=''>  * the entity headers or with the entity itself.
+</span>96 <span style=''>  */
+</span>97 <span style=''>trait DecodeFailure extends MessageFailure
+</span>98 <span style=''>
+</span>99 <span style=''>object DecodeFailure {
+</span>100 <span style=''>  implicit val http4sEqForDecodeFailure: Eq[DecodeFailure] = </span><span style='background: #AEF1AE'>Eq.fromUniversalEquals</span><span style=''>
+</span>101 <span style=''>}
+</span>102 <span style=''>
+</span>103 <span style=''>/** Indicates a problem decoding a [[Message]] body. */
+</span>104 <span style=''>trait MessageBodyFailure extends DecodeFailure
+</span>105 <span style=''>
+</span>106 <span style=''>/** Indicates an syntactic error decoding the body of an HTTP [[Message]]. */
+</span>107 <span style=''>final case class MalformedMessageBodyFailure(details: String, cause: Option[Throwable] = None)
+</span>108 <span style=''>    extends MessageBodyFailure {
+</span>109 <span style=''>  def message: String =
+</span>110 <span style=''>    s&quot;Malformed message body: $details&quot;
+</span>111 <span style=''>
+</span>112 <span style=''>  def toHttpResponse[F[_]](httpVersion: HttpVersion): Response[F] =
+</span>113 <span style=''>    </span><span style='background: #AEF1AE'>Response(Status.BadRequest, httpVersion)
+</span>114 <span style=''></span><span style='background: #AEF1AE'>      .withEntity(s&quot;The request body was malformed.&quot;)(EntityEncoder.stringEncoder[F])</span><span style=''>
+</span>115 <span style=''>}
+</span>116 <span style=''>
+</span>117 <span style=''>/** Indicates a semantic error decoding the body of an HTTP [[Message]]. */
+</span>118 <span style=''>final case class InvalidMessageBodyFailure(details: String, cause: Option[Throwable] = None)
+</span>119 <span style=''>    extends MessageBodyFailure {
+</span>120 <span style=''>  def message: String =
+</span>121 <span style=''>    s&quot;Invalid message body: $details&quot;
+</span>122 <span style=''>
+</span>123 <span style=''>  def toHttpResponse[F[_]](httpVersion: HttpVersion): Response[F] =
+</span>124 <span style=''>    </span><span style='background: #AEF1AE'>Response(Status.UnprocessableEntity, httpVersion)
+</span>125 <span style=''></span><span style='background: #AEF1AE'>      .withEntity(s&quot;The request body was invalid.&quot;)(EntityEncoder.stringEncoder[F])</span><span style=''>
+</span>126 <span style=''>}
+</span>127 <span style=''>
+</span>128 <span style=''>/** Indicates that a [[Message]] came with no supported [[MediaType]]. */
+</span>129 <span style=''>sealed abstract class UnsupportedMediaTypeFailure extends DecodeFailure with NoStackTrace {
+</span>130 <span style=''>  def expected: Set[MediaRange]
+</span>131 <span style=''>  def cause: Option[Throwable] = </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>132 <span style=''>
+</span>133 <span style=''>  protected def sanitizedResponsePrefix: String
+</span>134 <span style=''>  protected def expectedMsg: String =
+</span>135 <span style=''>    s&quot;Expected one of the following media ranges: ${expected.map(_.show).mkString(&quot;, &quot;)}&quot;
+</span>136 <span style=''>  protected def responseMsg: String = s&quot;$sanitizedResponsePrefix. $expectedMsg&quot;
+</span>137 <span style=''>
+</span>138 <span style=''>  def toHttpResponse[F[_]](httpVersion: HttpVersion): Response[F] =
+</span>139 <span style=''>    </span><span style='background: #AEF1AE'>Response(Status.UnsupportedMediaType, httpVersion)
+</span>140 <span style=''></span><span style='background: #AEF1AE'>      .withEntity(responseMsg)(EntityEncoder.stringEncoder[F])</span><span style=''>
+</span>141 <span style=''>}
+</span>142 <span style=''>
+</span>143 <span style=''>/** Indicates that a [[Message]] attempting to be decoded has no [[MediaType]] and no
+</span>144 <span style=''>  * [[EntityDecoder]] was lenient enough to accept it.
+</span>145 <span style=''>  */
+</span>146 <span style=''>final case class MediaTypeMissing(expected: Set[MediaRange]) extends UnsupportedMediaTypeFailure {
+</span>147 <span style=''>  def sanitizedResponsePrefix: String = </span><span style='background: #AEF1AE'>&quot;No media type specified in Content-Type header&quot;</span><span style=''>
+</span>148 <span style=''>  def message: String = </span><span style='background: #F0ADAD'>responseMsg</span><span style=''>
+</span>149 <span style=''>}
+</span>150 <span style=''>
+</span>151 <span style=''>/** Indicates that no [[EntityDecoder]] matches the [[MediaType]] of the [[Message]] being decoded */
+</span>152 <span style=''>final case class MediaTypeMismatch(messageType: MediaType, expected: Set[MediaRange])
+</span>153 <span style=''>    extends UnsupportedMediaTypeFailure {
+</span>154 <span style=''>  def sanitizedResponsePrefix: String =
+</span>155 <span style=''>    </span><span style='background: #AEF1AE'>&quot;Media type supplied in Content-Type header is not supported&quot;</span><span style=''>
+</span>156 <span style=''>  def message: String = s&quot;${messageType.show} is not a supported media type. $expectedMsg&quot;
+</span>157 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          17997
+        </td>
+        <td>
+          1091
+          -
+          1098
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.MessageFailure.message
+        </td>
+        <td>
+          org.http4s.httpversiondoctest
+        </td>
+        <td style="background: #AEF1AE">
+          MessageFailure.this.message
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          13586
+        </td>
+        <td>
+          1181
+          -
+          1181
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[Null]
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          20136
+        </td>
+        <td>
+          1175
+          -
+          1187
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.Option.orNull
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          MessageFailure.this.cause.orNull[Throwable](scala.this.&lt;:&lt;.refl[Null])
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          14396
+        </td>
+        <td>
+          1860
+          -
+          1867
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ParseFailure.details
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseFailure.this.details
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          18490
+        </td>
+        <td>
+          1841
+          -
+          1858
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          org.http4s.httpversiondoctest
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.this.sanitized.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          21184
+        </td>
+        <td>
+          1860
+          -
+          1867
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseFailure.details
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseFailure.this.details
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          16818
+        </td>
+        <td>
+          1881
+          -
+          1896
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          org.http4s.httpversiondoctest
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.this.details.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          13609
+        </td>
+        <td>
+          1877
+          -
+          1940
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.httpversiondoctest
+        </td>
+        <td style="background: #AEF1AE">
+          if (ParseFailure.this.details.isEmpty())
+  ParseFailure.this.sanitized
+else
+  (&quot;&quot;.+(ParseFailure.this.sanitized).+(&quot;: &quot;).+(ParseFailure.this.details): String)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          21716
+        </td>
+        <td>
+          1898
+          -
+          1907
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseFailure.sanitized
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseFailure.this.sanitized
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          15255
+        </td>
+        <td>
+          1898
+          -
+          1907
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ParseFailure.sanitized
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseFailure.this.sanitized
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          18013
+        </td>
+        <td>
+          1917
+          -
+          1940
+        </td>
+        <td>
+          Typed
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.httpversiondoctest
+        </td>
+        <td style="background: #AEF1AE">
+          (&quot;&quot;.+(ParseFailure.this.sanitized).+(&quot;: &quot;).+(ParseFailure.this.details): String)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          20394
+        </td>
+        <td>
+          1975
+          -
+          1979
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          14350
+        </td>
+        <td>
+          2053
+          -
+          2053
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          18515
+        </td>
+        <td>
+          2062
+          -
+          2079
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.BadRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Status.BadRequest
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          16837
+        </td>
+        <td>
+          2053
+          -
+          2053
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          21200
+        </td>
+        <td>
+          2053
+          -
+          2053
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          15123
+        </td>
+        <td>
+          2112
+          -
+          2121
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ParseFailure.sanitized
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.this.sanitized
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          17748
+        </td>
+        <td>
+          2123
+          -
+          2153
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityEncoder.stringEncoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder[F](EntityEncoder.stringEncoder$default$1[F])
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          21731
+        </td>
+        <td>
+          2150
+          -
+          2150
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.stringEncoder$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder$default$1[F]
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          14119
+        </td>
+        <td>
+          2053
+          -
+          2154
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withEntity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[[_]F[_]](Status.BadRequest, httpVersion, Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]).withEntity[String](ParseFailure.this.sanitized)(EntityEncoder.stringEncoder[F](EntityEncoder.stringEncoder$default$1[F]))
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          20419
+        </td>
+        <td>
+          2218
+          -
+          2254
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.kernel.Eq.fromUniversalEquals
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.`package`.Eq.fromUniversalEquals[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          14372
+        </td>
+        <td>
+          2354
+          -
+          2392
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.httpversionsuite,org.http4s.ember.core.h2.hpacksuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Left.apply[org.http4s.ParseFailure, Nothing](ParseFailure.apply(sanitized, details))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          18369
+        </td>
+        <td>
+          2359
+          -
+          2391
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.httpversionsuite,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.h2.hpacksuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.apply(sanitized, details)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          20944
+        </td>
+        <td>
+          2439
+          -
+          2447
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Right.apply
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.httpversiondoctest,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.Right.apply[Nothing, A](a)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          17069
+        </td>
+        <td>
+          2533
+          -
+          2555
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseResult.success[A](f)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          13345
+        </td>
+        <td>
+          2533
+          -
+          2555
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.ParseResult.success
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseResult.success[A](f)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          17623
+        </td>
+        <td>
+          2599
+          -
+          2636
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ParseFailure.apply(sanitized, e.getMessage())
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          13840
+        </td>
+        <td>
+          2594
+          -
+          2637
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Left.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Left.apply[org.http4s.ParseFailure, Nothing](ParseFailure.apply(sanitized, e.getMessage()))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          21325
+        </td>
+        <td>
+          2623
+          -
+          2635
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.getMessage
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          e.getMessage()
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          20832
+        </td>
+        <td>
+          2773
+          -
+          2844
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherOps.leftMap
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.jawn.jawndecodesupportsuite,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.dsl.pathsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[cats.parse.Parser.Error, A](parser.parseAll(s)).leftMap[org.http4s.ParseFailure](((e: cats.parse.Parser.Error) =&gt; ParseFailure.apply(errorMessage, e.toString())))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          14389
+        </td>
+        <td>
+          2805
+          -
+          2843
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseFailure.apply
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseFailure.apply(errorMessage, e.toString())
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          18390
+        </td>
+        <td>
+          2832
+          -
+          2842
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.Error.toString
+        </td>
+        <td>
+          org.http4s.headers.ifmodifiedsincesuite
+        </td>
+        <td style="background: #AEF1AE">
+          e.toString()
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          16813
+        </td>
+        <td>
+          2773
+          -
+          2844
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.EitherOps.leftMap
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.jawn.jawndecodesupportsuite,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.dsl.pathsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[cats.parse.Parser.Error, A](parser.parseAll(s)).leftMap[org.http4s.ParseFailure](((e: cats.parse.Parser.Error) =&gt; ParseFailure.apply(errorMessage, e.toString())))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          20285
+        </td>
+        <td>
+          2773
+          -
+          2791
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser0.parseAll
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.jawn.jawndecodesupportsuite,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.dsl.pathsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          parser.parseAll(s)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          13199
+        </td>
+        <td>
+          2881
+          -
+          2892
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.EitherIdOps.asLeft
+        </td>
+        <td>
+          org.http4s.headers.accesscontrolmaxagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEitherId[org.http4s.ParseFailure](p).asLeft[A]
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          21341
+        </td>
+        <td>
+          2973
+          -
+          3012
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.instances.EitherInstances.catsStdInstancesForEither
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.core.h2.hpacksuite,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.instances.`package`.either.catsStdInstancesForEither[org.http4s.ParseFailure]
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          17640
+        </td>
+        <td>
+          3282
+          -
+          3304
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.kernel.Eq.fromUniversalEquals
+        </td>
+        <td>
+          org.http4s.urlformspec,org.http4s.circe.test.circesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.`package`.Eq.fromUniversalEquals[org.http4s.DecodeFailure]
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          20026
+        </td>
+        <td>
+          3755
+          -
+          3755
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          18414
+        </td>
+        <td>
+          3755
+          -
+          3755
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          14098
+        </td>
+        <td>
+          3764
+          -
+          3781
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.BadRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Status.BadRequest
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          14256
+        </td>
+        <td>
+          3755
+          -
+          3755
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          17326
+        </td>
+        <td>
+          3850
+          -
+          3880
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityEncoder.stringEncoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder[F](EntityEncoder.stringEncoder$default$1[F])
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          20845
+        </td>
+        <td>
+          3877
+          -
+          3877
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.stringEncoder$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder$default$1[F]
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          12928
+        </td>
+        <td>
+          3755
+          -
+          3881
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withEntity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[[_]F[_]](Status.BadRequest, httpVersion, Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]).withEntity[String]((&quot;The request body was malformed.&quot;: String))(EntityEncoder.stringEncoder[F](EntityEncoder.stringEncoder$default$1[F]))
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          20550
+        </td>
+        <td>
+          4222
+          -
+          4222
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          21353
+        </td>
+        <td>
+          4231
+          -
+          4257
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.UnprocessableEntity
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Status.UnprocessableEntity
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          14116
+        </td>
+        <td>
+          4222
+          -
+          4222
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          17504
+        </td>
+        <td>
+          4222
+          -
+          4222
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          14276
+        </td>
+        <td>
+          4324
+          -
+          4354
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityEncoder.stringEncoder
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder[F](EntityEncoder.stringEncoder$default$1[F])
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          16575
+        </td>
+        <td>
+          4351
+          -
+          4351
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.stringEncoder$default$1
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder$default$1[F]
+        </td>
+      </tr><tr>
+        <td>
+          125
+        </td>
+        <td>
+          21082
+        </td>
+        <td>
+          4222
+          -
+          4355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withEntity
+        </td>
+        <td>
+          org.http4s.entitydecodersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[[_]F[_]](Status.UnprocessableEntity, httpVersion, Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]).withEntity[String]((&quot;The request body was invalid.&quot;: String))(EntityEncoder.stringEncoder[F](EntityEncoder.stringEncoder$default$1[F]))
+        </td>
+      </tr><tr>
+        <td>
+          131
+        </td>
+        <td>
+          17345
+        </td>
+        <td>
+          4590
+          -
+          4594
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          17524
+        </td>
+        <td>
+          4925
+          -
+          4925
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          12942
+        </td>
+        <td>
+          4934
+          -
+          4961
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.UnsupportedMediaType
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Status.UnsupportedMediaType
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          13983
+        </td>
+        <td>
+          4925
+          -
+          4925
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          139
+        </td>
+        <td>
+          21593
+        </td>
+        <td>
+          4925
+          -
+          4925
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          20569
+        </td>
+        <td>
+          4994
+          -
+          5005
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UnsupportedMediaTypeFailure.responseMsg
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          UnsupportedMediaTypeFailure.this.responseMsg
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          16594
+        </td>
+        <td>
+          5034
+          -
+          5034
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.stringEncoder$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder$default$1[F]
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          21097
+        </td>
+        <td>
+          4925
+          -
+          5038
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withEntity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[[_]F[_]](Status.UnsupportedMediaType, httpVersion, Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]).withEntity[String](UnsupportedMediaTypeFailure.this.responseMsg)(EntityEncoder.stringEncoder[F](EntityEncoder.stringEncoder$default$1[F]))
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          14535
+        </td>
+        <td>
+          5007
+          -
+          5037
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityEncoder.stringEncoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          EntityEncoder.stringEncoder[F](EntityEncoder.stringEncoder$default$1[F])
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          17214
+        </td>
+        <td>
+          5327
+          -
+          5375
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;No media type specified in Content-Type header&quot;
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          13197
+        </td>
+        <td>
+          5400
+          -
+          5411
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UnsupportedMediaTypeFailure.responseMsg
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          MediaTypeMissing.this.responseMsg
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          19829
+        </td>
+        <td>
+          5689
+          -
+          5750
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;Media type supplied in Content-Type header is not supported&quot;
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

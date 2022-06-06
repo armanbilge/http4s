@@ -1,0 +1,3053 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/internal/tls.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import java.io.ByteArrayInputStream
+</span>20 <span style=''>import java.security.cert.CertificateFactory
+</span>21 <span style=''>import java.security.cert.X509Certificate
+</span>22 <span style=''>import javax.net.ssl.SSLSession
+</span>23 <span style=''>import scala.util.Try
+</span>24 <span style=''>
+</span>25 <span style=''>/** Based on SSLContextFactory from jetty. */
+</span>26 <span style=''>object tls {
+</span>27 <span style=''>
+</span>28 <span style=''>  /** Return X509 certificates for the session.
+</span>29 <span style=''>    *
+</span>30 <span style=''>    * @param sslSession Session from which certificate to be read
+</span>31 <span style=''>    * @return Empty array if no certificates can be read from {{{sslSession}}}
+</span>32 <span style=''>    */
+</span>33 <span style=''>  def getCertChain(sslSession: SSLSession): List[X509Certificate] =
+</span>34 <span style=''>    </span><span style='background: #AEF1AE'>Try {
+</span>35 <span style=''></span><span style='background: #AEF1AE'>      val cf = CertificateFactory.getInstance(&quot;X.509&quot;)
+</span>36 <span style=''></span><span style='background: #AEF1AE'>      sslSession.getPeerCertificates.map { certificate =&gt;
+</span>37 <span style=''></span><span style='background: #AEF1AE'>        val stream = new ByteArrayInputStream(certificate.getEncoded)
+</span>38 <span style=''></span><span style='background: #AEF1AE'>        cf.generateCertificate(stream).asInstanceOf[X509Certificate]
+</span>39 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>40 <span style=''></span><span style='background: #AEF1AE'>    }.toOption.getOrElse(Array.empty[X509Certificate]).toList</span><span style=''>
+</span>41 <span style=''>
+</span>42 <span style=''>  /** Given the name of a TLS/SSL cipher suite, return an int representing it effective stream
+</span>43 <span style=''>    * cipher key strength. i.e. How much entropy material is in the key material being fed into the
+</span>44 <span style=''>    * encryption routines.
+</span>45 <span style=''>    *
+</span>46 <span style=''>    * The following specs and resources were consulted for the implementation of this function:
+</span>47 <span style=''>    * IANA TLS Cipher Suites registry (IANA https://www.iana.org/assignments/tls-parameters/tls-parameters.txt),
+</span>48 <span style=''>    * RFC 2246 (The TLS Protocol Version 1.0, Appendix C), RFC 4346 (The Transport Layer Security
+</span>49 <span style=''>    * (TLS) Protocol Version 1.1, Appendix C), RFC 5246 (The Transport Layer Security (TLS) Protocol
+</span>50 <span style=''>    * Version 1.2, Appendix C), RFC 8446 (The Transport Layer Security (TLS) Protocol Version 1.3,
+</span>51 <span style=''>    * Appendix B), RFC 7539 (ChaCha20 and Poly1305 for IETF Protocols), RFC 3713 (A Description of the
+</span>52 <span style=''>    * Camellia Encryption Algorithm), RFC 5794 (A Description of the ARIA Encryption Algorithm),
+</span>53 <span style=''>    * RFC 4269 (The SEED Encryption Algorithm), draft-crypto-sm4-00 (The SM4 Block Cipher Algorithm
+</span>54 <span style=''>    * And Its Modes Of Operations), draft-smyshlyaev-tls12-gost-suites (GOST Cipher Suites for
+</span>55 <span style=''>    * Transport Layer Security (TLS) Protocol Version 1.2), and draft-smyshlyaev-tls13-gost-suites
+</span>56 <span style=''>    * (GOST Cipher Suites for Transport Layer Security (TLS) Protocol Version).
+</span>57 <span style=''>    * The following table summarizes the relevant information from the sources listed above:
+</span>58 <span style=''>    * &lt;pre&gt;
+</span>59 <span style=''>    *                         Effective
+</span>60 <span style=''>    *     Cipher       Type    Key Bits
+</span>61 <span style=''>    *
+</span>62 <span style=''>    *     NULL       *  Stream     0
+</span>63 <span style=''>    *     IDEA_CBC      Block    128
+</span>64 <span style=''>    *     RC2_CBC_40 *  Block     40
+</span>65 <span style=''>    *     RC4_40     *  Stream    40
+</span>66 <span style=''>    *     RC4_128       Stream   128
+</span>67 <span style=''>    *     DES40_CBC  *  Block     40
+</span>68 <span style=''>    *     DES_CBC       Block     56
+</span>69 <span style=''>    *     3DES_EDE_CBC  Block    168
+</span>70 <span style=''>    *     AES_128       Block    128
+</span>71 <span style=''>    *     AES_256       Block    256
+</span>72 <span style=''>    *     ChaCha20      Stream   256
+</span>73 <span style=''>    *     Camellia_128  Block    128
+</span>74 <span style=''>    *     Camellia_256  Block    256
+</span>75 <span style=''>    *     Aria_128      Block    128
+</span>76 <span style=''>    *     Aria_256      Block    256
+</span>77 <span style=''>    *     SEED          Block    128
+</span>78 <span style=''>    *     SM4           Block    128
+</span>79 <span style=''>    *     Kuznyechik    Block    256
+</span>80 <span style=''>    *     Magma         Block    256
+</span>81 <span style=''>    *     GOST 28147-89 Block    256
+</span>82 <span style=''>    * &lt;/pre&gt;
+</span>83 <span style=''>    *
+</span>84 <span style=''>    * @param cipherSuite String name of the TLS cipher suite.
+</span>85 <span style=''>    * @return int indicating the effective key entropy bit-length.
+</span>86 <span style=''>    */
+</span>87 <span style=''>  def deduceKeyLength(cipherSuite: String): Int =
+</span>88 <span style=''>    if (</span><span style='background: #AEF1AE'>cipherSuite == null</span><span style=''>) </span><span style='background: #F0ADAD'>0</span><span style=''>
+</span>89 <span style=''>    else </span><span style='background: #AEF1AE'>if (cipherSuite.contains(&quot;_AES_256_&quot;)) 256
+</span>90 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;WITH_RC4_128_&quot;)) 128
+</span>91 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_AES_128_&quot;)) 128
+</span>92 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;WITH_RC4_40_&quot;)) 40
+</span>93 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;WITH_3DES_EDE_CBC_&quot;)) 168
+</span>94 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;WITH_IDEA_CBC_&quot;)) 128
+</span>95 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;)) 40
+</span>96 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;)) 40
+</span>97 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;)) 40
+</span>98 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;)) 56
+</span>99 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_CHACHA20_&quot;)) 256
+</span>100 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;)) 128
+</span>101 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;)) 256
+</span>102 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;)) 128
+</span>103 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;)) 256
+</span>104 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_WITH_SEED_&quot;)) 128
+</span>105 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_SM4_&quot;)) 128
+</span>106 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;)) 256
+</span>107 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;)) 256
+</span>108 <span style=''></span><span style='background: #AEF1AE'>    else if (cipherSuite.contains(&quot;_WITH_28147_&quot;)) 256
+</span>109 <span style=''></span><span style='background: #AEF1AE'>    else 0</span><span style=''>
+</span>110 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          21594
+        </td>
+        <td>
+          1161
+          -
+          1200
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.security.cert.CertificateFactory.getInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          java.security.cert.CertificateFactory.getInstance(&quot;X.509&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          17615
+        </td>
+        <td>
+          1207
+          -
+          1237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          javax.net.ssl.SSLSession.getPeerCertificates
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          sslSession.getPeerCertificates()
+        </td>
+      </tr><tr>
+        <td>
+          36
+        </td>
+        <td>
+          14238
+        </td>
+        <td>
+          1207
+          -
+          1405
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.collection.ArrayOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.refArrayOps[java.security.cert.Certificate](sslSession.getPeerCertificates()).map[java.security.cert.X509Certificate](((certificate: java.security.cert.Certificate) =&gt; {
+  val stream: java.io.ByteArrayInputStream = new java.io.ByteArrayInputStream(certificate.getEncoded());
+  cf.generateCertificate(stream).asInstanceOf[java.security.cert.X509Certificate]
+}))((ClassTag.apply[java.security.cert.X509Certificate](classOf[java.security.cert.X509Certificate]): scala.reflect.ClassTag[java.security.cert.X509Certificate]))
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          13716
+        </td>
+        <td>
+          1305
+          -
+          1327
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.security.cert.Certificate.getEncoded
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          certificate.getEncoded()
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          22466
+        </td>
+        <td>
+          1280
+          -
+          1328
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.ByteArrayInputStream.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new java.io.ByteArrayInputStream(certificate.getEncoded())
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          18384
+        </td>
+        <td>
+          1337
+          -
+          1397
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cf.generateCertificate(stream).asInstanceOf[java.security.cert.X509Certificate]
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          20827
+        </td>
+        <td>
+          1431
+          -
+          1459
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.Array.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Array.empty[java.security.cert.X509Certificate]((ClassTag.apply[java.security.cert.X509Certificate](classOf[java.security.cert.X509Certificate]): scala.reflect.ClassTag[java.security.cert.X509Certificate]))
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          15399
+        </td>
+        <td>
+          1140
+          -
+          1467
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.wrapRefArray[java.security.cert.X509Certificate](scala.util.Try.apply[Array[java.security.cert.X509Certificate]]({
+  val cf: java.security.cert.CertificateFactory = java.security.cert.CertificateFactory.getInstance(&quot;X.509&quot;);
+  scala.Predef.refArrayOps[java.security.cert.Certificate](sslSession.getPeerCertificates()).map[java.security.cert.X509Certificate](((certificate: java.security.cert.Certificate) =&gt; {
+    val stream: java.io.ByteArrayInputStream = new java.io.ByteArrayInputStream(certificate.getEncoded());
+    cf.generateCertificate(stream).asInstanceOf[java.security.cert.X509Certificate]
+  }))((ClassTag.apply[java.security.cert.X509Certificate](classOf[java.security.cert.X509Certificate]): scala.reflect.ClassTag[java.security.cert.X509Certificate]))
+}).toOption.getOrElse[Array[java.security.cert.X509Certificate]](scala.Array.empty[java.security.cert.X509Certificate]((ClassTag.apply[java.security.cert.X509Certificate](classOf[java.security.cert.X509Certificate]): scala.reflect.ClassTag[java.security.cert.X509Certificate])))).toList
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          19143
+        </td>
+        <td>
+          1140
+          -
+          1460
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.util.Try.apply[Array[java.security.cert.X509Certificate]]({
+  val cf: java.security.cert.CertificateFactory = java.security.cert.CertificateFactory.getInstance(&quot;X.509&quot;);
+  scala.Predef.refArrayOps[java.security.cert.Certificate](sslSession.getPeerCertificates()).map[java.security.cert.X509Certificate](((certificate: java.security.cert.Certificate) =&gt; {
+    val stream: java.io.ByteArrayInputStream = new java.io.ByteArrayInputStream(certificate.getEncoded());
+    cf.generateCertificate(stream).asInstanceOf[java.security.cert.X509Certificate]
+  }))((ClassTag.apply[java.security.cert.X509Certificate](classOf[java.security.cert.X509Certificate]): scala.reflect.ClassTag[java.security.cert.X509Certificate]))
+}).toOption.getOrElse[Array[java.security.cert.X509Certificate]](scala.Array.empty[java.security.cert.X509Certificate]((ClassTag.apply[java.security.cert.X509Certificate](classOf[java.security.cert.X509Certificate]): scala.reflect.ClassTag[java.security.cert.X509Certificate])))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          17476
+        </td>
+        <td>
+          3943
+          -
+          3944
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          13733
+        </td>
+        <td>
+          3943
+          -
+          3944
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          21335
+        </td>
+        <td>
+          3922
+          -
+          3941
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.==(null)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          18645
+        </td>
+        <td>
+          3993
+          -
+          3996
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          14251
+        </td>
+        <td>
+          3993
+          -
+          3996
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          22322
+        </td>
+        <td>
+          3958
+          -
+          3991
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_AES_256_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          20055
+        </td>
+        <td>
+          3954
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_AES_256_&quot;))
+  256
+else
+  if (cipherSuite.contains(&quot;WITH_RC4_128_&quot;))
+    128
+  else
+    if (cipherSuite.contains(&quot;_AES_128_&quot;))
+      128
+    else
+      if (cipherSuite.contains(&quot;WITH_RC4_40_&quot;))
+        40
+      else
+        if (cipherSuite.contains(&quot;WITH_3DES_EDE_CBC_&quot;))
+          168
+        else
+          if (cipherSuite.contains(&quot;WITH_IDEA_CBC_&quot;))
+            128
+          else
+            if (cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;))
+              40
+            else
+              if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;))
+                40
+              else
+                if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+                  40
+                else
+                  if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+                    56
+                  else
+                    if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+                      256
+                    else
+                      if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+                        128
+                      else
+                        if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+                          256
+                        else
+                          if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+                            128
+                          else
+                            if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+                              256
+                            else
+                              if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                                128
+                              else
+                                if (cipherSuite.contains(&quot;_SM4_&quot;))
+                                  128
+                                else
+                                  if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                                    256
+                                  else
+                                    if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                                      256
+                                    else
+                                      if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                                        256
+                                      else
+                                        0
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          17321
+        </td>
+        <td>
+          4049
+          -
+          4052
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          14126
+        </td>
+        <td>
+          4006
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;WITH_RC4_128_&quot;))
+  128
+else
+  if (cipherSuite.contains(&quot;_AES_128_&quot;))
+    128
+  else
+    if (cipherSuite.contains(&quot;WITH_RC4_40_&quot;))
+      40
+    else
+      if (cipherSuite.contains(&quot;WITH_3DES_EDE_CBC_&quot;))
+        168
+      else
+        if (cipherSuite.contains(&quot;WITH_IDEA_CBC_&quot;))
+          128
+        else
+          if (cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;))
+            40
+          else
+            if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;))
+              40
+            else
+              if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+                40
+              else
+                if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+                  56
+                else
+                  if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+                    256
+                  else
+                    if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+                      128
+                    else
+                      if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+                        256
+                      else
+                        if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+                          128
+                        else
+                          if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+                            256
+                          else
+                            if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                              128
+                            else
+                              if (cipherSuite.contains(&quot;_SM4_&quot;))
+                                128
+                              else
+                                if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                                  256
+                                else
+                                  if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                                    256
+                                  else
+                                    if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                                      256
+                                    else
+                                      0
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          20693
+        </td>
+        <td>
+          4010
+          -
+          4047
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;WITH_RC4_128_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          15420
+        </td>
+        <td>
+          4049
+          -
+          4052
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          17497
+        </td>
+        <td>
+          4101
+          -
+          4104
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          17515
+        </td>
+        <td>
+          4062
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_AES_128_&quot;))
+  128
+else
+  if (cipherSuite.contains(&quot;WITH_RC4_40_&quot;))
+    40
+  else
+    if (cipherSuite.contains(&quot;WITH_3DES_EDE_CBC_&quot;))
+      168
+    else
+      if (cipherSuite.contains(&quot;WITH_IDEA_CBC_&quot;))
+        128
+      else
+        if (cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;))
+          40
+        else
+          if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;))
+            40
+          else
+            if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+              40
+            else
+              if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+                56
+              else
+                if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+                  256
+                else
+                  if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+                    128
+                  else
+                    if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+                      256
+                    else
+                      if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+                        128
+                      else
+                        if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+                          256
+                        else
+                          if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                            128
+                          else
+                            if (cipherSuite.contains(&quot;_SM4_&quot;))
+                              128
+                            else
+                              if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                                256
+                              else
+                                if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                                  256
+                                else
+                                  if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                                    256
+                                  else
+                                    0
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          13961
+        </td>
+        <td>
+          4101
+          -
+          4104
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          21572
+        </td>
+        <td>
+          4066
+          -
+          4099
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_AES_128_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          14510
+        </td>
+        <td>
+          4156
+          -
+          4158
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          40
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          21367
+        </td>
+        <td>
+          4114
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;WITH_RC4_40_&quot;))
+  40
+else
+  if (cipherSuite.contains(&quot;WITH_3DES_EDE_CBC_&quot;))
+    168
+  else
+    if (cipherSuite.contains(&quot;WITH_IDEA_CBC_&quot;))
+      128
+    else
+      if (cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;))
+        40
+      else
+        if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;))
+          40
+        else
+          if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+            40
+          else
+            if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+              56
+            else
+              if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+                256
+              else
+                if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+                  128
+                else
+                  if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+                    256
+                  else
+                    if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+                      128
+                    else
+                      if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+                        256
+                      else
+                        if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                          128
+                        else
+                          if (cipherSuite.contains(&quot;_SM4_&quot;))
+                            128
+                          else
+                            if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                              256
+                            else
+                              if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                                256
+                              else
+                                if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                                  256
+                                else
+                                  0
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          18662
+        </td>
+        <td>
+          4156
+          -
+          4158
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          40
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          22343
+        </td>
+        <td>
+          4118
+          -
+          4154
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;WITH_RC4_40_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          12939
+        </td>
+        <td>
+          4168
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;WITH_3DES_EDE_CBC_&quot;))
+  168
+else
+  if (cipherSuite.contains(&quot;WITH_IDEA_CBC_&quot;))
+    128
+  else
+    if (cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;))
+      40
+    else
+      if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;))
+        40
+      else
+        if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+          40
+        else
+          if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+            56
+          else
+            if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+              256
+            else
+              if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+                128
+              else
+                if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+                  256
+                else
+                  if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+                    128
+                  else
+                    if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+                      256
+                    else
+                      if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                        128
+                      else
+                        if (cipherSuite.contains(&quot;_SM4_&quot;))
+                          128
+                        else
+                          if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                            256
+                          else
+                            if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                              256
+                            else
+                              if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                                256
+                              else
+                                0
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          20714
+        </td>
+        <td>
+          4172
+          -
+          4214
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;WITH_3DES_EDE_CBC_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          17187
+        </td>
+        <td>
+          4216
+          -
+          4219
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          168
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          15279
+        </td>
+        <td>
+          4216
+          -
+          4219
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          168
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          13977
+        </td>
+        <td>
+          4273
+          -
+          4276
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          17338
+        </td>
+        <td>
+          4229
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;WITH_IDEA_CBC_&quot;))
+  128
+else
+  if (cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;))
+    40
+  else
+    if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;))
+      40
+    else
+      if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+        40
+      else
+        if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+          56
+        else
+          if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+            256
+          else
+            if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+              128
+            else
+              if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+                256
+              else
+                if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+                  128
+                else
+                  if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+                    256
+                  else
+                    if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                      128
+                    else
+                      if (cipherSuite.contains(&quot;_SM4_&quot;))
+                        128
+                      else
+                        if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                          256
+                        else
+                          if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                            256
+                          else
+                            if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                              256
+                            else
+                              0
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          21590
+        </td>
+        <td>
+          4233
+          -
+          4271
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;WITH_IDEA_CBC_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          17750
+        </td>
+        <td>
+          4273
+          -
+          4276
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          14531
+        </td>
+        <td>
+          4332
+          -
+          4334
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          40
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          20858
+        </td>
+        <td>
+          4286
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;))
+  40
+else
+  if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;))
+    40
+  else
+    if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+      40
+    else
+      if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+        56
+      else
+        if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+          256
+        else
+          if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+            128
+          else
+            if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+              256
+            else
+              if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+                128
+              else
+                if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+                  256
+                else
+                  if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                    128
+                  else
+                    if (cipherSuite.contains(&quot;_SM4_&quot;))
+                      128
+                    else
+                      if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                        256
+                      else
+                        if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                          256
+                        else
+                          if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                            256
+                          else
+                            0
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          22368
+        </td>
+        <td>
+          4290
+          -
+          4330
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;WITH_RC2_CBC_40_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          95
+        </td>
+        <td>
+          18238
+        </td>
+        <td>
+          4332
+          -
+          4334
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          40
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          14267
+        </td>
+        <td>
+          4344
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;))
+  40
+else
+  if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+    40
+  else
+    if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+      56
+    else
+      if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+        256
+      else
+        if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+          128
+        else
+          if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+            256
+          else
+            if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+              128
+            else
+              if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+                256
+              else
+                if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                  128
+                else
+                  if (cipherSuite.contains(&quot;_SM4_&quot;))
+                    128
+                  else
+                    if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                      256
+                    else
+                      if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                        256
+                      else
+                        if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                          256
+                        else
+                          0
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          15301
+        </td>
+        <td>
+          4389
+          -
+          4391
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          40
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          17209
+        </td>
+        <td>
+          4389
+          -
+          4391
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          40
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          20666
+        </td>
+        <td>
+          4348
+          -
+          4387
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;WITH_DES40_CBC_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          13726
+        </td>
+        <td>
+          4446
+          -
+          4448
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          40
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          17766
+        </td>
+        <td>
+          4446
+          -
+          4448
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          40
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          16629
+        </td>
+        <td>
+          4401
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;))
+  40
+else
+  if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+    56
+  else
+    if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+      256
+    else
+      if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+        128
+      else
+        if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+          256
+        else
+          if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+            128
+          else
+            if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+              256
+            else
+              if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+                128
+              else
+                if (cipherSuite.contains(&quot;_SM4_&quot;))
+                  128
+                else
+                  if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                    256
+                  else
+                    if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                      256
+                    else
+                      if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                        256
+                      else
+                        0
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          21455
+        </td>
+        <td>
+          4405
+          -
+          4444
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;WITH_DES_CBC_40&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          14390
+        </td>
+        <td>
+          4501
+          -
+          4503
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          56
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          20439
+        </td>
+        <td>
+          4462
+          -
+          4499
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;WITH_DES_CBC_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          18258
+        </td>
+        <td>
+          4501
+          -
+          4503
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          56
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          20040
+        </td>
+        <td>
+          4458
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;WITH_DES_CBC_&quot;))
+  56
+else
+  if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+    256
+  else
+    if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+      128
+    else
+      if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+        256
+      else
+        if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+          128
+        else
+          if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+            256
+          else
+            if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+              128
+            else
+              if (cipherSuite.contains(&quot;_SM4_&quot;))
+                128
+              else
+                if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                  256
+                else
+                  if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                    256
+                  else
+                    if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                      256
+                    else
+                      0
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          16944
+        </td>
+        <td>
+          4553
+          -
+          4556
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          14109
+        </td>
+        <td>
+          4513
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_CHACHA20_&quot;))
+  256
+else
+  if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+    128
+  else
+    if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+      256
+    else
+      if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+        128
+      else
+        if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+          256
+        else
+          if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+            128
+          else
+            if (cipherSuite.contains(&quot;_SM4_&quot;))
+              128
+            else
+              if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+                256
+              else
+                if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                  256
+                else
+                  if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                    256
+                  else
+                    0
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          14918
+        </td>
+        <td>
+          4553
+          -
+          4556
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          20686
+        </td>
+        <td>
+          4517
+          -
+          4551
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_CHACHA20_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          21477
+        </td>
+        <td>
+          4570
+          -
+          4613
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          17652
+        </td>
+        <td>
+          4566
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_WITH_CAMELLIA_128_&quot;))
+  128
+else
+  if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+    256
+  else
+    if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+      128
+    else
+      if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+        256
+      else
+        if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+          128
+        else
+          if (cipherSuite.contains(&quot;_SM4_&quot;))
+            128
+          else
+            if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+              256
+            else
+              if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+                256
+              else
+                if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                  256
+                else
+                  0
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          13602
+        </td>
+        <td>
+          4615
+          -
+          4618
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          18010
+        </td>
+        <td>
+          4615
+          -
+          4618
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          20147
+        </td>
+        <td>
+          4632
+          -
+          4675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          21348
+        </td>
+        <td>
+          4628
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_WITH_CAMELLIA_256_&quot;))
+  256
+else
+  if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+    128
+  else
+    if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+      256
+    else
+      if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+        128
+      else
+        if (cipherSuite.contains(&quot;_SM4_&quot;))
+          128
+        else
+          if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+            256
+          else
+            if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+              256
+            else
+              if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+                256
+              else
+                0
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          14407
+        </td>
+        <td>
+          4677
+          -
+          4680
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          18156
+        </td>
+        <td>
+          4677
+          -
+          4680
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          16832
+        </td>
+        <td>
+          4735
+          -
+          4738
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          13219
+        </td>
+        <td>
+          4690
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;))
+  128
+else
+  if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+    256
+  else
+    if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+      128
+    else
+      if (cipherSuite.contains(&quot;_SM4_&quot;))
+        128
+      else
+        if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+          256
+        else
+          if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+            256
+          else
+            if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+              256
+            else
+              0
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          20704
+        </td>
+        <td>
+          4694
+          -
+          4733
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_WITH_ARIA_128_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          15276
+        </td>
+        <td>
+          4735
+          -
+          4738
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          13622
+        </td>
+        <td>
+          4793
+          -
+          4796
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          21354
+        </td>
+        <td>
+          4752
+          -
+          4791
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          18025
+        </td>
+        <td>
+          4793
+          -
+          4796
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          16826
+        </td>
+        <td>
+          4748
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_WITH_ARIA_256_&quot;))
+  256
+else
+  if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+    128
+  else
+    if (cipherSuite.contains(&quot;_SM4_&quot;))
+      128
+    else
+      if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+        256
+      else
+        if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+          256
+        else
+          if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+            256
+          else
+            0
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          20841
+        </td>
+        <td>
+          4806
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_WITH_SEED_&quot;))
+  128
+else
+  if (cipherSuite.contains(&quot;_SM4_&quot;))
+    128
+  else
+    if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+      256
+    else
+      if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+        256
+      else
+        if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+          256
+        else
+          0
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          14808
+        </td>
+        <td>
+          4847
+          -
+          4850
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          18530
+        </td>
+        <td>
+          4847
+          -
+          4850
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          20414
+        </td>
+        <td>
+          4810
+          -
+          4845
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_WITH_SEED_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          13340
+        </td>
+        <td>
+          4895
+          -
+          4898
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          14404
+        </td>
+        <td>
+          4860
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_SM4_&quot;))
+  128
+else
+  if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+    256
+  else
+    if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+      256
+    else
+      if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+        256
+      else
+        0
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          21213
+        </td>
+        <td>
+          4864
+          -
+          4893
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_SM4_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          16849
+        </td>
+        <td>
+          4895
+          -
+          4898
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          128
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          14133
+        </td>
+        <td>
+          4955
+          -
+          4958
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          21747
+        </td>
+        <td>
+          4912
+          -
+          4953
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          16611
+        </td>
+        <td>
+          4908
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_WITH_KUZNYECHIK_&quot;))
+  256
+else
+  if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+    256
+  else
+    if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+      256
+    else
+      0
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          18039
+        </td>
+        <td>
+          4955
+          -
+          4958
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          20432
+        </td>
+        <td>
+          4972
+          -
+          5008
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_WITH_MAGMA_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          14385
+        </td>
+        <td>
+          5010
+          -
+          5013
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          18383
+        </td>
+        <td>
+          5010
+          -
+          5013
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          20303
+        </td>
+        <td>
+          4968
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_WITH_MAGMA_&quot;))
+  256
+else
+  if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+    256
+  else
+    0
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          21230
+        </td>
+        <td>
+          5027
+          -
+          5063
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          cipherSuite.contains(&quot;_WITH_28147_&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          14153
+        </td>
+        <td>
+          5023
+          -
+          5079
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          if (cipherSuite.contains(&quot;_WITH_28147_&quot;))
+  256
+else
+  0
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          17086
+        </td>
+        <td>
+          5065
+          -
+          5068
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          13362
+        </td>
+        <td>
+          5065
+          -
+          5068
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          256
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          17635
+        </td>
+        <td>
+          5078
+          -
+          5079
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          21474
+        </td>
+        <td>
+          5078
+          -
+          5079
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.tlssuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,1861 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/HttpMethodOverrider.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.Monad
+</span>22 <span style=''>import cats.data.Kleisli
+</span>23 <span style=''>import cats.effect._
+</span>24 <span style=''>import cats.syntax.flatMap._
+</span>25 <span style=''>import cats.syntax.functor._
+</span>26 <span style=''>import cats.~&gt;
+</span>27 <span style=''>import org.http4s.Http
+</span>28 <span style=''>import org.typelevel.ci._
+</span>29 <span style=''>import org.typelevel.vault.Key
+</span>30 <span style=''>
+</span>31 <span style=''>object HttpMethodOverrider {
+</span>32 <span style=''>
+</span>33 <span style=''>  /** HttpMethodOverrider middleware config options.
+</span>34 <span style=''>    */
+</span>35 <span style=''>  class HttpMethodOverriderConfig[F[_], G[_]](
+</span>36 <span style=''>      val overrideStrategy: OverrideStrategy[F, G],
+</span>37 <span style=''>      val overridableMethods: Set[Method],
+</span>38 <span style=''>  ) {
+</span>39 <span style=''>    type Self = HttpMethodOverriderConfig[F, G]
+</span>40 <span style=''>
+</span>41 <span style=''>    private def copy(
+</span>42 <span style=''>        overrideStrategy: OverrideStrategy[F, G] = overrideStrategy,
+</span>43 <span style=''>        overridableMethods: Set[Method] = overridableMethods,
+</span>44 <span style=''>    ): Self =
+</span>45 <span style=''>      </span><span style='background: #F0ADAD'>new HttpMethodOverriderConfig[F, G](overrideStrategy, overridableMethods)</span><span style=''>
+</span>46 <span style=''>
+</span>47 <span style=''>    def withOverrideStrategy(overrideStrategy: OverrideStrategy[F, G]): Self =
+</span>48 <span style=''>      </span><span style='background: #F0ADAD'>copy(overrideStrategy = overrideStrategy)</span><span style=''>
+</span>49 <span style=''>
+</span>50 <span style=''>    def withOverridableMethods(overridableMethods: Set[Method]): Self =
+</span>51 <span style=''>      </span><span style='background: #F0ADAD'>copy(overridableMethods = overridableMethods)</span><span style=''>
+</span>52 <span style=''>  }
+</span>53 <span style=''>
+</span>54 <span style=''>  object HttpMethodOverriderConfig {
+</span>55 <span style=''>    def apply[F[_], G[_]](
+</span>56 <span style=''>        overrideStrategy: OverrideStrategy[F, G],
+</span>57 <span style=''>        overridableMethods: Set[Method],
+</span>58 <span style=''>    ): HttpMethodOverriderConfig[F, G] =
+</span>59 <span style=''>      </span><span style='background: #AEF1AE'>new HttpMethodOverriderConfig[F, G](overrideStrategy, overridableMethods)</span><span style=''>
+</span>60 <span style=''>  }
+</span>61 <span style=''>
+</span>62 <span style=''>  sealed trait OverrideStrategy[F[_], G[_]]
+</span>63 <span style=''>  final case class HeaderOverrideStrategy[F[_], G[_]](headerName: CIString)
+</span>64 <span style=''>      extends OverrideStrategy[F, G]
+</span>65 <span style=''>  final case class QueryOverrideStrategy[F[_], G[_]](paramName: String)
+</span>66 <span style=''>      extends OverrideStrategy[F, G]
+</span>67 <span style=''>  final case class FormOverrideStrategy[F[_], G[_]](
+</span>68 <span style=''>      fieldName: String,
+</span>69 <span style=''>      naturalTransformation: G ~&gt; F,
+</span>70 <span style=''>  ) extends OverrideStrategy[F, G]
+</span>71 <span style=''>
+</span>72 <span style=''>  def defaultConfig[F[_], G[_]]: HttpMethodOverriderConfig[F, G] =
+</span>73 <span style=''>    </span><span style='background: #AEF1AE'>HttpMethodOverriderConfig[F, G](
+</span>74 <span style=''></span><span style='background: #AEF1AE'>      HeaderOverrideStrategy(ci&quot;X-HTTP-Method-Override&quot;),
+</span>75 <span style=''></span><span style='background: #AEF1AE'>      Set(Method.POST),
+</span>76 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>77 <span style=''>
+</span>78 <span style=''>  val overriddenMethodAttrKey: Key[Method] = </span><span style='background: #AEF1AE'>Key.newKey[SyncIO, Method].unsafeRunSync()</span><span style=''>
+</span>79 <span style=''>
+</span>80 <span style=''>  /** Simple middleware for HTTP Method Override.
+</span>81 <span style=''>    *
+</span>82 <span style=''>    * This middleware lets you use  HTTP verbs such as PUT or DELETE in places where the client
+</span>83 <span style=''>    * doesn't support it. Camouflage your request with another HTTP verb(usually POST) and sneak
+</span>84 <span style=''>    * the desired one using a custom header or request parameter. The middleware will '''override'''
+</span>85 <span style=''>    * the original verb with the new one for you, allowing the request the be dispatched properly.
+</span>86 <span style=''>    *
+</span>87 <span style=''>    * @param http [[Http]] to transform
+</span>88 <span style=''>    * @param config http method overrider config
+</span>89 <span style=''>    */
+</span>90 <span style=''>  def apply[F[_], G[_]](http: Http[F, G], config: HttpMethodOverriderConfig[F, G])(implicit
+</span>91 <span style=''>      F: Monad[F],
+</span>92 <span style=''>      S: Concurrent[G],
+</span>93 <span style=''>  ): Http[F, G] = {
+</span>94 <span style=''>    val parseMethod = (m: String) =&gt; </span><span style='background: #AEF1AE'>Method.fromString(m.toUpperCase)</span><span style=''>
+</span>95 <span style=''>
+</span>96 <span style=''>    def processRequestWithMethod(
+</span>97 <span style=''>        req: Request[G],
+</span>98 <span style=''>        parseResult: ParseResult[Method],
+</span>99 <span style=''>    ): F[Response[G]] =
+</span>100 <span style=''>      parseResult match {
+</span>101 <span style=''>        case Left(_) =&gt; </span><span style='background: #AEF1AE'>F.pure(Response[G](Status.BadRequest))</span><span style=''>
+</span>102 <span style=''>        case Right(om) =&gt; </span><span style='background: #AEF1AE'>http(updateRequestWithMethod(req, om)).map(updateVaryHeader)</span><span style=''>
+</span>103 <span style=''>      }
+</span>104 <span style=''>
+</span>105 <span style=''>    def updateVaryHeader(resp: Response[G]): Response[G] = {
+</span>106 <span style=''>      val varyHeaderName = </span><span style='background: #AEF1AE'>ci&quot;Vary&quot;</span><span style=''>
+</span>107 <span style=''>      </span><span style='background: #AEF1AE'>config.overrideStrategy</span><span style=''> match {
+</span>108 <span style=''>        case HeaderOverrideStrategy(headerName) =&gt;
+</span>109 <span style=''>          val updatedVaryHeader =
+</span>110 <span style=''>            </span><span style='background: #AEF1AE'>resp.headers
+</span>111 <span style=''></span><span style='background: #AEF1AE'>              .get(varyHeaderName)
+</span>112 <span style=''></span><span style='background: #AEF1AE'>              .map(_.head)
+</span>113 <span style=''></span><span style='background: #AEF1AE'>              .map((h: Header.Raw) =&gt; Header.Raw(h.name, s&quot;${h.value}, ${headerName.toString}&quot;))
+</span>114 <span style=''></span><span style='background: #AEF1AE'>              .getOrElse(Header.Raw(varyHeaderName, headerName.toString))</span><span style=''>
+</span>115 <span style=''>
+</span>116 <span style=''>          </span><span style='background: #AEF1AE'>resp.withHeaders(resp.headers.put(updatedVaryHeader))</span><span style=''>
+</span>117 <span style=''>        case _ =&gt; resp
+</span>118 <span style=''>      }
+</span>119 <span style=''>    }
+</span>120 <span style=''>
+</span>121 <span style=''>    def updateRequestWithMethod(req: Request[G], om: Method): Request[G] = {
+</span>122 <span style=''>      val attrs = </span><span style='background: #AEF1AE'>req.attributes.insert(overriddenMethodAttrKey, req.method)</span><span style=''>
+</span>123 <span style=''>      </span><span style='background: #AEF1AE'>req.withAttributes(attrs).withMethod(om)</span><span style=''>
+</span>124 <span style=''>    }
+</span>125 <span style=''>
+</span>126 <span style=''>    def getUnsafeOverrideMethod(req: Request[G]): F[Option[String]] =
+</span>127 <span style=''>      </span><span style='background: #AEF1AE'>config.overrideStrategy</span><span style=''> match {
+</span>128 <span style=''>        case HeaderOverrideStrategy(headerName) =&gt;
+</span>129 <span style=''>          </span><span style='background: #AEF1AE'>F.pure(req.headers.get(headerName).map(_.head.value))</span><span style=''>
+</span>130 <span style=''>        case QueryOverrideStrategy(parameter) =&gt; </span><span style='background: #AEF1AE'>F.pure(req.params.get(parameter))</span><span style=''>
+</span>131 <span style=''>        case FormOverrideStrategy(field, f) =&gt;
+</span>132 <span style=''>          </span><span style='background: #AEF1AE'>for {
+</span>133 <span style=''></span><span style='background: #AEF1AE'>            formFields &lt;- f(
+</span>134 <span style=''></span><span style='background: #AEF1AE'>              UrlForm
+</span>135 <span style=''></span><span style='background: #AEF1AE'>                .entityDecoder[G]
+</span>136 <span style=''></span><span style='background: #AEF1AE'>                .decode(req, strict = true)
+</span>137 <span style=''></span><span style='background: #AEF1AE'>                .value
+</span>138 <span style=''></span><span style='background: #AEF1AE'>                .map(_.toOption.map(_.values))
+</span>139 <span style=''></span><span style='background: #AEF1AE'>            )
+</span>140 <span style=''></span><span style='background: #AEF1AE'>          } yield formFields.flatMap(_.get(field).flatMap(_.uncons.map(_._1)))</span><span style=''>
+</span>141 <span style=''>      }
+</span>142 <span style=''>
+</span>143 <span style=''>    def processRequest(req: Request[G]): F[Response[G]] =
+</span>144 <span style=''>      </span><span style='background: #AEF1AE'>getUnsafeOverrideMethod(req).flatMap {
+</span>145 <span style=''></span><span style='background: #AEF1AE'>        case Some(m: String) =&gt; parseMethod.andThen(processRequestWithMethod(req, _)).apply(m)
+</span>146 <span style=''></span><span style='background: #AEF1AE'>        case None =&gt; http(req)
+</span>147 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>148 <span style=''>
+</span>149 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { (req: Request[G]) =&gt;
+</span>150 <span style=''></span><span style='background: #AEF1AE'>      val isOverridden = config.overridableMethods.contains(req.method)
+</span>151 <span style=''></span><span style='background: #AEF1AE'>      if (isOverridden) processRequest(req) else http(req)
+</span>152 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>153 <span style=''>  }
+</span>154 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          8637
+        </td>
+        <td>
+          1327
+          -
+          1400
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig[F,G](overrideStrategy, overridableMethods)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          9286
+        </td>
+        <td>
+          1487
+          -
+          1528
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpMethodOverriderConfig.this.copy(overrideStrategy, HttpMethodOverriderConfig.this.copy$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          7414
+        </td>
+        <td>
+          1487
+          -
+          1487
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpMethodOverriderConfig.this.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7646
+        </td>
+        <td>
+          1608
+          -
+          1653
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpMethodOverriderConfig.this.copy(x$2, x$1)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8174
+        </td>
+        <td>
+          1608
+          -
+          1608
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpMethodOverriderConfig.this.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          9544
+        </td>
+        <td>
+          1861
+          -
+          1934
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig[F,G](overrideStrategy, overridableMethods)
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          7546
+        </td>
+        <td>
+          2428
+          -
+          2548
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpMethodOverrider.this.HttpMethodOverriderConfig.apply[F, G](HttpMethodOverrider.this.HeaderOverrideStrategy.apply[[_]F[_], [_]G[_]](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;X-HTTP-Method-Override&quot;)).ci()), scala.Predef.Set.apply[org.http4s.Method](Method.POST))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          8313
+        </td>
+        <td>
+          2490
+          -
+          2516
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;X-HTTP-Method-Override&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          7250
+        </td>
+        <td>
+          2467
+          -
+          2517
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HeaderOverrideStrategy.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpMethodOverrider.this.HeaderOverrideStrategy.apply[[_]F[_], [_]G[_]](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;X-HTTP-Method-Override&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9112
+        </td>
+        <td>
+          2529
+          -
+          2540
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.POST
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Method.POST
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          8643
+        </td>
+        <td>
+          2525
+          -
+          2541
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Set.apply[org.http4s.Method](Method.POST)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9326
+        </td>
+        <td>
+          2595
+          -
+          2637
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.vault.Key.newKey[cats.effect.SyncIO, org.http4s.Method](effect.this.SyncIO.syncForSyncIO, effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          10091
+        </td>
+        <td>
+          3382
+          -
+          3414
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Method.fromString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Method.fromString(m.toUpperCase())
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          8182
+        </td>
+        <td>
+          3400
+          -
+          3413
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.toUpperCase
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          m.toUpperCase()
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          9120
+        </td>
+        <td>
+          3606
+          -
+          3606
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          9331
+        </td>
+        <td>
+          3591
+          -
+          3629
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]](Response.apply[G](Status.BadRequest, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G]))
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          7342
+        </td>
+        <td>
+          3606
+          -
+          3606
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[G]
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          8610
+        </td>
+        <td>
+          3606
+          -
+          3606
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          7554
+        </td>
+        <td>
+          3598
+          -
+          3628
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](Status.BadRequest, Response.apply$default$2[G], Response.apply$default$3[G], Response.apply$default$4[G], Response.apply$default$5[G])
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          8460
+        </td>
+        <td>
+          3606
+          -
+          3606
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          9555
+        </td>
+        <td>
+          3610
+          -
+          3627
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.BadRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Status.BadRequest
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          10098
+        </td>
+        <td>
+          3656
+          -
+          3694
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(updateRequestWithMethod(req, om))
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          9508
+        </td>
+        <td>
+          3699
+          -
+          3715
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.updateVaryHeader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          updateVaryHeader(resp)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          8362
+        </td>
+        <td>
+          3656
+          -
+          3716
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.functor.toFunctorOps[F, org.http4s.Response[G]](http.apply(updateRequestWithMethod(req, om)))(F).map[org.http4s.Response[G]](((resp: org.http4s.Response[G]) =&gt; updateVaryHeader(resp)))
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          8263
+        </td>
+        <td>
+          3661
+          -
+          3693
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.updateRequestWithMethod
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          updateRequestWithMethod(req, om)
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          7345
+        </td>
+        <td>
+          3814
+          -
+          3822
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Vary&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          9100
+        </td>
+        <td>
+          3829
+          -
+          3852
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.overrideStrategy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          config.overrideStrategy
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          8614
+        </td>
+        <td>
+          4025
+          -
+          4031
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyList.head
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.head
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          7379
+        </td>
+        <td>
+          4082
+          -
+          4088
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h.name
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          9283
+        </td>
+        <td>
+          4071
+          -
+          4128
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(h.name, (&quot;&quot;.+(h.value).+(&quot;, &quot;).+(headerName.toString): String))
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          10009
+        </td>
+        <td>
+          4155
+          -
+          4202
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Raw.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.Raw.apply(varyHeaderName, headerName.toString)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          9512
+        </td>
+        <td>
+          3958
+          -
+          4203
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers.get(varyHeaderName).map[org.http4s.Header.Raw](((x$1: cats.data.NonEmptyList[org.http4s.Header.Raw]) =&gt; x$1.head)).map[org.http4s.Header.Raw](((h: org.http4s.Header.Raw) =&gt; Header.Raw.apply(h.name, (&quot;&quot;.+(h.value).+(&quot;, &quot;).+(headerName.toString): String)))).getOrElse[org.http4s.Header.Raw](Header.Raw.apply(varyHeaderName, headerName.toString))
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          8267
+        </td>
+        <td>
+          4182
+          -
+          4201
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headerName.toString
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          9108
+        </td>
+        <td>
+          4215
+          -
+          4268
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.withHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.withHeaders(resp.headers.put(Header.this.ToRaw.rawToRaw(updatedVaryHeader)))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          8365
+        </td>
+        <td>
+          4249
+          -
+          4266
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.rawToRaw(updatedVaryHeader)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          7303
+        </td>
+        <td>
+          4232
+          -
+          4267
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.put
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers.put(Header.this.ToRaw.rawToRaw(updatedVaryHeader))
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          9290
+        </td>
+        <td>
+          4402
+          -
+          4460
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.vault.Vault.insert
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.attributes.insert[org.http4s.Method](HttpMethodOverrider.this.overriddenMethodAttrKey, req.method)
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          8010
+        </td>
+        <td>
+          4424
+          -
+          4447
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.overriddenMethodAttrKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HttpMethodOverrider.this.overriddenMethodAttrKey
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          7444
+        </td>
+        <td>
+          4449
+          -
+          4459
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.method
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.method
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          8130
+        </td>
+        <td>
+          4467
+          -
+          4507
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.withMethod
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.withAttributes(attrs).withMethod(om)
+        </td>
+      </tr><tr>
+        <td>
+          127
+        </td>
+        <td>
+          10018
+        </td>
+        <td>
+          4591
+          -
+          4614
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.HttpMethodOverriderConfig.overrideStrategy
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          config.overrideStrategy
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          8334
+        </td>
+        <td>
+          4691
+          -
+          4736
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get(headerName).map[String](((x$2: cats.data.NonEmptyList[org.http4s.Header.Raw]) =&gt; x$2.head.value))
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          9460
+        </td>
+        <td>
+          4723
+          -
+          4735
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.head.value
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          7309
+        </td>
+        <td>
+          4684
+          -
+          4737
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Option[String]](req.headers.get(headerName).map[String](((x$2: cats.data.NonEmptyList[org.http4s.Header.Raw]) =&gt; x$2.head.value)))
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          9054
+        </td>
+        <td>
+          4794
+          -
+          4819
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.get
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.params.get(parameter)
+        </td>
+      </tr><tr>
+        <td>
+          130
+        </td>
+        <td>
+          8015
+        </td>
+        <td>
+          4787
+          -
+          4820
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Option[String]](req.params.get(parameter))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          7261
+        </td>
+        <td>
+          4910
+          -
+          5096
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.arrow.FunctionK.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply[Option[Map[String,cats.data.Chain[String]]]](cats.syntax.`package`.functor.toFunctorOps[G, Either[org.http4s.DecodeFailure,org.http4s.UrlForm]](UrlForm.entityDecoder[G](S, UrlForm.entityDecoder$default$2[G]).decode(req, true).value)(S).map[Option[Map[String,cats.data.Chain[String]]]](((x$3: Either[org.http4s.DecodeFailure,org.http4s.UrlForm]) =&gt; x$3.toOption.map[Map[String,cats.data.Chain[String]]](((x$4: org.http4s.UrlForm) =&gt; x$4.values)))))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          8106
+        </td>
+        <td>
+          4878
+          -
+          5175
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.functor.toFunctorOps[F, Option[Map[String,cats.data.Chain[String]]]](f.apply[Option[Map[String,cats.data.Chain[String]]]](cats.syntax.`package`.functor.toFunctorOps[G, Either[org.http4s.DecodeFailure,org.http4s.UrlForm]](UrlForm.entityDecoder[G](S, UrlForm.entityDecoder$default$2[G]).decode(req, true).value)(S).map[Option[Map[String,cats.data.Chain[String]]]](((x$3: Either[org.http4s.DecodeFailure,org.http4s.UrlForm]) =&gt; x$3.toOption.map[Map[String,cats.data.Chain[String]]](((x$4: org.http4s.UrlForm) =&gt; x$4.values))))))(F).map[Option[String]](((formFields: Option[Map[String,cats.data.Chain[String]]]) =&gt; formFields.flatMap[String](((x$5: Map[String,cats.data.Chain[String]]) =&gt; x$5.get(field).flatMap[String](((x$6: cats.data.Chain[String]) =&gt; x$6.uncons.map[String](((x$7: (String, cats.data.Chain[String])) =&gt; x$7._1))))))))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          7550
+        </td>
+        <td>
+          4965
+          -
+          4965
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.UrlForm.entityDecoder$default$2
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.entityDecoder$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          9253
+        </td>
+        <td>
+          5007
+          -
+          5011
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          8134
+        </td>
+        <td>
+          4927
+          -
+          5035
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.EitherT.value
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          UrlForm.entityDecoder[G](S, UrlForm.entityDecoder$default$2[G]).decode(req, true).value
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          8463
+        </td>
+        <td>
+          4927
+          -
+          5082
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.functor.toFunctorOps[G, Either[org.http4s.DecodeFailure,org.http4s.UrlForm]](UrlForm.entityDecoder[G](S, UrlForm.entityDecoder$default$2[G]).decode(req, true).value)(S).map[Option[Map[String,cats.data.Chain[String]]]](((x$3: Either[org.http4s.DecodeFailure,org.http4s.UrlForm]) =&gt; x$3.toOption.map[Map[String,cats.data.Chain[String]]](((x$4: org.http4s.UrlForm) =&gt; x$4.values))))
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          9010
+        </td>
+        <td>
+          5057
+          -
+          5081
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$3.toOption.map[Map[String,cats.data.Chain[String]]](((x$4: org.http4s.UrlForm) =&gt; x$4.values))
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          10025
+        </td>
+        <td>
+          5072
+          -
+          5080
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.UrlForm.values
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$4.values
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          9060
+        </td>
+        <td>
+          5168
+          -
+          5172
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$7._1
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          9377
+        </td>
+        <td>
+          5115
+          -
+          5175
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          formFields.flatMap[String](((x$5: Map[String,cats.data.Chain[String]]) =&gt; x$5.get(field).flatMap[String](((x$6: cats.data.Chain[String]) =&gt; x$6.uncons.map[String](((x$7: (String, cats.data.Chain[String])) =&gt; x$7._1))))))
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          7498
+        </td>
+        <td>
+          5134
+          -
+          5174
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$5.get(field).flatMap[String](((x$6: cats.data.Chain[String]) =&gt; x$6.uncons.map[String](((x$7: (String, cats.data.Chain[String])) =&gt; x$7._1))))
+        </td>
+      </tr><tr>
+        <td>
+          140
+        </td>
+        <td>
+          8024
+        </td>
+        <td>
+          5155
+          -
+          5173
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$6.uncons.map[String](((x$7: (String, cats.data.Chain[String])) =&gt; x$7._1))
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          9973
+        </td>
+        <td>
+          5249
+          -
+          5277
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.getUnsafeOverrideMethod
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          getUnsafeOverrideMethod(req)
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          7299
+        </td>
+        <td>
+          5249
+          -
+          5421
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.flatMap.toFlatMapOps[F, Option[String]](getUnsafeOverrideMethod(req))(F).flatMap[org.http4s.Response[G]](((x0$1: Option[String]) =&gt; x0$1 match {
+  case (value: String): Some[String]((m @ (_: String))) =&gt; parseMethod.andThen[F[org.http4s.Response[G]]](((x$8: org.http4s.ParseResult[org.http4s.Method]) =&gt; processRequestWithMethod(req, x$8))).apply(m)
+  case scala.None =&gt; http.apply(req)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          9018
+        </td>
+        <td>
+          5320
+          -
+          5382
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          parseMethod.andThen[F[org.http4s.Response[G]]](((x$8: org.http4s.ParseResult[org.http4s.Method]) =&gt; processRequestWithMethod(req, x$8))).apply(m)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          8412
+        </td>
+        <td>
+          5404
+          -
+          5413
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          8967
+        </td>
+        <td>
+          5427
+          -
+          5594
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; {
+  val isOverridden: Boolean = config.overridableMethods.contains(req.method);
+  if (isOverridden)
+    processRequest(req)
+  else
+    http.apply(req)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          8062
+        </td>
+        <td>
+          5483
+          -
+          5529
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SetOps.contains
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          config.overridableMethods.contains(req.method)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          9070
+        </td>
+        <td>
+          5518
+          -
+          5528
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.method
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.method
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          7508
+        </td>
+        <td>
+          5554
+          -
+          5573
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.processRequest
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          processRequest(req)
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          9981
+        </td>
+        <td>
+          5579
+          -
+          5588
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          8234
+        </td>
+        <td>
+          5579
+          -
+          5588
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          9340
+        </td>
+        <td>
+          5554
+          -
+          5573
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpMethodOverrider.processRequest
+        </td>
+        <td>
+          org.http4s.server.middleware.httpmethodoverridersuite
+        </td>
+        <td style="background: #AEF1AE">
+          processRequest(req)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

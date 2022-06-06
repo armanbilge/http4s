@@ -1,0 +1,1184 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/ChunkAggregator.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.FlatMap
+</span>22 <span style=''>import cats.arrow.FunctionK
+</span>23 <span style=''>import cats.data.Kleisli
+</span>24 <span style=''>import cats.data.NonEmptyList
+</span>25 <span style=''>import cats.data.OptionT
+</span>26 <span style=''>import cats.effect.Sync
+</span>27 <span style=''>import cats.syntax.all._
+</span>28 <span style=''>import cats.~&gt;
+</span>29 <span style=''>import fs2._
+</span>30 <span style=''>import org.http4s.headers._
+</span>31 <span style=''>import org.typelevel.ci._
+</span>32 <span style=''>
+</span>33 <span style=''>import scala.collection.mutable.ListBuffer
+</span>34 <span style=''>
+</span>35 <span style=''>/** Generic middleware to aggregate chunked response into memory.
+</span>36 <span style=''>  *
+</span>37 <span style=''>  * This middleware wraps any function that may produce an Http response.
+</span>38 <span style=''>  * Upon receiving a chunk-encoded response, the composed function will
+</span>39 <span style=''>  * pull and assemble the full response into memory before emitting the
+</span>40 <span style=''>  * whole response. It also removes the &quot;Chunked encoding&quot; headers, and
+</span>41 <span style=''>  * may add a Content-Length header for the whole payload.
+</span>42 <span style=''>  *
+</span>43 <span style=''>  * Reference: &quot;Chunked Transfer Encoding&quot;, Section 4.1 of RFC 7230
+</span>44 <span style=''>  *  https://datatracker.ietf.org/doc/html/rfc7230#section-4.1
+</span>45 <span style=''>  */
+</span>46 <span style=''>object ChunkAggregator {
+</span>47 <span style=''>  def apply[F[_]: FlatMap, G[_]: Sync, A](
+</span>48 <span style=''>      f: G ~&gt; F
+</span>49 <span style=''>  )(http: Kleisli[F, A, Response[G]]): Kleisli[F, A, Response[G]] =
+</span>50 <span style=''>    </span><span style='background: #AEF1AE'>http.flatMapF(response =&gt; f(aggregate(response)))</span><span style=''>
+</span>51 <span style=''>
+</span>52 <span style=''>  private[this] def aggregate[G[_]: Sync](r: Response[G]): G[Response[G]] =
+</span>53 <span style=''>    </span><span style='background: #AEF1AE'>r.body.chunks.compile.toVector // scalafix:ok Http4sFs2Linters.noFs2SyncCompiler; bincompat until 1.0
+</span>54 <span style=''></span><span style='background: #AEF1AE'>      .map { vec =&gt;
+</span>55 <span style=''></span><span style='background: #AEF1AE'>        val body = Chunk.concat(vec)
+</span>56 <span style=''></span><span style='background: #AEF1AE'>        r
+</span>57 <span style=''></span><span style='background: #AEF1AE'>          .withBodyStream(Stream.chunk(body))
+</span>58 <span style=''></span><span style='background: #AEF1AE'>          .transformHeaders(removeChunkedTransferEncoding(body.size.toLong))
+</span>59 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>60 <span style=''>
+</span>61 <span style=''>  def httpRoutes[F[_]: Sync](httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>62 <span style=''>    </span><span style='background: #AEF1AE'>apply(OptionT.liftK[F])(httpRoutes)</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>  def httpApp[F[_]: Sync](httpApp: HttpApp[F]): HttpApp[F] =
+</span>65 <span style=''>    </span><span style='background: #AEF1AE'>apply(FunctionK.id[F])(httpApp)</span><span style=''>
+</span>66 <span style=''>
+</span>67 <span style=''>  /* removes the `TransferCoding.chunked` value from the `Transfer-Encoding` header,
+</span>68 <span style=''>   removes the `Content-Length` header, and leaves the other headers unchanged */
+</span>69 <span style=''>  private[this] def removeChunkedTransferEncoding(len: Long)(headers: Headers): Headers = {
+</span>70 <span style=''>    val hh: ListBuffer[Header.ToRaw] = </span><span style='background: #AEF1AE'>ListBuffer.empty[Header.ToRaw]</span><span style=''>
+</span>71 <span style=''>    </span><span style='background: #AEF1AE'>headers.headers.foreach {
+</span>72 <span style=''></span><span style='background: #AEF1AE'>      case h @ Header.Raw(ci&quot;Transfer-Encoding&quot;, value) =&gt;
+</span>73 <span style=''></span><span style='background: #AEF1AE'>        `Transfer-Encoding`.parse(value) match {
+</span>74 <span style=''></span><span style='background: #AEF1AE'>          case Right(te) =&gt;
+</span>75 <span style=''></span><span style='background: #AEF1AE'>            te.values.filterNot(_ === TransferCoding.chunked) match {
+</span>76 <span style=''></span><span style='background: #AEF1AE'>              case v :: vs =&gt;
+</span>77 <span style=''></span><span style='background: #AEF1AE'>                hh += `Transfer-Encoding`(NonEmptyList(v, vs))
+</span>78 <span style=''></span><span style='background: #AEF1AE'>              case Nil =&gt;
+</span>79 <span style=''></span><span style='background: #AEF1AE'>              // do nothing
+</span>80 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>81 <span style=''></span><span style='background: #AEF1AE'>          case Left(_) =&gt;
+</span>82 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>hh += h</span><span style='background: #AEF1AE'>
+</span>83 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>84 <span style=''></span><span style='background: #AEF1AE'>      case Header.Raw(ci&quot;Content-Length&quot;, _) </span><span style='background: #F0ADAD'>=&gt;</span><span style='background: #AEF1AE'> // do nothing
+</span>85 <span style=''></span><span style='background: #AEF1AE'>      case header =&gt; </span><span style='background: #F0ADAD'>hh += header</span><span style='background: #AEF1AE'>
+</span>86 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>87 <span style=''>    if (</span><span style='background: #AEF1AE'>len &gt; 0L</span><span style=''>)
+</span>88 <span style=''>      </span><span style='background: #AEF1AE'>hh += `Content-Length`.unsafeFromLong(len)</span><span style=''>
+</span>89 <span style=''>    </span><span style='background: #AEF1AE'>Headers(hh.toList)</span><span style=''>
+</span>90 <span style=''>  }
+</span>91 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          9695
+        </td>
+        <td>
+          1668
+          -
+          1717
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.Kleisli.flatMapF
+        </td>
+        <td>
+          org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http.flatMapF[org.http4s.Response[[_]G[_]]](((response: org.http4s.Response[G]) =&gt; f.apply[org.http4s.Response[[_]G[_]]](ChunkAggregator.this.aggregate[[_]G[_]](response)(evidence$2))))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9799
+        </td>
+        <td>
+          1799
+          -
+          1829
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.Stream.CompileOps.toVector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.body.chunks.compile[[x]G[x], [x]G[x], fs2.Chunk[Byte]](fs2.this.Compiler.target[[x]G[x]](Compiler.this.Target.forSync[[x]G[x]](evidence$3))).toVector
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7995
+        </td>
+        <td>
+          1813
+          -
+          1813
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]G[x]](Compiler.this.Target.forSync[[x]G[x]](evidence$3))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9086
+        </td>
+        <td>
+          1813
+          -
+          1813
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.TargetLowPriority.forSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forSync[[x]G[x]](evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          7799
+        </td>
+        <td>
+          1799
+          -
+          2098
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[G, Vector[fs2.Chunk[Byte]]](r.body.chunks.compile[[x]G[x], [x]G[x], fs2.Chunk[Byte]](fs2.this.Compiler.target[[x]G[x]](Compiler.this.Target.forSync[[x]G[x]](evidence$3))).toVector)(evidence$3).map[org.http4s.Response[G]](((vec: Vector[fs2.Chunk[Byte]]) =&gt; {
+  val body: fs2.Chunk[Byte] = fs2.Chunk.concat[Byte](vec)((ClassTag.Byte: scala.reflect.ClassTag[Byte]));
+  r.withBodyStream(fs2.Stream.chunk[[x]fs2.Pure[x], Byte](body)).transformHeaders({
+    &lt;synthetic&gt; val eta$0$1: Long = body.size.toLong;
+    ((headers: org.http4s.Headers) =&gt; ChunkAggregator.this.removeChunkedTransferEncoding(eta$0$1)(headers))
+  })
+}))
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          8715
+        </td>
+        <td>
+          1940
+          -
+          1957
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Chunk.concat
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Chunk.concat[Byte](vec)((ClassTag.Byte: scala.reflect.ClassTag[Byte]))
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          7611
+        </td>
+        <td>
+          1994
+          -
+          2012
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.chunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.chunk[[x]fs2.Pure[x], Byte](body)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          8982
+        </td>
+        <td>
+          1966
+          -
+          2090
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.transformHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.withBodyStream(fs2.Stream.chunk[[x]fs2.Pure[x], Byte](body)).transformHeaders({
+  &lt;synthetic&gt; val eta$0$1: Long = body.size.toLong;
+  ((headers: org.http4s.Headers) =&gt; ChunkAggregator.this.removeChunkedTransferEncoding(eta$0$1)(headers))
+})
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          9995
+        </td>
+        <td>
+          2042
+          -
+          2089
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.ChunkAggregator.removeChunkedTransferEncoding
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ChunkAggregator.this.removeChunkedTransferEncoding(eta$0$1)(headers)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7998
+        </td>
+        <td>
+          2177
+          -
+          2212
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ChunkAggregator.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ChunkAggregator.this.apply[[β$0$]cats.data.OptionT[F,β$0$], [_]F[_], org.http4s.Request[F]](cats.data.OptionT.liftK[F](evidence$4))(httpRoutes)(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$4), evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          9035
+        </td>
+        <td>
+          2200
+          -
+          2200
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          9564
+        </td>
+        <td>
+          2183
+          -
+          2199
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftK
+        </td>
+        <td>
+          org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftK[F](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          9886
+        </td>
+        <td>
+          2279
+          -
+          2310
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.ChunkAggregator.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ChunkAggregator.this.apply[[_]F[_], [_]F[_], org.http4s.Request[F]](cats.arrow.FunctionK.id[F])(httpApp)(evidence$5, evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          8722
+        </td>
+        <td>
+          2610
+          -
+          2640
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.mutable.ListBuffer.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.mutable.ListBuffer.empty[org.http4s.Header.ToRaw]
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          9842
+        </td>
+        <td>
+          2645
+          -
+          3195
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.headers.foreach[Any](((x0$1: org.http4s.Header.Raw) =&gt; x0$1 match {
+  case (h @ (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Transfer-Encoding&quot;)).ci.unapplySeq(&lt;unapply-selector&gt;) &lt;unapply&gt; (), (value @ _))) =&gt; org.http4s.headers.Transfer-Encoding.parse(value) match {
+    case (value: org.http4s.headers.Transfer-Encoding): scala.util.Right[org.http4s.ParseFailure,org.http4s.headers.Transfer-Encoding]((te @ _)) =&gt; te.values.filterNot(((x$1: org.http4s.TransferCoding) =&gt; cats.syntax.`package`.all.catsSyntaxEq[org.http4s.TransferCoding](x$1)(http4s.this.TransferCoding.http4sOrderForTransferCoding).===(TransferCoding.chunked))) match {
+      case (head: org.http4s.TransferCoding, next: List[org.http4s.TransferCoding]): scala.collection.immutable.::[org.http4s.TransferCoding]((v @ _), (vs @ _)) =&gt; hh.+=(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.data.NonEmptyList.apply[org.http4s.TransferCoding](v, vs)))(headers.this.Transfer-Encoding.headerInstance))
+      case scala.`package`.Nil =&gt; ()
+    }
+    case (value: org.http4s.ParseFailure): scala.util.Left[org.http4s.ParseFailure,org.http4s.headers.Transfer-Encoding](_) =&gt; hh.+=(Header.this.ToRaw.rawToRaw(h))
+  }
+  case (name: org.typelevel.ci.CIString, value: String): org.http4s.Header.Raw(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Content-Length&quot;)).ci.unapplySeq(&lt;unapply-selector&gt;) &lt;unapply&gt; (), _) =&gt; ()
+  case (header @ _) =&gt; hh.+=(Header.this.ToRaw.rawToRaw(header))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          7620
+        </td>
+        <td>
+          2738
+          -
+          2770
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.parse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Transfer-Encoding.parse(value)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9566
+        </td>
+        <td>
+          2819
+          -
+          2868
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.filterNot
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          te.values.filterNot(((x$1: org.http4s.TransferCoding) =&gt; cats.syntax.`package`.all.catsSyntaxEq[org.http4s.TransferCoding](x$1)(http4s.this.TransferCoding.http4sOrderForTransferCoding).===(TransferCoding.chunked)))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          7894
+        </td>
+        <td>
+          2839
+          -
+          2867
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EqOps.===
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEq[org.http4s.TransferCoding](x$1)(http4s.this.TransferCoding.http4sOrderForTransferCoding).===(TransferCoding.chunked)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          9945
+        </td>
+        <td>
+          2839
+          -
+          2839
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.TransferCoding.http4sOrderForTransferCoding
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          http4s.this.TransferCoding.http4sOrderForTransferCoding
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          8988
+        </td>
+        <td>
+          2845
+          -
+          2867
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.TransferCoding.chunked
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          TransferCoding.chunked
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          8049
+        </td>
+        <td>
+          2929
+          -
+          2969
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Transfer-Encoding.apply(cats.data.NonEmptyList.apply[org.http4s.TransferCoding](v, vs))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          9891
+        </td>
+        <td>
+          2948
+          -
+          2948
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          8769
+        </td>
+        <td>
+          2929
+          -
+          2969
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.data.NonEmptyList.apply[org.http4s.TransferCoding](v, vs)))(headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          9041
+        </td>
+        <td>
+          2949
+          -
+          2968
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.apply[org.http4s.TransferCoding](v, vs)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          7572
+        </td>
+        <td>
+          2923
+          -
+          2969
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hh.+=(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.data.NonEmptyList.apply[org.http4s.TransferCoding](v, vs)))(headers.this.Transfer-Encoding.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9951
+        </td>
+        <td>
+          2993
+          -
+          2995
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          7897
+        </td>
+        <td>
+          3076
+          -
+          3083
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          hh.+=(Header.this.ToRaw.rawToRaw(h))
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          8943
+        </td>
+        <td>
+          3082
+          -
+          3083
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.rawToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          9692
+        </td>
+        <td>
+          3139
+          -
+          3141
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          8053
+        </td>
+        <td>
+          3177
+          -
+          3189
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          hh.+=(Header.this.ToRaw.rawToRaw(header))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          8487
+        </td>
+        <td>
+          3183
+          -
+          3189
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.rawToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.rawToRaw(header)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          8035
+        </td>
+        <td>
+          3200
+          -
+          3200
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          8712
+        </td>
+        <td>
+          3204
+          -
+          3212
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          len.&gt;(0L)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          8595
+        </td>
+        <td>
+          3200
+          -
+          3200
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          7795
+        </td>
+        <td>
+          3220
+          -
+          3262
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hh.+=(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          7699
+        </td>
+        <td>
+          3226
+          -
+          3262
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.unsafeFromLong
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Length.unsafeFromLong(len)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          9646
+        </td>
+        <td>
+          3220
+          -
+          3262
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hh.+=(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          8949
+        </td>
+        <td>
+          3226
+          -
+          3262
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          10048
+        </td>
+        <td>
+          3257
+          -
+          3257
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          8720
+        </td>
+        <td>
+          3278
+          -
+          3278
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          7666
+        </td>
+        <td>
+          3275
+          -
+          3284
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](hh.toList)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          9939
+        </td>
+        <td>
+          3267
+          -
+          3285
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](hh.toList)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          9852
+        </td>
+        <td>
+          3275
+          -
+          3284
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.mutable.ListBuffer.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          hh.toList
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,1141 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/multipart/Part.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package multipart
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.effect.Sync
+</span>21 <span style=''>import fs2.Stream
+</span>22 <span style=''>import fs2.io.file.Files
+</span>23 <span style=''>import fs2.io.file.Flags
+</span>24 <span style=''>import fs2.io.file.Path
+</span>25 <span style=''>import fs2.io.readInputStream
+</span>26 <span style=''>import fs2.text.utf8
+</span>27 <span style=''>import org.http4s.headers.`Content-Disposition`
+</span>28 <span style=''>import org.typelevel.ci._
+</span>29 <span style=''>
+</span>30 <span style=''>import java.io.File
+</span>31 <span style=''>import java.io.InputStream
+</span>32 <span style=''>import java.net.URL
+</span>33 <span style=''>
+</span>34 <span style=''>final case class Part[F[_]](headers: Headers, body: Stream[F, Byte]) extends Media[F] {
+</span>35 <span style=''>  def name: Option[String] = </span><span style='background: #AEF1AE'>headers.get[`Content-Disposition`].flatMap(_.parameters.get(ci&quot;name&quot;))</span><span style=''>
+</span>36 <span style=''>  def filename: Option[String] =
+</span>37 <span style=''>    </span><span style='background: #AEF1AE'>headers.get[`Content-Disposition`].flatMap(_.parameters.get(ci&quot;filename&quot;))</span><span style=''>
+</span>38 <span style=''>
+</span>39 <span style=''>  override def covary[F2[x] &gt;: F[x]]: Part[F2] = </span><span style='background: #AEF1AE'>this.asInstanceOf[Part[F2]]</span><span style=''>
+</span>40 <span style=''>}
+</span>41 <span style=''>
+</span>42 <span style=''>object Part {
+</span>43 <span style=''>  private val ChunkSize = </span><span style='background: #AEF1AE'>8192</span><span style=''>
+</span>44 <span style=''>
+</span>45 <span style=''>  def formData[F[_]](name: String, value: String, headers: Header.ToRaw*): Part[F] =
+</span>46 <span style=''>    </span><span style='background: #AEF1AE'>Part(
+</span>47 <span style=''></span><span style='background: #AEF1AE'>      Headers(`Content-Disposition`(&quot;form-data&quot;, Map(ci&quot;name&quot; -&gt; name))).put(headers: _*),
+</span>48 <span style=''></span><span style='background: #AEF1AE'>      Stream.emit(value).through(utf8.encode),
+</span>49 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>50 <span style=''>
+</span>51 <span style=''>  @deprecated(&quot;Use overload with fs2.io.file.Path&quot;, &quot;0.23.5&quot;)
+</span>52 <span style=''>  def fileData[F[_]: Files](name: String, file: File, headers: Header.ToRaw*): Part[F] =
+</span>53 <span style=''>    </span><span style='background: #F0ADAD'>fileData(name, Path.fromNioPath(file.toPath), headers: _*)</span><span style=''>
+</span>54 <span style=''>
+</span>55 <span style=''>  def fileData[F[_]: Files](name: String, path: Path, headers: Header.ToRaw*): Part[F] =
+</span>56 <span style=''>    </span><span style='background: #AEF1AE'>fileData(
+</span>57 <span style=''></span><span style='background: #AEF1AE'>      name,
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      path.fileName.toString,
+</span>59 <span style=''></span><span style='background: #AEF1AE'>      Files[F].readAll(path, ChunkSize, Flags.Read),
+</span>60 <span style=''></span><span style='background: #AEF1AE'>      headers: _*
+</span>61 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>62 <span style=''>
+</span>63 <span style=''>  def fileData[F[_]: Sync](name: String, resource: URL, headers: Header.ToRaw*): Part[F] =
+</span>64 <span style=''>    </span><span style='background: #F0ADAD'>fileData(name, resource.getPath.split(&quot;/&quot;).last, resource.openStream(), headers: _*)</span><span style=''>
+</span>65 <span style=''>
+</span>66 <span style=''>  def fileData[F[_]](
+</span>67 <span style=''>      name: String,
+</span>68 <span style=''>      filename: String,
+</span>69 <span style=''>      entityBody: EntityBody[F],
+</span>70 <span style=''>      headers: Header.ToRaw*
+</span>71 <span style=''>  ): Part[F] =
+</span>72 <span style=''>    </span><span style='background: #AEF1AE'>Part(
+</span>73 <span style=''></span><span style='background: #AEF1AE'>      Headers(
+</span>74 <span style=''></span><span style='background: #AEF1AE'>        `Content-Disposition`(&quot;form-data&quot;, Map(ci&quot;name&quot; -&gt; name, ci&quot;filename&quot; -&gt; filename)),
+</span>75 <span style=''></span><span style='background: #AEF1AE'>        &quot;Content-Transfer-Encoding&quot; -&gt; &quot;binary&quot;,
+</span>76 <span style=''></span><span style='background: #AEF1AE'>      ).put(headers: _*),
+</span>77 <span style=''></span><span style='background: #AEF1AE'>      entityBody,
+</span>78 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>79 <span style=''>
+</span>80 <span style=''>  // The InputStream is passed by name, and we open it in the by-name
+</span>81 <span style=''>  // argument in callers, so we can avoid lifting into an effect.  Exposing
+</span>82 <span style=''>  // this API publicly would invite unsafe use, and the `EntityBody` version
+</span>83 <span style=''>  // should be safe.
+</span>84 <span style=''>  private def fileData[F[_]](
+</span>85 <span style=''>      name: String,
+</span>86 <span style=''>      filename: String,
+</span>87 <span style=''>      in: =&gt; InputStream,
+</span>88 <span style=''>      headers: Header.ToRaw*
+</span>89 <span style=''>  )(implicit F: Sync[F]): Part[F] =
+</span>90 <span style=''>    </span><span style='background: #F0ADAD'>fileData(name, filename, readInputStream(F.delay(in), ChunkSize), headers: _*)</span><span style=''>
+</span>91 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          14007
+        </td>
+        <td>
+          1060
+          -
+          1130
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Part.this.headers.get[org.http4s.headers.Content-Disposition](Header.this.Select.singleHeaders[org.http4s.headers.Content-Disposition](headers.this.Content-Disposition.headerInstance)).flatMap[String](((x$1: org.http4s.headers.Content-Disposition) =&gt; x$1.parameters.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci())))
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          15936
+        </td>
+        <td>
+          1103
+          -
+          1129
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.get
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.parameters.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          19701
+        </td>
+        <td>
+          1120
+          -
+          1128
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          17217
+        </td>
+        <td>
+          1071
+          -
+          1071
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.headerInstance
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Disposition.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          13497
+        </td>
+        <td>
+          1071
+          -
+          1071
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Disposition](headers.this.Content-Disposition.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          16466
+        </td>
+        <td>
+          1179
+          -
+          1179
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Content-Disposition](headers.this.Content-Disposition.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          20449
+        </td>
+        <td>
+          1179
+          -
+          1179
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.headerInstance
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Disposition.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          17238
+        </td>
+        <td>
+          1168
+          -
+          1242
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Part.this.headers.get[org.http4s.headers.Content-Disposition](Header.this.Select.singleHeaders[org.http4s.headers.Content-Disposition](headers.this.Content-Disposition.headerInstance)).flatMap[String](((x$2: org.http4s.headers.Content-Disposition) =&gt; x$2.parameters.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci())))
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          22908
+        </td>
+        <td>
+          1228
+          -
+          1240
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          18907
+        </td>
+        <td>
+          1211
+          -
+          1241
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapOps.get
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.parameters.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          13074
+        </td>
+        <td>
+          1293
+          -
+          1320
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.asInstanceOf[org.http4s.multipart.Part[F2]]
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          19723
+        </td>
+        <td>
+          1364
+          -
+          1368
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          8192
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          15574
+        </td>
+        <td>
+          1459
+          -
+          1608
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.multipart.Part.apply
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Part.apply[[_]F[_]](Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Disposition](org.http4s.headers.Content-Disposition.apply(&quot;form-data&quot;, scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name))))(headers.this.Content-Disposition.headerInstance)).put((headers: _*)), fs2.Stream.emit[[x]fs2.Pure[x], String](value).through[[x]fs2.Pure[x], Byte](fs2.text.utf8.encode[[x]fs2.Pure[x]]))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          13615
+        </td>
+        <td>
+          1518
+          -
+          1534
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          18920
+        </td>
+        <td>
+          1479
+          -
+          1536
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Disposition](org.http4s.headers.Content-Disposition.apply(&quot;form-data&quot;, scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name))))(headers.this.Content-Disposition.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          16342
+        </td>
+        <td>
+          1479
+          -
+          1536
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.apply
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Disposition.apply(&quot;form-data&quot;, scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name)))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          20469
+        </td>
+        <td>
+          1514
+          -
+          1535
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapFactory.apply
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          22924
+        </td>
+        <td>
+          1500
+          -
+          1500
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.headerInstance
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Disposition.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          16843
+        </td>
+        <td>
+          1471
+          -
+          1554
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.put
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Disposition](org.http4s.headers.Content-Disposition.apply(&quot;form-data&quot;, scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name))))(headers.this.Content-Disposition.headerInstance)).put((headers: _*))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          15554
+        </td>
+        <td>
+          1501
+          -
+          1512
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;form-data&quot;
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          13092
+        </td>
+        <td>
+          1589
+          -
+          1600
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.text.utf8.encode
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.text.utf8.encode[[x]fs2.Pure[x]]
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          19594
+        </td>
+        <td>
+          1562
+          -
+          1601
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.through
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.emit[[x]fs2.Pure[x], String](value).through[[x]fs2.Pure[x], Byte](fs2.text.utf8.encode[[x]fs2.Pure[x]])
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          13637
+        </td>
+        <td>
+          1765
+          -
+          1823
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.multipart.Part.fileData
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Part.this.fileData[[_]F[_]](name, fs2.io.file.Path.fromNioPath(file.toPath()), (headers: _*))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          16863
+        </td>
+        <td>
+          1918
+          -
+          2046
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.multipart.Part.fileData
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Part.this.fileData[[_]F[_]](name, path.fileName.toString, fs2.io.file.Files.apply[F](evidence$2).readAll(path, Part.this.ChunkSize, fs2.io.file.Flags.Read), (headers: _*))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          20423
+        </td>
+        <td>
+          1946
+          -
+          1968
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.file.Path.toString
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          path.fileName.toString
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          16355
+        </td>
+        <td>
+          1999
+          -
+          2008
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.multipart.Part.ChunkSize
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Part.this.ChunkSize
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          18806
+        </td>
+        <td>
+          1976
+          -
+          2021
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.readAll
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](evidence$2).readAll(path, Part.this.ChunkSize, fs2.io.file.Flags.Read)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          22941
+        </td>
+        <td>
+          2010
+          -
+          2020
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.file.Flags.Read
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Flags.Read
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          13350
+        </td>
+        <td>
+          2143
+          -
+          2227
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.multipart.Part.fileData
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Part.this.fileData[[_]F[_]](name, scala.Predef.refArrayOps[String](resource.getPath().split(&quot;/&quot;)).last, resource.openStream(), (headers: _*))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          16101
+        </td>
+        <td>
+          2376
+          -
+          2588
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.multipart.Part.apply
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Part.apply[[_]F[_]](Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Disposition](org.http4s.headers.Content-Disposition.apply(&quot;form-data&quot;, scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name), scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).-&gt;[String](filename))))(headers.this.Content-Disposition.headerInstance), Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](&quot;Content-Transfer-Encoding&quot;).-&gt;[String](&quot;binary&quot;))).put((headers: _*)), entityBody)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          15595
+        </td>
+        <td>
+          2444
+          -
+          2460
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          19608
+        </td>
+        <td>
+          2427
+          -
+          2438
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;form-data&quot;
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          20445
+        </td>
+        <td>
+          2440
+          -
+          2487
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.MapFactory.apply
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name), scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).-&gt;[String](filename))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          16601
+        </td>
+        <td>
+          2405
+          -
+          2488
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.apply
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Disposition.apply(&quot;form-data&quot;, scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name), scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).-&gt;[String](filename)))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          18826
+        </td>
+        <td>
+          2405
+          -
+          2488
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Disposition](org.http4s.headers.Content-Disposition.apply(&quot;form-data&quot;, scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name), scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).-&gt;[String](filename))))(headers.this.Content-Disposition.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          21996
+        </td>
+        <td>
+          2462
+          -
+          2486
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).-&gt;[String](filename)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          23171
+        </td>
+        <td>
+          2426
+          -
+          2426
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Disposition.headerInstance
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Disposition.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          13372
+        </td>
+        <td>
+          2498
+          -
+          2537
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.keyValuesToRaw
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](&quot;Content-Transfer-Encoding&quot;).-&gt;[String](&quot;binary&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          17091
+        </td>
+        <td>
+          2498
+          -
+          2537
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[String](&quot;Content-Transfer-Encoding&quot;).-&gt;[String](&quot;binary&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          19956
+        </td>
+        <td>
+          2388
+          -
+          2563
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.put
+        </td>
+        <td>
+          org.http4s.multipart.multipartsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Disposition](org.http4s.headers.Content-Disposition.apply(&quot;form-data&quot;, scala.Predef.Map.apply[org.typelevel.ci.CIString, String](scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;name&quot;)).ci()).-&gt;[String](name), scala.Predef.ArrowAssoc[org.typelevel.ci.CIString](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;filename&quot;)).ci()).-&gt;[String](filename))))(headers.this.Content-Disposition.headerInstance), Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](&quot;Content-Transfer-Encoding&quot;).-&gt;[String](&quot;binary&quot;))).put((headers: _*))
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          22010
+        </td>
+        <td>
+          3028
+          -
+          3067
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.readInputStream
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.io.`package`.readInputStream[F](F.delay[java.io.InputStream](in), Part.this.ChunkSize, fs2.io.`package`.readInputStream$default$3[Nothing])(F)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          20309
+        </td>
+        <td>
+          3003
+          -
+          3081
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.multipart.Part.fileData
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Part.this.fileData[[_]F[_]](name, filename, fs2.io.`package`.readInputStream[F](F.delay[java.io.InputStream](in), Part.this.ChunkSize, fs2.io.`package`.readInputStream$default$3[Nothing])(F), (headers: _*))
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

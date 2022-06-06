@@ -1,0 +1,613 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/Http4sSuite.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.effect.IO
+</span>20 <span style=''>import cats.effect.Resource
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import fs2._
+</span>23 <span style=''>import fs2.text.utf8
+</span>24 <span style=''>import munit._
+</span>25 <span style=''>import org.scalacheck.Prop
+</span>26 <span style=''>
+</span>27 <span style=''>/** Common stack for http4s' munit based tests
+</span>28 <span style=''>  */
+</span>29 <span style=''>trait Http4sSuite
+</span>30 <span style=''>    extends CatsEffectSuite
+</span>31 <span style=''>    with DisciplineSuite
+</span>32 <span style=''>    with munit.ScalaCheckEffectSuite
+</span>33 <span style=''>    with Http4sSuitePlatform {
+</span>34 <span style=''>
+</span>35 <span style=''>  private[this] val suiteFixtures = </span><span style='background: #AEF1AE'>List.newBuilder[Fixture[_]]</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  override def munitFixtures: Seq[Fixture[_]] = </span><span style='background: #AEF1AE'>suiteFixtures.result()</span><span style=''>
+</span>38 <span style=''>
+</span>39 <span style=''>  // Override to remove implicit modifier
+</span>40 <span style=''>  override def unitToProp: Unit =&gt; Prop = </span><span style='background: #AEF1AE'>super.unitToProp</span><span style=''>
+</span>41 <span style=''>
+</span>42 <span style=''>  // Scala 3 likes this better
+</span>43 <span style=''>  implicit def saneUnitToProp(unit: Unit): Prop = </span><span style='background: #AEF1AE'>unitToProp(unit)</span><span style=''>
+</span>44 <span style=''>
+</span>45 <span style=''>  def registerSuiteFixture[A](fixture: Fixture[A]): Fixture[A] = {
+</span>46 <span style=''>    </span><span style='background: #F0ADAD'>suiteFixtures += fixture</span><span style=''>
+</span>47 <span style=''>    fixture
+</span>48 <span style=''>  }
+</span>49 <span style=''>
+</span>50 <span style=''>  def resourceSuiteDeferredFixture[A](name: String, resource: Resource[IO, A]): Fixture[IO[A]] =
+</span>51 <span style=''>    </span><span style='background: #F0ADAD'>registerSuiteFixture(UnsafeResourceSuiteLocalDeferredFixture(name, resource))</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>  implicit class ParseResultSyntax[A](self: ParseResult[A]) {
+</span>54 <span style=''>    def yolo: A = </span><span style='background: #AEF1AE'>self.valueOr(e =&gt; </span><span style='background: #F0ADAD'>sys.error(e.toString)</span><span style='background: #AEF1AE'>)</span><span style=''>
+</span>55 <span style=''>  }
+</span>56 <span style=''>
+</span>57 <span style=''>  def writeToString[A](a: A)(implicit W: EntityEncoder[IO, A]): IO[String] =
+</span>58 <span style=''>    </span><span style='background: #AEF1AE'>Stream
+</span>59 <span style=''></span><span style='background: #AEF1AE'>      .emit(W.toEntity(a))
+</span>60 <span style=''></span><span style='background: #AEF1AE'>      .flatMap(_.body)
+</span>61 <span style=''></span><span style='background: #AEF1AE'>      .through(utf8.decode)
+</span>62 <span style=''></span><span style='background: #AEF1AE'>      .foldMonoid
+</span>63 <span style=''></span><span style='background: #AEF1AE'>      .compile
+</span>64 <span style=''></span><span style='background: #AEF1AE'>      .last
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      .map(_.getOrElse(&quot;&quot;))</span><span style=''>
+</span>66 <span style=''>
+</span>67 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          6489
+        </td>
+        <td>
+          995
+          -
+          1022
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.List.newBuilder
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.newBuilder[Http4sSuite.this.Fixture[_]]
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          6440
+        </td>
+        <td>
+          1072
+          -
+          1094
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Builder.result
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Http4sSuite.this.suiteFixtures.result()
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          6399
+        </td>
+        <td>
+          1180
+          -
+          1196
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          munit.ScalaCheckSuite.unitToProp
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Http4sSuite.super.unitToProp
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          6470
+        </td>
+        <td>
+          1279
+          -
+          1295
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Http4sSuite.this.unitToProp.apply(unit)
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          6449
+        </td>
+        <td>
+          1368
+          -
+          1392
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.Growable.+=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Http4sSuite.this.suiteFixtures.+=(fixture)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          6407
+        </td>
+        <td>
+          1532
+          -
+          1587
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          munit.CatsEffectFixtures.UnsafeResourceSuiteLocalDeferredFixture.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Http4sSuite.this.UnsafeResourceSuiteLocalDeferredFixture.apply[A](name, resource)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          6475
+        </td>
+        <td>
+          1511
+          -
+          1588
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Http4sSuite.registerSuiteFixture
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Http4sSuite.this.registerSuiteFixture[cats.effect.IO[A]](Http4sSuite.this.UnsafeResourceSuiteLocalDeferredFixture.apply[A](name, resource))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          6438
+        </td>
+        <td>
+          1670
+          -
+          1710
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherOps.valueOr
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, A](ParseResultSyntax.this.self).valueOr[A](((e: org.http4s.ParseFailure) =&gt; scala.sys.`package`.error(e.toString())))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          6432
+        </td>
+        <td>
+          1670
+          -
+          1674
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Http4sSuite.ParseResultSyntax.self
+        </td>
+        <td>
+          org.http4s.server.staticcontent.resourceservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResultSyntax.this.self
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          6417
+        </td>
+        <td>
+          1698
+          -
+          1708
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Throwable.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          e.toString()
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          6484
+        </td>
+        <td>
+          1688
+          -
+          1709
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.sys.error
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.sys.`package`.error(e.toString())
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          6400
+        </td>
+        <td>
+          1816
+          -
+          1829
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          W.toEntity(a)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          6471
+        </td>
+        <td>
+          1846
+          -
+          1852
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.body
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.body
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          6453
+        </td>
+        <td>
+          1845
+          -
+          1845
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.compat.NotGivenLowPriority.default
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          compat.this.NotGiven.default[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          6413
+        </td>
+        <td>
+          1869
+          -
+          1880
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          fs2.text.utf8.decode
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.text.utf8.decode[[+A]cats.effect.IO[A]]
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          6473
+        </td>
+        <td>
+          1889
+          -
+          1889
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Semigroup.catsKernelMonoidForString
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Semigroup.catsKernelMonoidForString
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          6488
+        </td>
+        <td>
+          1907
+          -
+          1907
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]cats.effect.IO[x]](Compiler.this.Target.forConcurrent[[x]cats.effect.IO[x]](effect.this.IO.asyncForIO))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          6434
+        </td>
+        <td>
+          1907
+          -
+          1907
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.IO.asyncForIO
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          effect.this.IO.asyncForIO
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          6386
+        </td>
+        <td>
+          1907
+          -
+          1907
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]cats.effect.IO[x]](effect.this.IO.asyncForIO)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          6446
+        </td>
+        <td>
+          1938
+          -
+          1953
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.getOrElse[String](&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          6401
+        </td>
+        <td>
+          1797
+          -
+          1954
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.IO.map
+        </td>
+        <td>
+          org.http4s.http4ssuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.Stream.emit[[x]fs2.Pure[x], org.http4s.Entity[cats.effect.IO]](W.toEntity(a)).flatMap[[+A]cats.effect.IO[A], Byte](((x$1: org.http4s.Entity[cats.effect.IO]) =&gt; x$1.body))(compat.this.NotGiven.default[Nothing]).through[[x]cats.effect.IO[x], String](fs2.text.utf8.decode[[+A]cats.effect.IO[A]]).foldMonoid[String](kernel.this.Semigroup.catsKernelMonoidForString).compile[[x]cats.effect.IO[x], [x]cats.effect.IO[x], String](fs2.this.Compiler.target[[x]cats.effect.IO[x]](Compiler.this.Target.forConcurrent[[x]cats.effect.IO[x]](effect.this.IO.asyncForIO))).last.map[String](((x$2: Option[String]) =&gt; x$2.getOrElse[String](&quot;&quot;)))
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

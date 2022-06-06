@@ -1,0 +1,979 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/ember/core/h2/Hpack.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2019 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.ember.core.h2
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data._
+</span>20 <span style=''>import cats.effect._
+</span>21 <span style=''>import cats.effect.std._
+</span>22 <span style=''>import cats.syntax.all._
+</span>23 <span style=''>import scodec.bits._
+</span>24 <span style=''>
+</span>25 <span style=''>import java.io.ByteArrayInputStream
+</span>26 <span style=''>import java.io.ByteArrayOutputStream
+</span>27 <span style=''>import java.nio.charset.StandardCharsets
+</span>28 <span style=''>import scala.collection.mutable.ListBuffer
+</span>29 <span style=''>
+</span>30 <span style=''>private[h2] trait Hpack[F[_]] {
+</span>31 <span style=''>  def encodeHeaders(headers: NonEmptyList[(String, String, Boolean)]): F[ByteVector]
+</span>32 <span style=''>  def decodeHeaders(bv: ByteVector): F[NonEmptyList[(String, String)]]
+</span>33 <span style=''>}
+</span>34 <span style=''>
+</span>35 <span style=''>private[h2] object Hpack extends HpackPlatform {
+</span>36 <span style=''>  def create[F[_]: Async]: F[Hpack[F]] = </span><span style='background: #AEF1AE'>for {
+</span>37 <span style=''></span><span style='background: #AEF1AE'>    eLock &lt;- Semaphore[F](1)
+</span>38 <span style=''></span><span style='background: #AEF1AE'>    dLock &lt;- Semaphore[F](1)
+</span>39 <span style=''></span><span style='background: #AEF1AE'>    e &lt;- Sync[F].delay(new Encoder(4096))
+</span>40 <span style=''></span><span style='background: #AEF1AE'>    d &lt;- Sync[F].delay(new Decoder(65536, 4096))
+</span>41 <span style=''></span><span style='background: #AEF1AE'>  } yield new Impl(eLock, e, dLock, d)</span><span style=''>
+</span>42 <span style=''>
+</span>43 <span style=''>  private class Impl[F[_]: Async](
+</span>44 <span style=''>      encodeLock: Semaphore[F],
+</span>45 <span style=''>      tEncoder: Encoder,
+</span>46 <span style=''>      decodeLock: Semaphore[F],
+</span>47 <span style=''>      tDecoder: Decoder,
+</span>48 <span style=''>  ) extends Hpack[F] {
+</span>49 <span style=''>    def encodeHeaders(headers: NonEmptyList[(String, String, Boolean)]): F[ByteVector] =
+</span>50 <span style=''>      </span><span style='background: #AEF1AE'>encodeLock.permit.use(_ =&gt; Hpack.encodeHeaders[F](tEncoder, headers.toList))</span><span style=''>
+</span>51 <span style=''>    def decodeHeaders(bv: ByteVector): F[NonEmptyList[(String, String)]] =
+</span>52 <span style=''>      </span><span style='background: #AEF1AE'>decodeLock.permit.use(_ =&gt; Hpack.decodeHeaders[F](tDecoder, bv))</span><span style=''>
+</span>53 <span style=''>
+</span>54 <span style=''>  }
+</span>55 <span style=''>
+</span>56 <span style=''>  def decodeHeaders[F[_]: Sync](
+</span>57 <span style=''>      tDecoder: Decoder,
+</span>58 <span style=''>      bv: ByteVector,
+</span>59 <span style=''>  ): F[NonEmptyList[(String, String)]] = </span><span style='background: #AEF1AE'>Sync[F].delay {
+</span>60 <span style=''></span><span style='background: #AEF1AE'>    val buffer = new ListBuffer[(String, String)]
+</span>61 <span style=''></span><span style='background: #AEF1AE'>    val is = new ByteArrayInputStream(bv.toArray)
+</span>62 <span style=''></span><span style='background: #AEF1AE'>    val listener = new HeaderListener {
+</span>63 <span style=''></span><span style='background: #AEF1AE'>      def addHeader(name: Array[Byte], value: Array[Byte], sensitive: Boolean): Unit = {
+</span>64 <span style=''></span><span style='background: #AEF1AE'>        buffer.+=(
+</span>65 <span style=''></span><span style='background: #AEF1AE'>          new String(name, StandardCharsets.ISO_8859_1) -&gt; new String(
+</span>66 <span style=''></span><span style='background: #AEF1AE'>            value,
+</span>67 <span style=''></span><span style='background: #AEF1AE'>            StandardCharsets.ISO_8859_1,
+</span>68 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>69 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>70 <span style=''></span><span style='background: #AEF1AE'>        ()
+</span>71 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>72 <span style=''></span><span style='background: #AEF1AE'>    }
+</span>73 <span style=''></span><span style='background: #AEF1AE'>
+</span>74 <span style=''></span><span style='background: #AEF1AE'>    tDecoder.decode(is, listener)
+</span>75 <span style=''></span><span style='background: #AEF1AE'>    tDecoder.endHeaderBlock()
+</span>76 <span style=''></span><span style='background: #AEF1AE'>
+</span>77 <span style=''></span><span style='background: #AEF1AE'>    val decoded = buffer.toList
+</span>78 <span style=''></span><span style='background: #AEF1AE'>    NonEmptyList.fromList(decoded).toRight(new NoSuchElementException(&quot;Header List Was Empty&quot;))
+</span>79 <span style=''></span><span style='background: #AEF1AE'>  }.rethrow</span><span style=''>
+</span>80 <span style=''>
+</span>81 <span style=''>  def encodeHeaders[F[_]: Sync](
+</span>82 <span style=''>      tEncoder: Encoder,
+</span>83 <span style=''>      headers: List[(String, String, Boolean)],
+</span>84 <span style=''>  ): F[ByteVector] = </span><span style='background: #AEF1AE'>Sync[F].delay {
+</span>85 <span style=''></span><span style='background: #AEF1AE'>    val os = new ByteArrayOutputStream(1024)
+</span>86 <span style=''></span><span style='background: #AEF1AE'>    headers.foreach { h =&gt;
+</span>87 <span style=''></span><span style='background: #AEF1AE'>      tEncoder.encodeHeader(
+</span>88 <span style=''></span><span style='background: #AEF1AE'>        os,
+</span>89 <span style=''></span><span style='background: #AEF1AE'>        h._1.getBytes(StandardCharsets.ISO_8859_1),
+</span>90 <span style=''></span><span style='background: #AEF1AE'>        h._2.getBytes(StandardCharsets.ISO_8859_1),
+</span>91 <span style=''></span><span style='background: #AEF1AE'>        h._3,
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>93 <span style=''></span><span style='background: #AEF1AE'>    }
+</span>94 <span style=''></span><span style='background: #AEF1AE'>    ByteVector.view(os.toByteArray())
+</span>95 <span style=''></span><span style='background: #AEF1AE'>  }</span><span style=''>
+</span>96 <span style=''>
+</span>97 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          1051
+        </td>
+        <td>
+          1199
+          -
+          1214
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.Semaphore.apply
+        </td>
+        <td>
+          org.http4s.ember.core.h2.hpacksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.std.Semaphore.apply[F](1L)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          3566
+        </td>
+        <td>
+          1180
+          -
+          1373
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.ember.core.h2.hpacksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.std.Semaphore[F]](cats.effect.std.Semaphore.apply[F](1L)(evidence$1))(evidence$1).flatMap[org.http4s.ember.core.h2.Hpack[F]](((eLock: cats.effect.std.Semaphore[F]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.std.Semaphore[F]](cats.effect.std.Semaphore.apply[F](1L)(evidence$1))(evidence$1).flatMap[org.http4s.ember.core.h2.Hpack[F]](((dLock: cats.effect.std.Semaphore[F]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, com.twitter.hpack.Encoder](cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Encoder](new Hpack.this.Encoder(4096)))(evidence$1).flatMap[org.http4s.ember.core.h2.Hpack[F]](((e: com.twitter.hpack.Encoder) =&gt; cats.syntax.`package`.all.toFunctorOps[F, com.twitter.hpack.Decoder](cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Decoder](new Hpack.this.Decoder(65536, 4096)))(evidence$1).map[org.http4s.ember.core.h2.Hpack[F]](((d: com.twitter.hpack.Decoder) =&gt; new org.http4s.ember.core.h2.Hpack.Impl[[_]F[_]](eLock, e, dLock, d)(evidence$1)))))))))
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          3558
+        </td>
+        <td>
+          1228
+          -
+          1243
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.std.Semaphore.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.std.Semaphore.apply[F](1L)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          1242
+        </td>
+        <td>
+          1219
+          -
+          1373
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, cats.effect.std.Semaphore[F]](cats.effect.std.Semaphore.apply[F](1L)(evidence$1))(evidence$1).flatMap[org.http4s.ember.core.h2.Hpack[F]](((dLock: cats.effect.std.Semaphore[F]) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, com.twitter.hpack.Encoder](cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Encoder](new Hpack.this.Encoder(4096)))(evidence$1).flatMap[org.http4s.ember.core.h2.Hpack[F]](((e: com.twitter.hpack.Encoder) =&gt; cats.syntax.`package`.all.toFunctorOps[F, com.twitter.hpack.Decoder](cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Decoder](new Hpack.this.Decoder(65536, 4096)))(evidence$1).map[org.http4s.ember.core.h2.Hpack[F]](((d: com.twitter.hpack.Decoder) =&gt; new org.http4s.ember.core.h2.Hpack.Impl[[_]F[_]](eLock, e, dLock, d)(evidence$1)))))))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          1931
+        </td>
+        <td>
+          1248
+          -
+          1373
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, com.twitter.hpack.Encoder](cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Encoder](new Hpack.this.Encoder(4096)))(evidence$1).flatMap[org.http4s.ember.core.h2.Hpack[F]](((e: com.twitter.hpack.Encoder) =&gt; cats.syntax.`package`.all.toFunctorOps[F, com.twitter.hpack.Decoder](cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Decoder](new Hpack.this.Decoder(65536, 4096)))(evidence$1).map[org.http4s.ember.core.h2.Hpack[F]](((d: com.twitter.hpack.Decoder) =&gt; new org.http4s.ember.core.h2.Hpack.Impl[[_]F[_]](eLock, e, dLock, d)(evidence$1)))))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          659
+        </td>
+        <td>
+          1253
+          -
+          1285
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Encoder](new Hpack.this.Encoder(4096))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          2073
+        </td>
+        <td>
+          1267
+          -
+          1284
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.twitter.hpack.Encoder.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new Hpack.this.Encoder(4096)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          2320
+        </td>
+        <td>
+          1295
+          -
+          1334
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Decoder](new Hpack.this.Decoder(65536, 4096))
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          3509
+        </td>
+        <td>
+          1290
+          -
+          1373
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, com.twitter.hpack.Decoder](cats.effect.`package`.Sync.apply[F](evidence$1).delay[com.twitter.hpack.Decoder](new Hpack.this.Decoder(65536, 4096)))(evidence$1).map[org.http4s.ember.core.h2.Hpack[F]](((d: com.twitter.hpack.Decoder) =&gt; new org.http4s.ember.core.h2.Hpack.Impl[[_]F[_]](eLock, e, dLock, d)(evidence$1)))
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          3182
+        </td>
+        <td>
+          1309
+          -
+          1333
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.twitter.hpack.Decoder.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new Hpack.this.Decoder(65536, 4096)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          785
+        </td>
+        <td>
+          1345
+          -
+          1373
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.Impl.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.ember.core.h2.Hpack.Impl[[_]F[_]](eLock, e, dLock, d)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          3516
+        </td>
+        <td>
+          1642
+          -
+          1718
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Resource.use
+        </td>
+        <td>
+          org.http4s.ember.core.h2.hpacksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Impl.this.encodeLock.permit.use[scodec.bits.ByteVector](((x$1: Unit) =&gt; Hpack.encodeHeaders[F](Impl.this.tEncoder, headers.toList)(Impl.this.evidence$2)))(Impl.this.evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          2254
+        </td>
+        <td>
+          1692
+          -
+          1700
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.Impl.tEncoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Impl.this.tEncoder
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          3204
+        </td>
+        <td>
+          1691
+          -
+          1691
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.Impl.evidence$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Impl.this.evidence$2
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          793
+        </td>
+        <td>
+          1663
+          -
+          1663
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.Impl.evidence$2
+        </td>
+        <td>
+          org.http4s.ember.core.h2.hpacksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Impl.this.evidence$2
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          742
+        </td>
+        <td>
+          1702
+          -
+          1716
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyList.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.toList
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          2506
+        </td>
+        <td>
+          1669
+          -
+          1717
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.encodeHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Hpack.encodeHeaders[F](Impl.this.tEncoder, headers.toList)(Impl.this.evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          3753
+        </td>
+        <td>
+          1827
+          -
+          1863
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.decodeHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Hpack.decodeHeaders[F](Impl.this.tDecoder, bv)(Impl.this.evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          409
+        </td>
+        <td>
+          1849
+          -
+          1849
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.Impl.evidence$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Impl.this.evidence$2
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          2000
+        </td>
+        <td>
+          1850
+          -
+          1858
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.Impl.tDecoder
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Impl.this.tDecoder
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          2196
+        </td>
+        <td>
+          1821
+          -
+          1821
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ember.core.h2.Hpack.Impl.evidence$2
+        </td>
+        <td>
+          org.http4s.ember.core.h2.hpacksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Impl.this.evidence$2
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          748
+        </td>
+        <td>
+          1800
+          -
+          1864
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Resource.use
+        </td>
+        <td>
+          org.http4s.ember.core.h2.hpacksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Impl.this.decodeLock.permit.use[cats.data.NonEmptyList[(String, String)]](((x$2: Unit) =&gt; Hpack.decodeHeaders[F](Impl.this.tDecoder, bv)(Impl.this.evidence$2)))(Impl.this.evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          79
+        </td>
+        <td>
+          3174
+        </td>
+        <td>
+          1992
+          -
+          2639
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.MonadErrorRethrowOps.rethrow
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxMonadErrorRethrow[F, java.util.NoSuchElementException, cats.data.NonEmptyList[(String, String)]](cats.effect.`package`.Sync.apply[F](evidence$3).delay[Either[java.util.NoSuchElementException,cats.data.NonEmptyList[(String, String)]]]({
+  val buffer: scala.collection.mutable.ListBuffer[(String, String)] = new scala.collection.mutable.ListBuffer[(String, String)]();
+  val is: java.io.ByteArrayInputStream = new java.io.ByteArrayInputStream(bv.toArray);
+  val listener: org.http4s.ember.core.h2.Hpack.HeaderListener = {
+    final class $anon extends Object with org.http4s.ember.core.h2.Hpack.HeaderListener {
+      def &lt;init&gt;(): &lt;$anon: org.http4s.ember.core.h2.Hpack.HeaderListener&gt; = {
+        $anon.super.&lt;init&gt;();
+        ()
+      };
+      def addHeader(name: Array[Byte], value: Array[Byte], sensitive: Boolean): Unit = {
+        buffer.+=(scala.Predef.ArrowAssoc[String](new scala.Predef.String(name, java.nio.charset.StandardCharsets.ISO_8859_1)).-&gt;[String](new scala.Predef.String(value, java.nio.charset.StandardCharsets.ISO_8859_1)));
+        ()
+      }
+    };
+    new $anon()
+  };
+  tDecoder.decode(is, listener);
+  tDecoder.endHeaderBlock();
+  val decoded: List[(String, String)] = buffer.toList;
+  cats.data.NonEmptyList.fromList[(String, String)](decoded).toRight[java.util.NoSuchElementException](new scala.`package`.NoSuchElementException(&quot;Header List Was Empty&quot;))
+}))(evidence$3).rethrow(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          783
+        </td>
+        <td>
+          2768
+          -
+          3070
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.delay
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Sync.apply[F](evidence$4).delay[scodec.bits.ByteVector]({
+  val os: java.io.ByteArrayOutputStream = new java.io.ByteArrayOutputStream(1024);
+  headers.foreach[Unit](((h: (String, String, Boolean)) =&gt; tEncoder.encodeHeader(os, h._1.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), h._2.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), h._3)));
+  scodec.bits.ByteVector.view(os.toByteArray())
+})
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          2409
+        </td>
+        <td>
+          2797
+          -
+          2828
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.ByteArrayOutputStream.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new java.io.ByteArrayOutputStream(1024)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          713
+        </td>
+        <td>
+          2833
+          -
+          3028
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.foreach[Unit](((h: (String, String, Boolean)) =&gt; tEncoder.encodeHeader(os, h._1.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), h._2.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), h._3)))
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          2206
+        </td>
+        <td>
+          2862
+          -
+          3022
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          com.twitter.hpack.Encoder.encodeHeader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          tEncoder.encodeHeader(os, h._1.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), h._2.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1), h._3)
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          923
+        </td>
+        <td>
+          2919
+          -
+          2946
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.ISO_8859_1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.charset.StandardCharsets.ISO_8859_1
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          3468
+        </td>
+        <td>
+          2905
+          -
+          2947
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.getBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h._1.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          382
+        </td>
+        <td>
+          2957
+          -
+          2999
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.getBytes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h._2.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          2008
+        </td>
+        <td>
+          2971
+          -
+          2998
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.nio.charset.StandardCharsets.ISO_8859_1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          java.nio.charset.StandardCharsets.ISO_8859_1
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          3633
+        </td>
+        <td>
+          3009
+          -
+          3013
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple3._3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h._3
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          2373
+        </td>
+        <td>
+          3033
+          -
+          3066
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scodec.bits.ByteVector.view
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scodec.bits.ByteVector.view(os.toByteArray())
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          3180
+        </td>
+        <td>
+          3049
+          -
+          3065
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.ByteArrayOutputStream.toByteArray
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          os.toByteArray()
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

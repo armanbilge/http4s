@@ -1,0 +1,4646 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/util/Renderable.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.util
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data.NonEmptyList
+</span>20 <span style=''>import org.http4s.Header
+</span>21 <span style=''>import org.http4s.internal.CharPredicate
+</span>22 <span style=''>import org.typelevel.ci.CIString
+</span>23 <span style=''>
+</span>24 <span style=''>import java.time.Instant
+</span>25 <span style=''>import java.time.ZoneId
+</span>26 <span style=''>import java.time.format.DateTimeFormatter
+</span>27 <span style=''>import java.util.Locale
+</span>28 <span style=''>import scala.annotation.tailrec
+</span>29 <span style=''>import scala.collection.immutable.BitSet
+</span>30 <span style=''>import scala.concurrent.duration.FiniteDuration
+</span>31 <span style=''>
+</span>32 <span style=''>/** A type class that describes how to efficiently render a type
+</span>33 <span style=''>  * @tparam T the type which will be rendered
+</span>34 <span style=''>  */
+</span>35 <span style=''>trait Renderer[T] {
+</span>36 <span style=''>
+</span>37 <span style=''>  /** Renders the object to the writer
+</span>38 <span style=''>    * @param writer [[org.http4s.util.Writer]] to render to
+</span>39 <span style=''>    * @param t object to render
+</span>40 <span style=''>    * @return the same [[org.http4s.util.Writer]] provided
+</span>41 <span style=''>    */
+</span>42 <span style=''>  def render(writer: Writer, t: T): writer.type
+</span>43 <span style=''>}
+</span>44 <span style=''>
+</span>45 <span style=''>object Renderer {
+</span>46 <span style=''>  @inline def apply[A](implicit ev: Renderer[A]): Renderer[A] = ev
+</span>47 <span style=''>
+</span>48 <span style=''>  def renderString[T: Renderer](t: T): String = </span><span style='background: #AEF1AE'>new StringWriter().append(t).result</span><span style=''>
+</span>49 <span style=''>
+</span>50 <span style=''>  implicit val RFC7231InstantRenderer: Renderer[Instant] = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Instant] {
+</span>51 <span style=''>    private val dateFormat =
+</span>52 <span style=''>      </span><span style='background: #AEF1AE'>DateTimeFormatter
+</span>53 <span style=''></span><span style='background: #AEF1AE'>        .ofPattern(&quot;EEE, dd MMM yyyy HH:mm:ss zzz&quot;)
+</span>54 <span style=''></span><span style='background: #AEF1AE'>        .withLocale(Locale.US)
+</span>55 <span style=''></span><span style='background: #AEF1AE'>        .withZone(ZoneId.of(&quot;GMT&quot;))</span><span style=''>
+</span>56 <span style=''>
+</span>57 <span style=''>    override def render(writer: Writer, t: Instant): writer.type =
+</span>58 <span style=''>      </span><span style='background: #AEF1AE'>writer &lt;&lt; dateFormat.format(t)</span><span style=''>
+</span>59 <span style=''>  }
+</span>60 <span style=''>
+</span>61 <span style=''>  implicit val stringRenderer: Renderer[String] = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[String] {
+</span>62 <span style=''>    override def render(writer: Writer, string: String): writer.type =
+</span>63 <span style=''>      </span><span style='background: #AEF1AE'>writer &lt;&lt; string</span><span style=''>
+</span>64 <span style=''>  }
+</span>65 <span style=''>
+</span>66 <span style=''>  // Render a finite duration in seconds
+</span>67 <span style=''>  implicit val finiteDurationRenderer: Renderer[FiniteDuration] = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[FiniteDuration] {
+</span>68 <span style=''>    override def render(writer: Writer, d: FiniteDuration): writer.type =
+</span>69 <span style=''>      </span><span style='background: #F0ADAD'>writer &lt;&lt; d.toSeconds.toString</span><span style=''>
+</span>70 <span style=''>  }
+</span>71 <span style=''>
+</span>72 <span style=''>  // Render a long value, e.g. on the Age header
+</span>73 <span style=''>  implicit val longRenderer: Renderer[Long] = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Long] {
+</span>74 <span style=''>    override def render(writer: Writer, d: Long): writer.type =
+</span>75 <span style=''>      </span><span style='background: #AEF1AE'>writer &lt;&lt; d.toString</span><span style=''>
+</span>76 <span style=''>  }
+</span>77 <span style=''>
+</span>78 <span style=''>  implicit def eitherRenderer[A, B](implicit
+</span>79 <span style=''>      ra: Renderer[A],
+</span>80 <span style=''>      rb: Renderer[B],
+</span>81 <span style=''>  ): Renderer[Either[A, B]] =
+</span>82 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Either[A, B]] {
+</span>83 <span style=''>      override def render(writer: Writer, e: Either[A, B]): writer.type =
+</span>84 <span style=''>        e match {
+</span>85 <span style=''>          case Left(a) =&gt; </span><span style='background: #AEF1AE'>ra.render(writer, a)</span><span style=''>
+</span>86 <span style=''>          case Right(b) =&gt; </span><span style='background: #AEF1AE'>rb.render(writer, b)</span><span style=''>
+</span>87 <span style=''>        }
+</span>88 <span style=''>    }
+</span>89 <span style=''>
+</span>90 <span style=''>  implicit val ciStringRenderer: Renderer[CIString] = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[CIString] {
+</span>91 <span style=''>    override def render(writer: Writer, ciString: CIString): writer.type =
+</span>92 <span style=''>      </span><span style='background: #AEF1AE'>writer &lt;&lt; ciString</span><span style=''>
+</span>93 <span style=''>  }
+</span>94 <span style=''>
+</span>95 <span style=''>  implicit def nelRenderer[T: Renderer]: Renderer[NonEmptyList[T]] =
+</span>96 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[NonEmptyList[T]] {
+</span>97 <span style=''>      override def render(writer: Writer, values: NonEmptyList[T]): writer.type =
+</span>98 <span style=''>        </span><span style='background: #AEF1AE'>writer.addNel(values)</span><span style=''>
+</span>99 <span style=''>    }
+</span>100 <span style=''>
+</span>101 <span style=''>  implicit def listRenderer[T: Renderer]: Renderer[List[T]] =
+</span>102 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[List[T]] {
+</span>103 <span style=''>      override def render(writer: Writer, values: List[T]): writer.type =
+</span>104 <span style=''>        </span><span style='background: #AEF1AE'>writer.addList(values)</span><span style=''>
+</span>105 <span style=''>    }
+</span>106 <span style=''>
+</span>107 <span style=''>  implicit def setRenderer[T: Renderer]: Renderer[Set[T]] =
+</span>108 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Set[T]] {
+</span>109 <span style=''>      override def render(writer: Writer, values: Set[T]): writer.type =
+</span>110 <span style=''>        </span><span style='background: #AEF1AE'>writer.addSet(values)</span><span style=''>
+</span>111 <span style=''>    }
+</span>112 <span style=''>
+</span>113 <span style=''>  implicit def headerSelectRenderer[A](implicit select: Header.Select[A]): Renderer[A] =
+</span>114 <span style=''>    </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[A] {
+</span>115 <span style=''>      override def render(writer: Writer, t: A): writer.type = </span><span style='background: #AEF1AE'>writer &lt;&lt; select.toRaw1(t)</span><span style=''>
+</span>116 <span style=''>    }
+</span>117 <span style=''>}
+</span>118 <span style=''>
+</span>119 <span style=''>/** Mixin that makes a type writable by a [[Writer]] without needing a [[Renderer]] instance */
+</span>120 <span style=''>trait Renderable extends Any {
+</span>121 <span style=''>
+</span>122 <span style=''>  /** Base method for rendering this object efficiently */
+</span>123 <span style=''>  def render(writer: Writer): writer.type
+</span>124 <span style=''>
+</span>125 <span style=''>  /** Generates a String rendering of this object */
+</span>126 <span style=''>  def renderString: String = </span><span style='background: #AEF1AE'>Renderer.renderString(this)</span><span style=''>
+</span>127 <span style=''>
+</span>128 <span style=''>  override def toString: String = </span><span style='background: #AEF1AE'>renderString</span><span style=''>
+</span>129 <span style=''>}
+</span>130 <span style=''>
+</span>131 <span style=''>object Renderable {
+</span>132 <span style=''>  implicit def renderableInst[T &lt;: Renderable]: Renderer[T] =
+</span>133 <span style=''>    </span><span style='background: #AEF1AE'>genericInstance.asInstanceOf[Renderer[T]]</span><span style=''>
+</span>134 <span style=''>
+</span>135 <span style=''>  // Cache the Renderable because GC pauses suck
+</span>136 <span style=''>  private val genericInstance = </span><span style='background: #AEF1AE'>new</span><span style=''> Renderer[Renderable] {
+</span>137 <span style=''>    override def render(writer: Writer, t: Renderable): writer.type =
+</span>138 <span style=''>      </span><span style='background: #AEF1AE'>t.render(writer)</span><span style=''>
+</span>139 <span style=''>  }
+</span>140 <span style=''>}
+</span>141 <span style=''>
+</span>142 <span style=''>object Writer {
+</span>143 <span style=''>  val HeaderValueDQuote: BitSet = </span><span style='background: #AEF1AE'>BitSet(&quot;\\\&quot;&quot;.map(_.toInt): _*)</span><span style=''>
+</span>144 <span style=''>}
+</span>145 <span style=''>
+</span>146 <span style=''>/** Efficiently accumulate [[Renderable]] representations */
+</span>147 <span style=''>trait Writer { self =&gt;
+</span>148 <span style=''>  def append(s: String): this.type
+</span>149 <span style=''>  def append(ci: CIString): this.type = </span><span style='background: #AEF1AE'>append(ci.toString)</span><span style=''>
+</span>150 <span style=''>  def append(char: Char): this.type = </span><span style='background: #AEF1AE'>append(char.toString)</span><span style=''>
+</span>151 <span style=''>  def append(float: Float): this.type = </span><span style='background: #F0ADAD'>append(float.toString)</span><span style=''>
+</span>152 <span style=''>  def append(double: Double): this.type = </span><span style='background: #F0ADAD'>append(double.toString)</span><span style=''>
+</span>153 <span style=''>  def append(int: Int): this.type = </span><span style='background: #F0ADAD'>append(int.toString)</span><span style=''>
+</span>154 <span style=''>  def append(long: Long): this.type = </span><span style='background: #F0ADAD'>append(long.toString)</span><span style=''>
+</span>155 <span style=''>
+</span>156 <span style=''>  def append[T](r: T)(implicit R: Renderer[T]): this.type = </span><span style='background: #AEF1AE'>R.render(this, r)</span><span style=''>
+</span>157 <span style=''>
+</span>158 <span style=''>  def quote(
+</span>159 <span style=''>      s: String,
+</span>160 <span style=''>      escapedChars: BitSet = Writer.HeaderValueDQuote,
+</span>161 <span style=''>      escapeChar: Char = '\\',
+</span>162 <span style=''>  ): this.type = {
+</span>163 <span style=''>    </span><span style='background: #AEF1AE'>this &lt;&lt; '&quot;'</span><span style=''>
+</span>164 <span style=''>
+</span>165 <span style=''>    @tailrec
+</span>166 <span style=''>    def go(i: Int): Unit =
+</span>167 <span style=''>      if (</span><span style='background: #AEF1AE'>i &lt; s.length</span><span style=''>) </span><span style='background: #AEF1AE'>{
+</span>168 <span style=''></span><span style='background: #AEF1AE'>        val c = s.charAt(i)
+</span>169 <span style=''></span><span style='background: #AEF1AE'>        if (escapedChars.contains(c.toInt)) this &lt;&lt; escapeChar
+</span>170 <span style=''></span><span style='background: #AEF1AE'>        this &lt;&lt; c
+</span>171 <span style=''></span><span style='background: #AEF1AE'>        go(i + 1)
+</span>172 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>173 <span style=''>
+</span>174 <span style=''>    </span><span style='background: #AEF1AE'>go(0)</span><span style=''>
+</span>175 <span style=''>    </span><span style='background: #AEF1AE'>this &lt;&lt; '&quot;'</span><span style=''>
+</span>176 <span style=''>  }
+</span>177 <span style=''>  // Adapted from https://github.com/akka/akka-http/blob/b071bd67547714bd8bed2ccd8170fbbc6c2dbd77/akka-http-core/src/main/scala/akka/http/impl/util/Rendering.scala#L219-L229
+</span>178 <span style=''>  def eligibleOnly(s: String, keep: CharPredicate, placeholder: Char): this.type = {
+</span>179 <span style=''>    @tailrec def rec(ix: Int = 0): this.type =
+</span>180 <span style=''>      if (</span><span style='background: #AEF1AE'>ix &lt; s.length</span><span style=''>) </span><span style='background: #AEF1AE'>{
+</span>181 <span style=''></span><span style='background: #AEF1AE'>        val c = s.charAt(ix)
+</span>182 <span style=''></span><span style='background: #AEF1AE'>        if (keep(c)) this &lt;&lt; c
+</span>183 <span style=''></span><span style='background: #AEF1AE'>        else this &lt;&lt; placeholder
+</span>184 <span style=''></span><span style='background: #AEF1AE'>        rec(ix + 1)
+</span>185 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''> else </span><span style='background: #AEF1AE'>this</span><span style=''>
+</span>186 <span style=''>    </span><span style='background: #AEF1AE'>rec()</span><span style=''>
+</span>187 <span style=''>  }
+</span>188 <span style=''>
+</span>189 <span style=''>  def addStrings(
+</span>190 <span style=''>      s: collection.Seq[String],
+</span>191 <span style=''>      sep: String = &quot;&quot;,
+</span>192 <span style=''>      start: String = &quot;&quot;,
+</span>193 <span style=''>      end: String = &quot;&quot;,
+</span>194 <span style=''>  ): this.type = {
+</span>195 <span style=''>    </span><span style='background: #F0ADAD'>append(start)</span><span style=''>
+</span>196 <span style=''>    if (</span><span style='background: #F0ADAD'>s.nonEmpty</span><span style=''>) </span><span style='background: #F0ADAD'>{
+</span>197 <span style=''></span><span style='background: #F0ADAD'>      append(s.head)
+</span>198 <span style=''></span><span style='background: #F0ADAD'>      s.tail.foreach(s =&gt; append(sep).append(s))
+</span>199 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>200 <span style=''>    </span><span style='background: #F0ADAD'>append(end)</span><span style=''>
+</span>201 <span style=''>  }
+</span>202 <span style=''>
+</span>203 <span style=''>  def addList[T: Renderer](
+</span>204 <span style=''>      s: List[T],
+</span>205 <span style=''>      sep: String = &quot;, &quot;,
+</span>206 <span style=''>      start: String = &quot;&quot;,
+</span>207 <span style=''>      end: String = &quot;&quot;,
+</span>208 <span style=''>  ): this.type =
+</span>209 <span style=''>    </span><span style='background: #AEF1AE'>NonEmptyList.fromList(s)</span><span style=''> match {
+</span>210 <span style=''>      case Some(s) =&gt; </span><span style='background: #AEF1AE'>addNel(s, sep, start, end)</span><span style=''>
+</span>211 <span style=''>      case None =&gt;
+</span>212 <span style=''>        </span><span style='background: #AEF1AE'>append(start)</span><span style=''>
+</span>213 <span style=''>        </span><span style='background: #AEF1AE'>append(end)</span><span style=''>
+</span>214 <span style=''>    }
+</span>215 <span style=''>
+</span>216 <span style=''>  def addNel[T: Renderer](
+</span>217 <span style=''>      s: NonEmptyList[T],
+</span>218 <span style=''>      sep: String = &quot;, &quot;,
+</span>219 <span style=''>      start: String = &quot;&quot;,
+</span>220 <span style=''>      end: String = &quot;&quot;,
+</span>221 <span style=''>  ): this.type = {
+</span>222 <span style=''>    </span><span style='background: #AEF1AE'>append(start)</span><span style=''>
+</span>223 <span style=''>    </span><span style='background: #AEF1AE'>append(s.head)</span><span style=''>
+</span>224 <span style=''>    </span><span style='background: #AEF1AE'>s.tail.foreach(s =&gt; append(sep).append(s))</span><span style=''>
+</span>225 <span style=''>    </span><span style='background: #AEF1AE'>append(end)</span><span style=''>
+</span>226 <span style=''>  }
+</span>227 <span style=''>
+</span>228 <span style=''>  def addSet[T: Renderer](
+</span>229 <span style=''>      s: collection.Set[T],
+</span>230 <span style=''>      sep: String = &quot;, &quot;,
+</span>231 <span style=''>      start: String = &quot;&quot;,
+</span>232 <span style=''>      end: String = &quot;&quot;,
+</span>233 <span style=''>  ): this.type = {
+</span>234 <span style=''>    </span><span style='background: #AEF1AE'>append(start)</span><span style=''>
+</span>235 <span style=''>    if (</span><span style='background: #AEF1AE'>s.nonEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>{
+</span>236 <span style=''></span><span style='background: #AEF1AE'>      append(s.head)
+</span>237 <span style=''></span><span style='background: #AEF1AE'>      s.tail.foreach(s =&gt; append(sep).append(s))
+</span>238 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>239 <span style=''>    </span><span style='background: #AEF1AE'>append(end)</span><span style=''>
+</span>240 <span style=''>  }
+</span>241 <span style=''>
+</span>242 <span style=''>  final def &lt;&lt;(s: String): this.type = </span><span style='background: #AEF1AE'>append(s)</span><span style=''>
+</span>243 <span style=''>  final def &lt;&lt;#(s: String): this.type = </span><span style='background: #AEF1AE'>quote(s)</span><span style=''>
+</span>244 <span style=''>  final def &lt;&lt;(s: CIString): this.type = </span><span style='background: #AEF1AE'>append(s)</span><span style=''>
+</span>245 <span style=''>  final def &lt;&lt;(char: Char): this.type = </span><span style='background: #AEF1AE'>append(char)</span><span style=''>
+</span>246 <span style=''>  final def &lt;&lt;(float: Float): this.type = </span><span style='background: #F0ADAD'>append(float)</span><span style=''>
+</span>247 <span style=''>  final def &lt;&lt;(double: Double): this.type = </span><span style='background: #F0ADAD'>append(double)</span><span style=''>
+</span>248 <span style=''>  final def &lt;&lt;(int: Int): this.type = </span><span style='background: #AEF1AE'>append(int)</span><span style=''>
+</span>249 <span style=''>  final def &lt;&lt;(long: Long): this.type = </span><span style='background: #AEF1AE'>append(long)</span><span style=''>
+</span>250 <span style=''>  final def &lt;&lt;[T: Renderer](r: T): this.type = </span><span style='background: #AEF1AE'>append(r)</span><span style=''>
+</span>251 <span style=''>
+</span>252 <span style=''>  def sanitize(f: Writer =&gt; Writer): this.type = {
+</span>253 <span style=''>    val w = </span><span style='background: #AEF1AE'>new</span><span style=''> Writer {
+</span>254 <span style=''>      def append(s: String): this.type = {
+</span>255 <span style=''>        </span><span style='background: #AEF1AE'>s.foreach(append(_))</span><span style=''>
+</span>256 <span style=''>        this
+</span>257 <span style=''>      }
+</span>258 <span style=''>      override def append(c: Char): this.type = {
+</span>259 <span style=''>        if (</span><span style='background: #AEF1AE'>c == 0x0.toChar || c == '\r' || c == '\n'</span><span style=''>)
+</span>260 <span style=''>          </span><span style='background: #F0ADAD'>self.append(' ')</span><span style=''>
+</span>261 <span style=''>        else
+</span>262 <span style=''>          </span><span style='background: #AEF1AE'>self.append(c)</span><span style=''>
+</span>263 <span style=''>        this
+</span>264 <span style=''>      }
+</span>265 <span style=''>    }
+</span>266 <span style=''>    </span><span style='background: #AEF1AE'>f(w)</span><span style=''>
+</span>267 <span style=''>    this
+</span>268 <span style=''>  }
+</span>269 <span style=''>}
+</span>270 <span style=''>
+</span>271 <span style=''>/** [[Writer]] that will result in a `String`
+</span>272 <span style=''>  * @param size initial buffer size of the underlying `StringBuilder`
+</span>273 <span style=''>  */
+</span>274 <span style=''>class StringWriter(size: Int = StringWriter.InitialCapacity) extends Writer { self =&gt;
+</span>275 <span style=''>  private val sb = </span><span style='background: #AEF1AE'>new java.lang.StringBuilder(size)</span><span style=''>
+</span>276 <span style=''>
+</span>277 <span style=''>  def append(s: String): this.type = { </span><span style='background: #AEF1AE'>sb.append(s)</span><span style=''>; this }
+</span>278 <span style=''>  override def append(char: Char): this.type = { </span><span style='background: #AEF1AE'>sb.append(char)</span><span style=''>; this }
+</span>279 <span style=''>  override def append(float: Float): this.type = { </span><span style='background: #F0ADAD'>sb.append(float)</span><span style=''>; this }
+</span>280 <span style=''>  override def append(double: Double): this.type = { </span><span style='background: #F0ADAD'>sb.append(double)</span><span style=''>; this }
+</span>281 <span style=''>  override def append(int: Int): this.type = { </span><span style='background: #AEF1AE'>sb.append(int)</span><span style=''>; this }
+</span>282 <span style=''>  override def append(long: Long): this.type = { </span><span style='background: #AEF1AE'>sb.append(long)</span><span style=''>; this }
+</span>283 <span style=''>
+</span>284 <span style=''>  override def sanitize(f: Writer =&gt; Writer): this.type = {
+</span>285 <span style=''>    val w = </span><span style='background: #AEF1AE'>new</span><span style=''> Writer {
+</span>286 <span style=''>      def append(s: String): this.type = {
+</span>287 <span style=''>        val start = </span><span style='background: #AEF1AE'>sb.length</span><span style=''>
+</span>288 <span style=''>        </span><span style='background: #AEF1AE'>self.append(s)</span><span style=''>
+</span>289 <span style=''>        </span><span style='background: #AEF1AE'>for (i &lt;- start until sb.length) {
+</span>290 <span style=''></span><span style='background: #AEF1AE'>          val c = sb.charAt(i)
+</span>291 <span style=''></span><span style='background: #AEF1AE'>          if (c == 0x0.toChar || c == '\r' || c == '\n') {
+</span>292 <span style=''></span><span style='background: #AEF1AE'>            sb.setCharAt(i, ' ')
+</span>293 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>294 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>295 <span style=''>        this
+</span>296 <span style=''>      }
+</span>297 <span style=''>      override def append(c: Char): this.type = {
+</span>298 <span style=''>        if (</span><span style='background: #AEF1AE'>c == 0x0.toChar || c == '\r' || c == '\n'</span><span style=''>)
+</span>299 <span style=''>          </span><span style='background: #AEF1AE'>self.append(' ')</span><span style=''>
+</span>300 <span style=''>        else
+</span>301 <span style=''>          </span><span style='background: #AEF1AE'>self.append(c)</span><span style=''>
+</span>302 <span style=''>        this
+</span>303 <span style=''>      }
+</span>304 <span style=''>    }
+</span>305 <span style=''>    </span><span style='background: #AEF1AE'>f(w)</span><span style=''>
+</span>306 <span style=''>    this
+</span>307 <span style=''>  }
+</span>308 <span style=''>
+</span>309 <span style=''>  def result: String = </span><span style='background: #AEF1AE'>sb.toString</span><span style=''>
+</span>310 <span style=''>}
+</span>311 <span style=''>
+</span>312 <span style=''>object StringWriter {
+</span>313 <span style=''>  private val InitialCapacity = </span><span style='background: #AEF1AE'>64</span><span style=''>
+</span>314 <span style=''>}
+</span>315 <span style=''>
+</span>316 <span style=''>private[http4s] class HeaderLengthCountingWriter extends Writer {
+</span>317 <span style=''>  var length: Long = </span><span style='background: #F0ADAD'>0L</span><span style=''>
+</span>318 <span style=''>
+</span>319 <span style=''>  def append(s: String): this.type = {
+</span>320 <span style=''>    // Assumption: 1 byte per character. Only US-ASCII is supported.
+</span>321 <span style=''>    </span><span style='background: #F0ADAD'>length = length + s.length</span><span style=''>
+</span>322 <span style=''>    this
+</span>323 <span style=''>  }
+</span>324 <span style=''>
+</span>325 <span style=''>  override def sanitize(f: Writer =&gt; Writer): this.type = {
+</span>326 <span style=''>    </span><span style='background: #F0ADAD'>f(this)</span><span style=''>
+</span>327 <span style=''>    this
+</span>328 <span style=''>  }
+</span>329 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          16907
+        </td>
+        <td>
+          1506
+          -
+          1541
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.StringWriter.result
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new StringWriter(util.this.StringWriter.&lt;init&gt;$default$1).append[T](t)(evidence$1).result
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          20642
+        </td>
+        <td>
+          1506
+          -
+          1506
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.StringWriter.&lt;init&gt;$default$1
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.StringWriter.&lt;init&gt;$default$1
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          14367
+        </td>
+        <td>
+          1602
+          -
+          1605
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          13532
+        </td>
+        <td>
+          1698
+          -
+          1729
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;EEE, dd MMM yyyy HH:mm:ss zzz&quot;
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          21430
+        </td>
+        <td>
+          1751
+          -
+          1760
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.util.Locale.US
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.util.Locale.US
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          17451
+        </td>
+        <td>
+          1780
+          -
+          1796
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.ZoneId.of
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.ZoneId.of(&quot;GMT&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          13706
+        </td>
+        <td>
+          1661
+          -
+          1797
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.format.DateTimeFormatter.withZone
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.time.format.DateTimeFormatter.ofPattern(&quot;EEE, dd MMM yyyy HH:mm:ss zzz&quot;).withLocale(java.util.Locale.US).withZone(java.time.ZoneId.of(&quot;GMT&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          20116
+        </td>
+        <td>
+          1882
+          -
+          1902
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.time.format.DateTimeFormatter.format
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          $anon.this.dateFormat.format(t)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          18621
+        </td>
+        <td>
+          1872
+          -
+          1902
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;($anon.this.dateFormat.format(t))
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          16924
+        </td>
+        <td>
+          1958
+          -
+          1961
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          20659
+        </td>
+        <td>
+          2058
+          -
+          2074
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(string)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          17986
+        </td>
+        <td>
+          2187
+          -
+          2190
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          21827
+        </td>
+        <td>
+          2298
+          -
+          2328
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          writer.&lt;&lt;(d.toSeconds.toString())
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          13428
+        </td>
+        <td>
+          2308
+          -
+          2328
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          d.toSeconds.toString()
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          16677
+        </td>
+        <td>
+          2429
+          -
+          2432
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          20517
+        </td>
+        <td>
+          2520
+          -
+          2540
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(d.toString())
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          13575
+        </td>
+        <td>
+          2530
+          -
+          2540
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.jawn.jawndecodesupportsuite,org.http4s.urlformspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.ember.core.responsesplittingsuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          d.toString()
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          16810
+        </td>
+        <td>
+          2671
+          -
+          2674
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headers.referersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          14478
+        </td>
+        <td>
+          2818
+          -
+          2838
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.render
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ra.render(writer, a)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          20681
+        </td>
+        <td>
+          2866
+          -
+          2886
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.render
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          rb.render(writer, b)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          21707
+        </td>
+        <td>
+          2958
+          -
+          2961
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          13444
+        </td>
+        <td>
+          3064
+          -
+          3082
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.server.middleware.corssuite,org.http4s.responderspec
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(ciString)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          13596
+        </td>
+        <td>
+          3161
+          -
+          3164
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.client.middleware.followredirectsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          17722
+        </td>
+        <td>
+          3283
+          -
+          3304
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.addNel
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.addNel[T](values, writer.addNel$default$2[Nothing], writer.addNel$default$3[Nothing], writer.addNel$default$4[Nothing])(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          16690
+        </td>
+        <td>
+          3378
+          -
+          3381
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headers.acceptpostsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          20388
+        </td>
+        <td>
+          3484
+          -
+          3506
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.addList
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.addList[T](values, writer.addList$default$2[Nothing], writer.addList$default$3[Nothing], writer.addList$default$4[Nothing])(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          20920
+        </td>
+        <td>
+          3578
+          -
+          3581
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.headers.accesscontrolallowmethodssuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          14503
+        </td>
+        <td>
+          3682
+          -
+          3703
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.addSet
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.addSet[T](values, writer.addSet$default$2[Nothing], writer.addSet$default$3[Nothing], writer.addSet$default$4[Nothing])(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          21424
+        </td>
+        <td>
+          3804
+          -
+          3807
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          17175
+        </td>
+        <td>
+          3895
+          -
+          3911
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.Select.toRaw1
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          select.toRaw1(t)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          13314
+        </td>
+        <td>
+          3885
+          -
+          3911
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;[org.http4s.Header.Raw](select.toRaw1(t))(Header.this.Raw.catsInstancesForHttp4sHeaderRaw)
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          13819
+        </td>
+        <td>
+          4233
+          -
+          4260
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Renderer.renderString
+        </td>
+        <td>
+          org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Renderer.renderString[org.http4s.util.Renderable](this)(util.this.Renderable.renderableInst[org.http4s.util.Renderable])
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          17743
+        </td>
+        <td>
+          4254
+          -
+          4254
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.forwardedheaderspec,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.util.Renderable]
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          20406
+        </td>
+        <td>
+          4296
+          -
+          4308
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderString
+        </td>
+        <td>
+          org.http4s.headers.forwardedsuite,org.http4s.httpversiondoctest,org.http4s.dsl.responsegeneratorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Renderable.this.renderString
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          16572
+        </td>
+        <td>
+          4398
+          -
+          4439
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Renderable.this.genericInstance.asInstanceOf[org.http4s.util.Renderer[T]]
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          20939
+        </td>
+        <td>
+          4522
+          -
+          4525
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderable.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.headers.ifmodifiedsincesuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          14357
+        </td>
+        <td>
+          4625
+          -
+          4641
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderable.render
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          t.render(writer)
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          13333
+        </td>
+        <td>
+          4717
+          -
+          4724
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Char.toInt
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.toInt
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          16781
+        </td>
+        <td>
+          4706
+          -
+          4712
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;\\\&quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          19679
+        </td>
+        <td>
+          4706
+          -
+          4725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StringOps.map
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(&quot;\\\&quot;&quot;).map[Int](((x$1: Char) =&gt; x$1.toInt))
+        </td>
+      </tr><tr>
+        <td>
+          143
+        </td>
+        <td>
+          17609
+        </td>
+        <td>
+          4699
+          -
+          4730
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SpecificIterableFactory.apply
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.collection.immutable.BitSet.apply((scala.Predef.augmentString(&quot;\\\&quot;&quot;).map[Int](((x$1: Char) =&gt; x$1.toInt)): _*))
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          20003
+        </td>
+        <td>
+          4893
+          -
+          4912
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(ci.toString)
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          13570
+        </td>
+        <td>
+          4900
+          -
+          4911
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.typelevel.ci.CIString.toString
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ci.toString
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          14381
+        </td>
+        <td>
+          4951
+          -
+          4972
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(char.toString())
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          16293
+        </td>
+        <td>
+          4958
+          -
+          4971
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          char.toString()
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          20822
+        </td>
+        <td>
+          5020
+          -
+          5034
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          float.toString()
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          16802
+        </td>
+        <td>
+          5013
+          -
+          5035
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(float.toString())
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          12904
+        </td>
+        <td>
+          5085
+          -
+          5100
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          double.toString()
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          19552
+        </td>
+        <td>
+          5078
+          -
+          5101
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(double.toString())
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          17632
+        </td>
+        <td>
+          5145
+          -
+          5157
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          int.toString()
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          14085
+        </td>
+        <td>
+          5138
+          -
+          5158
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(int.toString())
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          16683
+        </td>
+        <td>
+          5197
+          -
+          5218
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(long.toString())
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          20017
+        </td>
+        <td>
+          5204
+          -
+          5217
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          long.toString()
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          22763
+        </td>
+        <td>
+          5280
+          -
+          5297
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Renderer.render
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          R.render(this, r)
+        </td>
+      </tr><tr>
+        <td>
+          163
+        </td>
+        <td>
+          21187
+        </td>
+        <td>
+          5438
+          -
+          5449
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;('\&quot;')
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          17605
+        </td>
+        <td>
+          5515
+          -
+          5651
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val c: Char = s.charAt(i);
+  if (escapedChars.contains(c.toInt))
+    this.&lt;&lt;(escapeChar)
+  else
+    ();
+  this.&lt;&lt;(c);
+  go(i.+(1))
+}
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          20560
+        </td>
+        <td>
+          5497
+          -
+          5497
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          13303
+        </td>
+        <td>
+          5501
+          -
+          5513
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          i.&lt;(s.length())
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          17316
+        </td>
+        <td>
+          5505
+          -
+          5513
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.length
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.length()
+        </td>
+      </tr><tr>
+        <td>
+          167
+        </td>
+        <td>
+          13972
+        </td>
+        <td>
+          5497
+          -
+          5497
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          19904
+        </td>
+        <td>
+          5533
+          -
+          5544
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.charAt
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.charAt(i)
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          14106
+        </td>
+        <td>
+          5557
+          -
+          5587
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.BitSetOps.contains
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          escapedChars.contains(c.toInt)
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          23096
+        </td>
+        <td>
+          5553
+          -
+          5553
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          20036
+        </td>
+        <td>
+          5589
+          -
+          5607
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.mediatypesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;(escapeChar)
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          17491
+        </td>
+        <td>
+          5579
+          -
+          5586
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Char.toInt
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.toInt
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          16563
+        </td>
+        <td>
+          5589
+          -
+          5607
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.mediatypesuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;(escapeChar)
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          21072
+        </td>
+        <td>
+          5553
+          -
+          5553
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          17333
+        </td>
+        <td>
+          5616
+          -
+          5625
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;(c)
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          19804
+        </td>
+        <td>
+          5634
+          -
+          5643
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.go
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          go(i.+(1))
+        </td>
+      </tr><tr>
+        <td>
+          171
+        </td>
+        <td>
+          13323
+        </td>
+        <td>
+          5637
+          -
+          5642
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          i.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          16582
+        </td>
+        <td>
+          5657
+          -
+          5662
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.go
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          go(0)
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          23004
+        </td>
+        <td>
+          5667
+          -
+          5678
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;('\&quot;')
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          17356
+        </td>
+        <td>
+          5999
+          -
+          6012
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ix.&lt;(s.length())
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          20819
+        </td>
+        <td>
+          6004
+          -
+          6012
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.length
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.length()
+        </td>
+      </tr><tr>
+        <td>
+          180
+        </td>
+        <td>
+          16942
+        </td>
+        <td>
+          6014
+          -
+          6136
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val c: Char = s.charAt(ix);
+  if (keep.apply(c))
+    this.&lt;&lt;(c)
+  else
+    this.&lt;&lt;(placeholder);
+  rec(ix.+(1))
+}
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          13187
+        </td>
+        <td>
+          6032
+          -
+          6044
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.charAt
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.charAt(ix)
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          19819
+        </td>
+        <td>
+          6057
+          -
+          6064
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          keep.apply(c)
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          15677
+        </td>
+        <td>
+          6066
+          -
+          6075
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;(c)
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          13724
+        </td>
+        <td>
+          6066
+          -
+          6075
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;(c)
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          20290
+        </td>
+        <td>
+          6089
+          -
+          6108
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;(placeholder)
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          16453
+        </td>
+        <td>
+          6089
+          -
+          6108
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          this.&lt;&lt;(placeholder)
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          22752
+        </td>
+        <td>
+          6121
+          -
+          6127
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ix.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          20680
+        </td>
+        <td>
+          6117
+          -
+          6128
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.rec
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          rec(ix.+(1))
+        </td>
+      </tr><tr>
+        <td>
+          185
+        </td>
+        <td>
+          12917
+        </td>
+        <td>
+          6142
+          -
+          6146
+        </td>
+        <td>
+          This
+        </td>
+        <td>
+          org.http4s.util.Writer
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          this
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          19707
+        </td>
+        <td>
+          6151
+          -
+          6156
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.rec
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          rec(rec$default$1)
+        </td>
+      </tr><tr>
+        <td>
+          195
+        </td>
+        <td>
+          15693
+        </td>
+        <td>
+          6310
+          -
+          6323
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(start)
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          19797
+        </td>
+        <td>
+          6328
+          -
+          6328
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          17330
+        </td>
+        <td>
+          6344
+          -
+          6421
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  Writer.this.append(s.head);
+  s.tail.foreach[org.http4s.util.Writer](((s: String) =&gt; Writer.this.append(sep).append(s)))
+}
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          13459
+        </td>
+        <td>
+          6328
+          -
+          6328
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          196
+        </td>
+        <td>
+          13743
+        </td>
+        <td>
+          6332
+          -
+          6342
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          s.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          20534
+        </td>
+        <td>
+          6359
+          -
+          6365
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOps.head
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          s.head
+        </td>
+      </tr><tr>
+        <td>
+          197
+        </td>
+        <td>
+          16164
+        </td>
+        <td>
+          6352
+          -
+          6366
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(s.head)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          20700
+        </td>
+        <td>
+          6373
+          -
+          6415
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          s.tail.foreach[org.http4s.util.Writer](((s: String) =&gt; Writer.this.append(sep).append(s)))
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          22618
+        </td>
+        <td>
+          6393
+          -
+          6414
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(sep).append(s)
+        </td>
+      </tr><tr>
+        <td>
+          200
+        </td>
+        <td>
+          15708
+        </td>
+        <td>
+          6426
+          -
+          6437
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(end)
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          13617
+        </td>
+        <td>
+          6586
+          -
+          6610
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.fromList
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.fromList[T](s)
+        </td>
+      </tr><tr>
+        <td>
+          210
+        </td>
+        <td>
+          20557
+        </td>
+        <td>
+          6641
+          -
+          6667
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.addNel
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.addNel[T](s, sep, start, end)(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          16699
+        </td>
+        <td>
+          6695
+          -
+          6708
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(start)
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          22996
+        </td>
+        <td>
+          6717
+          -
+          6728
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(end)
+        </td>
+      </tr><tr>
+        <td>
+          222
+        </td>
+        <td>
+          18925
+        </td>
+        <td>
+          6888
+          -
+          6901
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(start)
+        </td>
+      </tr><tr>
+        <td>
+          223
+        </td>
+        <td>
+          17194
+        </td>
+        <td>
+          6906
+          -
+          6920
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append[T](s.head)(evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          224
+        </td>
+        <td>
+          19678
+        </td>
+        <td>
+          6925
+          -
+          6967
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.foreach
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.server.middleware.staticheaderssuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.tail.foreach[org.http4s.util.Writer](((s: T) =&gt; Writer.this.append(sep).append[T](s)(evidence$6)))
+        </td>
+      </tr><tr>
+        <td>
+          224
+        </td>
+        <td>
+          13479
+        </td>
+        <td>
+          6945
+          -
+          6966
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headersdoctest,munit.scalachecksuite,org.http4s.server.middleware.chunkaggregatorsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(sep).append[T](s)(evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          15919
+        </td>
+        <td>
+          6972
+          -
+          6983
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.headersdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.staticheaderssuite,org.http4s.dsl.responsegeneratorsuite,munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(end)
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          13984
+        </td>
+        <td>
+          7143
+          -
+          7156
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(start)
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          17215
+        </td>
+        <td>
+          7177
+          -
+          7254
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  Writer.this.append[T](s.head)(evidence$7);
+  s.tail.foreach[org.http4s.util.Writer](((s: T) =&gt; Writer.this.append(sep).append[T](s)(evidence$7)))
+}
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          13354
+        </td>
+        <td>
+          7161
+          -
+          7161
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          19696
+        </td>
+        <td>
+          7161
+          -
+          7161
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          munit.scalachecksuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          235
+        </td>
+        <td>
+          20426
+        </td>
+        <td>
+          7165
+          -
+          7175
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.nonEmpty
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          236
+        </td>
+        <td>
+          16444
+        </td>
+        <td>
+          7185
+          -
+          7199
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append[T](s.head)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          19129
+        </td>
+        <td>
+          7206
+          -
+          7248
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foreach
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.tail.foreach[org.http4s.util.Writer](((s: T) =&gt; Writer.this.append(sep).append[T](s)(evidence$7)))
+        </td>
+      </tr><tr>
+        <td>
+          237
+        </td>
+        <td>
+          23013
+        </td>
+        <td>
+          7226
+          -
+          7247
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(sep).append[T](s)(evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          239
+        </td>
+        <td>
+          15933
+        </td>
+        <td>
+          7259
+          -
+          7270
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          munit.scalachecksuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(end)
+        </td>
+      </tr><tr>
+        <td>
+          242
+        </td>
+        <td>
+          22069
+        </td>
+        <td>
+          7315
+          -
+          7324
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(s)
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          22904
+        </td>
+        <td>
+          7365
+          -
+          7373
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.quote
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.quote(s, Writer.this.quote$default$2, Writer.this.quote$default$3)
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          20446
+        </td>
+        <td>
+          7365
+          -
+          7365
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Writer.quote$default$2
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.quote$default$2
+        </td>
+      </tr><tr>
+        <td>
+          243
+        </td>
+        <td>
+          16465
+        </td>
+        <td>
+          7365
+          -
+          7365
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.Writer.quote$default$3
+        </td>
+        <td>
+          org.http4s.parser.contenttypeheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.quote$default$3
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          18903
+        </td>
+        <td>
+          7415
+          -
+          7424
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite,org.http4s.server.middleware.authentication.authenticationsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(s)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          16823
+        </td>
+        <td>
+          7465
+          -
+          7477
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(char)
+        </td>
+      </tr><tr>
+        <td>
+          246
+        </td>
+        <td>
+          13373
+        </td>
+        <td>
+          7520
+          -
+          7533
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(float)
+        </td>
+      </tr><tr>
+        <td>
+          247
+        </td>
+        <td>
+          19719
+        </td>
+        <td>
+          7578
+          -
+          7592
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(double)
+        </td>
+      </tr><tr>
+        <td>
+          248
+        </td>
+        <td>
+          15833
+        </td>
+        <td>
+          7631
+          -
+          7642
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.httpversionsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.server.middleware.virtualhostsuite,org.http4s.client.unexpectedstatussuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(int)
+        </td>
+      </tr><tr>
+        <td>
+          249
+        </td>
+        <td>
+          22081
+        </td>
+        <td>
+          7683
+          -
+          7695
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(long)
+        </td>
+      </tr><tr>
+        <td>
+          250
+        </td>
+        <td>
+          20035
+        </td>
+        <td>
+          7743
+          -
+          7752
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          org.http4s.queryopsdoctest,org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.jawn.jawndecodesupportsuite,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append[T](r)(evidence$8)
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          18800
+        </td>
+        <td>
+          7817
+          -
+          7820
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          16337
+        </td>
+        <td>
+          7891
+          -
+          7900
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.$anon.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          $anon.this.append(x$2)
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          22919
+        </td>
+        <td>
+          7881
+          -
+          7901
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StringOps.foreach
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(s).foreach[&lt;$anon: org.http4s.util.Writer&gt;](((x$2: Char) =&gt; $anon.this.append(x$2)))
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          16842
+        </td>
+        <td>
+          7990
+          -
+          8000
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0.toChar
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          18783
+        </td>
+        <td>
+          7990
+          -
+          7993
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          13477
+        </td>
+        <td>
+          8004
+          -
+          8013
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.==('\r')
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          19590
+        </td>
+        <td>
+          8017
+          -
+          8026
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.==('\n')
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          15569
+        </td>
+        <td>
+          7985
+          -
+          8026
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.==(0.toChar).||(c.==('\r')).||(c.==('\n'))
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          20054
+        </td>
+        <td>
+          8038
+          -
+          8054
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(' ')
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          21975
+        </td>
+        <td>
+          8038
+          -
+          8054
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Writer.this.append(' ')
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          16716
+        </td>
+        <td>
+          8078
+          -
+          8092
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(c)
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          22799
+        </td>
+        <td>
+          8078
+          -
+          8092
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Writer.this.append(c)
+        </td>
+      </tr><tr>
+        <td>
+          266
+        </td>
+        <td>
+          14892
+        </td>
+        <td>
+          8124
+          -
+          8128
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(w)
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          19938
+        </td>
+        <td>
+          8371
+          -
+          8404
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StringBuilder.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new java.lang.StringBuilder(StringWriter.this.size)
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          13347
+        </td>
+        <td>
+          8399
+          -
+          8403
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.util.StringWriter.size
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.size
+        </td>
+      </tr><tr>
+        <td>
+          277
+        </td>
+        <td>
+          16083
+        </td>
+        <td>
+          8445
+          -
+          8457
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.append(s)
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          21990
+        </td>
+        <td>
+          8515
+          -
+          8530
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite,org.http4s.circe.test.circesuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.emberclientsuite,org.http4s.dsl.pathinhttproutessuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.append(char)
+        </td>
+      </tr><tr>
+        <td>
+          279
+        </td>
+        <td>
+          20442
+        </td>
+        <td>
+          8590
+          -
+          8606
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StringBuilder.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StringWriter.this.sb.append(float)
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          16599
+        </td>
+        <td>
+          8668
+          -
+          8685
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StringBuilder.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StringWriter.this.sb.append(double)
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          22899
+        </td>
+        <td>
+          8741
+          -
+          8755
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.httpversionsuite,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.server.middleware.virtualhostsuite,org.http4s.client.unexpectedstatussuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.append(int)
+        </td>
+      </tr><tr>
+        <td>
+          282
+        </td>
+        <td>
+          19308
+        </td>
+        <td>
+          8813
+          -
+          8828
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StringBuilder.append
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.append(long)
+        </td>
+      </tr><tr>
+        <td>
+          285
+        </td>
+        <td>
+          18123
+        </td>
+        <td>
+          8910
+          -
+          8913
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.StringWriter.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          287
+        </td>
+        <td>
+          14907
+        </td>
+        <td>
+          8986
+          -
+          8995
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.AbstractStringBuilder.length
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.length()
+        </td>
+      </tr><tr>
+        <td>
+          288
+        </td>
+        <td>
+          13370
+        </td>
+        <td>
+          9004
+          -
+          9018
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.StringWriter.append
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.append(s)
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          19836
+        </td>
+        <td>
+          9049
+          -
+          9058
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.AbstractStringBuilder.length
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.length()
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          22204
+        </td>
+        <td>
+          9027
+          -
+          9206
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.Range.foreach
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.intWrapper(start).until(StringWriter.this.sb.length()).foreach[Unit](((i: Int) =&gt; {
+  val c: Char = StringWriter.this.sb.charAt(i);
+  if (c.==(0.toChar).||(c.==('\r')).||(c.==('\n')))
+    StringWriter.this.sb.setCharAt(i, ' ')
+  else
+    ()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          15827
+        </td>
+        <td>
+          9080
+          -
+          9092
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.AbstractStringBuilder.charAt
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.charAt(i)
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          15709
+        </td>
+        <td>
+          9103
+          -
+          9103
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          22772
+        </td>
+        <td>
+          9139
+          -
+          9148
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.==
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==('\n')
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          16620
+        </td>
+        <td>
+          9126
+          -
+          9135
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.==
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==('\r')
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          22006
+        </td>
+        <td>
+          9112
+          -
+          9115
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          20307
+        </td>
+        <td>
+          9112
+          -
+          9122
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          0.toChar
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          19033
+        </td>
+        <td>
+          9107
+          -
+          9148
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==(0.toChar).||(c.==('\r')).||(c.==('\n'))
+        </td>
+      </tr><tr>
+        <td>
+          291
+        </td>
+        <td>
+          19583
+        </td>
+        <td>
+          9103
+          -
+          9103
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          292
+        </td>
+        <td>
+          13223
+        </td>
+        <td>
+          9164
+          -
+          9184
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          java.lang.AbstractStringBuilder.setCharAt
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.setCharAt(i, ' ')
+        </td>
+      </tr><tr>
+        <td>
+          292
+        </td>
+        <td>
+          15292
+        </td>
+        <td>
+          9164
+          -
+          9184
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.AbstractStringBuilder.setCharAt
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.setCharAt(i, ' ')
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          18541
+        </td>
+        <td>
+          9295
+          -
+          9298
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          19049
+        </td>
+        <td>
+          9322
+          -
+          9331
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.==
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==('\n')
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          14883
+        </td>
+        <td>
+          9290
+          -
+          9331
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==(0.toChar).||(c.==('\r')).||(c.==('\n'))
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          22790
+        </td>
+        <td>
+          9309
+          -
+          9318
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Char.==
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          c.==('\r')
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          16494
+        </td>
+        <td>
+          9295
+          -
+          9305
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Int.toChar
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          0.toChar
+        </td>
+      </tr><tr>
+        <td>
+          299
+        </td>
+        <td>
+          13247
+        </td>
+        <td>
+          9343
+          -
+          9359
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.StringWriter.append
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.append(' ')
+        </td>
+      </tr><tr>
+        <td>
+          299
+        </td>
+        <td>
+          19445
+        </td>
+        <td>
+          9343
+          -
+          9359
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.StringWriter.append
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.append(' ')
+        </td>
+      </tr><tr>
+        <td>
+          301
+        </td>
+        <td>
+          15729
+        </td>
+        <td>
+          9383
+          -
+          9397
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.StringWriter.append
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.append(c)
+        </td>
+      </tr><tr>
+        <td>
+          301
+        </td>
+        <td>
+          21982
+        </td>
+        <td>
+          9383
+          -
+          9397
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.StringWriter.append
+        </td>
+        <td>
+          org.http4s.util.stringwritersuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.append(c)
+        </td>
+      </tr><tr>
+        <td>
+          305
+        </td>
+        <td>
+          16222
+        </td>
+        <td>
+          9429
+          -
+          9433
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          org.http4s.parser.contentdispositionheadersuite
+        </td>
+        <td style="background: #AEF1AE">
+          f.apply(w)
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          22814
+        </td>
+        <td>
+          9471
+          -
+          9482
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.StringBuilder.toString
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          StringWriter.this.sb.toString()
+        </td>
+      </tr><tr>
+        <td>
+          313
+        </td>
+        <td>
+          18941
+        </td>
+        <td>
+          9540
+          -
+          9542
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.client.javanetclientspec,org.http4s.circe.middleware.jsondebugerrorhandlerspec,org.http4s.ember.core.requestsplittingsuite,org.http4s.httpversiondoctest,org.http4s.ember.server.emberservermtlssuite,org.http4s.server.middleware.erroractionsuite,org.http4s.parser.contenttypeheadersuite,org.http4s.ember.client.internal.clienthelperssuite,org.http4s.dsl.pathinhttproutessuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          64
+        </td>
+      </tr><tr>
+        <td>
+          317
+        </td>
+        <td>
+          14898
+        </td>
+        <td>
+          9633
+          -
+          9635
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0L
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          19464
+        </td>
+        <td>
+          9758
+          -
+          9775
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HeaderLengthCountingWriter.this.length.+(s.length())
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          15749
+        </td>
+        <td>
+          9749
+          -
+          9775
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.HeaderLengthCountingWriter.length_=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HeaderLengthCountingWriter.this.length_=(HeaderLengthCountingWriter.this.length.+(s.length()))
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          21320
+        </td>
+        <td>
+          9767
+          -
+          9775
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.length
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          s.length()
+        </td>
+      </tr><tr>
+        <td>
+          326
+        </td>
+        <td>
+          22497
+        </td>
+        <td>
+          9854
+          -
+          9861
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.apply(this)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

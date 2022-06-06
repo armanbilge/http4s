@@ -1,0 +1,1499 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/PushSupport.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.Monad
+</span>22 <span style=''>import cats.data.Kleisli
+</span>23 <span style=''>import cats.effect.SyncIO
+</span>24 <span style=''>import cats.syntax.all._
+</span>25 <span style=''>import org.log4s.getLogger
+</span>26 <span style=''>import org.typelevel.vault._
+</span>27 <span style=''>
+</span>28 <span style=''>@deprecated(&quot;Obsolete. Not implemented by any backends.&quot;, &quot;0.23.12&quot;)
+</span>29 <span style=''>object PushSupport {
+</span>30 <span style=''>  private[this] val logger = getLogger
+</span>31 <span style=''>
+</span>32 <span style=''>  implicit def http4sPushOps[F[_]](response: Response[F]): PushOps[F] =
+</span>33 <span style=''>    </span><span style='background: #F0ADAD'>new PushOps[F](response)</span><span style=''>
+</span>34 <span style=''>
+</span>35 <span style=''>  final class PushOps[F[_]](response: Response[F]) extends AnyRef {
+</span>36 <span style=''>    def push(url: String, cascade: Boolean = true)(implicit req: Request[F]): Response[F] = {
+</span>37 <span style=''>      val newUrl = {
+</span>38 <span style=''>        val script = req.scriptName
+</span>39 <span style=''>        if (</span><span style='background: #F0ADAD'>script.nonEmpty</span><span style=''>) </span><span style='background: #F0ADAD'>{
+</span>40 <span style=''></span><span style='background: #F0ADAD'>          val sb = new StringBuilder()
+</span>41 <span style=''></span><span style='background: #F0ADAD'>          sb.append(script.toAbsolute)
+</span>42 <span style=''></span><span style='background: #F0ADAD'>          sb.append(url).result()
+</span>43 <span style=''></span><span style='background: #F0ADAD'>        }</span><span style=''> else </span><span style='background: #F0ADAD'>url</span><span style=''>
+</span>44 <span style=''>      }
+</span>45 <span style=''>
+</span>46 <span style=''>      logger.trace(s&quot;Adding push resource: $newUrl&quot;)
+</span>47 <span style=''>
+</span>48 <span style=''>      val newPushResouces = </span><span style='background: #F0ADAD'>response.attributes
+</span>49 <span style=''></span><span style='background: #F0ADAD'>        .lookup(pushLocationKey)
+</span>50 <span style=''></span><span style='background: #F0ADAD'>        .map(_ :+ PushLocation(newUrl, cascade))
+</span>51 <span style=''></span><span style='background: #F0ADAD'>        .getOrElse(Vector(PushLocation(newUrl, cascade)))</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>      </span><span style='background: #F0ADAD'>response.copy(
+</span>54 <span style=''></span><span style='background: #F0ADAD'>        body = response.body,
+</span>55 <span style=''></span><span style='background: #F0ADAD'>        attributes = response.attributes.insert(PushSupport.pushLocationKey, newPushResouces),
+</span>56 <span style=''></span><span style='background: #F0ADAD'>      )</span><span style=''>
+</span>57 <span style=''>    }
+</span>58 <span style=''>  }
+</span>59 <span style=''>
+</span>60 <span style=''>  private def collectResponse[F[_]](
+</span>61 <span style=''>      r: Vector[PushLocation],
+</span>62 <span style=''>      req: Request[F],
+</span>63 <span style=''>      verify: String =&gt; Boolean,
+</span>64 <span style=''>      routes: HttpRoutes[F],
+</span>65 <span style=''>  )(implicit F: Monad[F]): F[Vector[PushResponse[F]]] = {
+</span>66 <span style=''>    val emptyCollect: F[Vector[PushResponse[F]]] = </span><span style='background: #F0ADAD'>F.pure(Vector.empty[PushResponse[F]])</span><span style=''>
+</span>67 <span style=''>
+</span>68 <span style=''>    def fetchAndAdd(facc: F[Vector[PushResponse[F]]], v: PushLocation): F[Vector[PushResponse[F]]] =
+</span>69 <span style=''>      </span><span style='background: #F0ADAD'>routes(req.withPathInfo(Uri.Path.unsafeFromString(v.location))).value.flatMap {
+</span>70 <span style=''></span><span style='background: #F0ADAD'>        case None =&gt; emptyCollect
+</span>71 <span style=''></span><span style='background: #F0ADAD'>        case Some(response) =&gt;
+</span>72 <span style=''></span><span style='background: #F0ADAD'>          if (v.cascade) {
+</span>73 <span style=''></span><span style='background: #F0ADAD'>            val pr = PushResponse(v.location, response)
+</span>74 <span style=''></span><span style='background: #F0ADAD'>            response.attributes.lookup(pushLocationKey) match {
+</span>75 <span style=''></span><span style='background: #F0ADAD'>              case Some(pushed) =&gt; // Need to gather the sub resources
+</span>76 <span style=''></span><span style='background: #F0ADAD'>                val fsubs = collectResponse(pushed, req, verify, routes)
+</span>77 <span style=''></span><span style='background: #F0ADAD'>                F.map2(facc, fsubs)(_ ++ _ :+ pr)
+</span>78 <span style=''></span><span style='background: #F0ADAD'>              case None =&gt; facc.map(_ :+ pr)
+</span>79 <span style=''></span><span style='background: #F0ADAD'>            }
+</span>80 <span style=''></span><span style='background: #F0ADAD'>          } else {
+</span>81 <span style=''></span><span style='background: #F0ADAD'>            facc.map(_ :+ PushResponse(v.location, response))
+</span>82 <span style=''></span><span style='background: #F0ADAD'>          }
+</span>83 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>84 <span style=''>
+</span>85 <span style=''>    </span><span style='background: #F0ADAD'>r.filter(x =&gt; verify(x.location)).foldLeft(emptyCollect)(fetchAndAdd)</span><span style=''>
+</span>86 <span style=''>  }
+</span>87 <span style=''>
+</span>88 <span style=''>  /** Transform the route such that requests will gather pushed resources
+</span>89 <span style=''>    *
+</span>90 <span style=''>    * @param routes HttpRoutes to transform
+</span>91 <span style=''>    * @param verify method that determines if the location should be pushed
+</span>92 <span style=''>    * @return      Transformed route
+</span>93 <span style=''>    */
+</span>94 <span style=''>  def apply[F[_]: Monad](
+</span>95 <span style=''>      routes: HttpRoutes[F],
+</span>96 <span style=''>      verify: String =&gt; Boolean = _ =&gt; true,
+</span>97 <span style=''>  ): HttpRoutes[F] = {
+</span>98 <span style=''>    def gather(req: Request[F])(resp: Response[F]): Response[F] =
+</span>99 <span style=''>      </span><span style='background: #F0ADAD'>resp.attributes
+</span>100 <span style=''></span><span style='background: #F0ADAD'>        .lookup(pushLocationKey)
+</span>101 <span style=''></span><span style='background: #F0ADAD'>        .map { fresource =&gt;
+</span>102 <span style=''></span><span style='background: #F0ADAD'>          val collected = collectResponse(fresource, req, verify, routes)
+</span>103 <span style=''></span><span style='background: #F0ADAD'>          resp.copy(
+</span>104 <span style=''></span><span style='background: #F0ADAD'>            attributes = resp.attributes.insert(pushResponsesKey[F], collected)
+</span>105 <span style=''></span><span style='background: #F0ADAD'>          )
+</span>106 <span style=''></span><span style='background: #F0ADAD'>        }
+</span>107 <span style=''></span><span style='background: #F0ADAD'>        .getOrElse(resp)</span><span style=''>
+</span>108 <span style=''>
+</span>109 <span style=''>    </span><span style='background: #F0ADAD'>Kleisli(req =&gt; routes(req).map(gather(req)))</span><span style=''>
+</span>110 <span style=''>  }
+</span>111 <span style=''>
+</span>112 <span style=''>  private[PushSupport] final case class PushLocation(location: String, cascade: Boolean)
+</span>113 <span style=''>  private[http4s] final case class PushResponse[F[_]](location: String, resp: Response[F])
+</span>114 <span style=''>
+</span>115 <span style=''>  private[PushSupport] val pushLocationKey =
+</span>116 <span style=''>    </span><span style='background: #F0ADAD'>Key.newKey[SyncIO, Vector[PushLocation]].unsafeRunSync()</span><span style=''>
+</span>117 <span style=''>  private[http4s] def pushResponsesKey[F[_]]: Key[F[Vector[PushResponse[F]]]] =
+</span>118 <span style=''>    </span><span style='background: #F0ADAD'>Keys.PushResponses.asInstanceOf[Key[F[Vector[PushResponse[F]]]]]</span><span style=''>
+</span>119 <span style=''>
+</span>120 <span style=''>  private[this] object Keys {
+</span>121 <span style=''>    val PushResponses: Key[Any] = </span><span style='background: #F0ADAD'>Key.newKey[SyncIO, Any].unsafeRunSync()</span><span style=''>
+</span>122 <span style=''>  }
+</span>123 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          9698
+        </td>
+        <td>
+          1006
+          -
+          1030
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushOps.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new org.http4s.server.middleware.PushSupport.PushOps[F](response)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          8573
+        </td>
+        <td>
+          1263
+          -
+          1278
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          script.nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          9469
+        </td>
+        <td>
+          1280
+          -
+          1403
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  val sb: StringBuilder = new scala.`package`.StringBuilder();
+  sb.append(script.toAbsolute);
+  sb.append(url).result()
+}
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          7530
+        </td>
+        <td>
+          1301
+          -
+          1320
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new scala.`package`.StringBuilder()
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          9802
+        </td>
+        <td>
+          1341
+          -
+          1358
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.toAbsolute
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          script.toAbsolute
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          8785
+        </td>
+        <td>
+          1331
+          -
+          1359
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.append
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          sb.append(script.toAbsolute)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          7618
+        </td>
+        <td>
+          1370
+          -
+          1393
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.mutable.StringBuilder.result
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          sb.append(url).result()
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          8347
+        </td>
+        <td>
+          1409
+          -
+          1412
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushOps.url
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          url
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          7804
+        </td>
+        <td>
+          1540
+          -
+          1555
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.pushLocationKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.this.pushLocationKey
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          9604
+        </td>
+        <td>
+          1575
+          -
+          1604
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushLocation.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.this.PushLocation.apply(newUrl, cascade)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          8539
+        </td>
+        <td>
+          1570
+          -
+          1604
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$1.:+[org.http4s.server.middleware.PushSupport.PushLocation](PushSupport.this.PushLocation.apply(newUrl, cascade))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9321
+        </td>
+        <td>
+          1625
+          -
+          1662
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Vector.apply[org.http4s.server.middleware.PushSupport.PushLocation](PushSupport.this.PushLocation.apply(newUrl, cascade))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8729
+        </td>
+        <td>
+          1504
+          -
+          1663
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushOps.this.response.attributes.lookup[Vector[org.http4s.server.middleware.PushSupport.PushLocation]](PushSupport.this.pushLocationKey).map[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushLocation]](((x$1: Vector[org.http4s.server.middleware.PushSupport.PushLocation]) =&gt; x$1.:+[org.http4s.server.middleware.PushSupport.PushLocation](PushSupport.this.PushLocation.apply(newUrl, cascade)))).getOrElse[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushLocation]](scala.`package`.Vector.apply[org.http4s.server.middleware.PushSupport.PushLocation](PushSupport.this.PushLocation.apply(newUrl, cascade)))
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          7391
+        </td>
+        <td>
+          1632
+          -
+          1661
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushLocation.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.this.PushLocation.apply(newUrl, cascade)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7398
+        </td>
+        <td>
+          1671
+          -
+          1818
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushOps.this.response.copy(x$3, x$4, x$5, x$1, x$2)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8543
+        </td>
+        <td>
+          1680
+          -
+          1680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushOps.this.response.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7810
+        </td>
+        <td>
+          1680
+          -
+          1680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushOps.this.response.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9570
+        </td>
+        <td>
+          1680
+          -
+          1680
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushOps.this.response.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          7623
+        </td>
+        <td>
+          1701
+          -
+          1714
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.body
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushOps.this.response.body
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          8298
+        </td>
+        <td>
+          1737
+          -
+          1809
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.vault.Vault.insert
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushOps.this.response.attributes.insert[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushLocation]](PushSupport.pushLocationKey, newPushResouces)
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          9447
+        </td>
+        <td>
+          1764
+          -
+          1791
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.pushLocationKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.pushLocationKey
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          8660
+        </td>
+        <td>
+          2092
+          -
+          2129
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](scala.`package`.Vector.empty[org.http4s.server.middleware.PushSupport.PushResponse[F]])
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          9208
+        </td>
+        <td>
+          2099
+          -
+          2128
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Vector.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Vector.empty[org.http4s.server.middleware.PushSupport.PushResponse[F]]
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          8447
+        </td>
+        <td>
+          2238
+          -
+          2883
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, Option[org.http4s.Response[F]]](routes.apply(req.withPathInfo(Uri.Path.unsafeFromString(v.location))).value)(F).flatMap[Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](((x0$1: Option[org.http4s.Response[F]]) =&gt; x0$1 match {
+  case scala.None =&gt; emptyCollect
+  case (value: org.http4s.Response[F]): Some[org.http4s.Response[F]]((response @ _)) =&gt; if (v.cascade)
+    {
+      val pr: org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]] = PushSupport.this.PushResponse.apply[[_]F[_]](v.location, response);
+      response.attributes.lookup[Vector[org.http4s.server.middleware.PushSupport.PushLocation]](PushSupport.this.pushLocationKey) match {
+        case (value: Vector[org.http4s.server.middleware.PushSupport.PushLocation]): Some[Vector[org.http4s.server.middleware.PushSupport.PushLocation]]((pushed @ _)) =&gt; {
+          val fsubs: F[Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]]] = PushSupport.this.collectResponse[[_]F[_]](pushed, req, verify, routes)(F);
+          F.map2[Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]], Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]], scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc, fsubs)(((x$2: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]], x$3: Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]]) =&gt; x$2.++[org.http4s.server.middleware.PushSupport.PushResponse[F]](x$3).:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](pr)))
+        }
+        case scala.None =&gt; cats.syntax.`package`.all.toFunctorOps[F, Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc)(F).map[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](((x$4: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]) =&gt; x$4.:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](pr)))
+      }
+    }
+  else
+    cats.syntax.`package`.all.toFunctorOps[F, Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc)(F).map[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](((x$5: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]) =&gt; x$5.:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](PushSupport.this.PushResponse.apply[[_]F[_]](v.location, response))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          8303
+        </td>
+        <td>
+          2245
+          -
+          2300
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.withPathInfo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          req.withPathInfo(Uri.Path.unsafeFromString(v.location))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          7902
+        </td>
+        <td>
+          2238
+          -
+          2307
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.OptionT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          routes.apply(req.withPathInfo(Uri.Path.unsafeFromString(v.location))).value
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          9529
+        </td>
+        <td>
+          2262
+          -
+          2299
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.unsafeFromString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Uri.Path.unsafeFromString(v.location)
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          7576
+        </td>
+        <td>
+          2288
+          -
+          2298
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushLocation.location
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          v.location
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          9573
+        </td>
+        <td>
+          2397
+          -
+          2406
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushLocation.cascade
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          v.cascade
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          8502
+        </td>
+        <td>
+          2408
+          -
+          2794
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  val pr: org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]] = PushSupport.this.PushResponse.apply[[_]F[_]](v.location, response);
+  response.attributes.lookup[Vector[org.http4s.server.middleware.PushSupport.PushLocation]](PushSupport.this.pushLocationKey) match {
+    case (value: Vector[org.http4s.server.middleware.PushSupport.PushLocation]): Some[Vector[org.http4s.server.middleware.PushSupport.PushLocation]]((pushed @ _)) =&gt; {
+      val fsubs: F[Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]]] = PushSupport.this.collectResponse[[_]F[_]](pushed, req, verify, routes)(F);
+      F.map2[Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]], Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]], scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc, fsubs)(((x$2: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]], x$3: Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]]) =&gt; x$2.++[org.http4s.server.middleware.PushSupport.PushResponse[F]](x$3).:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](pr)))
+    }
+    case scala.None =&gt; cats.syntax.`package`.all.toFunctorOps[F, Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc)(F).map[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](((x$4: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]) =&gt; x$4.:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](pr)))
+  }
+}
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          8494
+        </td>
+        <td>
+          2444
+          -
+          2454
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushLocation.location
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          v.location
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          7527
+        </td>
+        <td>
+          2431
+          -
+          2465
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushResponse.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.this.PushResponse.apply[[_]F[_]](v.location, response)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          8717
+        </td>
+        <td>
+          2478
+          -
+          2521
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.vault.Vault.lookup
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          response.attributes.lookup[Vector[org.http4s.server.middleware.PushSupport.PushLocation]](PushSupport.this.pushLocationKey)
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          9209
+        </td>
+        <td>
+          2505
+          -
+          2520
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.pushLocationKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.this.pushLocationKey
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          7582
+        </td>
+        <td>
+          2629
+          -
+          2673
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.collectResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.this.collectResponse[[_]F[_]](pushed, req, verify, routes)(F)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          9536
+        </td>
+        <td>
+          2710
+          -
+          2722
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$2.++[org.http4s.server.middleware.PushSupport.PushResponse[F]](x$3).:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](pr)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          8442
+        </td>
+        <td>
+          2690
+          -
+          2723
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.map2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.map2[Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]], Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]], scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc, fsubs)(((x$2: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]], x$3: Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]]) =&gt; x$2.++[org.http4s.server.middleware.PushSupport.PushResponse[F]](x$3).:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](pr)))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          9650
+        </td>
+        <td>
+          2751
+          -
+          2768
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc)(F).map[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](((x$4: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]) =&gt; x$4.:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](pr)))
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          7327
+        </td>
+        <td>
+          2760
+          -
+          2767
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$4.:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](pr)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          8726
+        </td>
+        <td>
+          2823
+          -
+          2862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqOps.:+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$5.:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](PushSupport.this.PushResponse.apply[[_]F[_]](v.location, response))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          7535
+        </td>
+        <td>
+          2841
+          -
+          2851
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushLocation.location
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          v.location
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          9362
+        </td>
+        <td>
+          2828
+          -
+          2862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushResponse.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.this.PushResponse.apply[[_]F[_]](v.location, response)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          9496
+        </td>
+        <td>
+          2814
+          -
+          2863
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc)(F).map[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](((x$5: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]) =&gt; x$5.:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](PushSupport.this.PushResponse.apply[[_]F[_]](v.location, response))))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          7704
+        </td>
+        <td>
+          2814
+          -
+          2863
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](facc)(F).map[scala.collection.immutable.Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]](((x$5: Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]) =&gt; x$5.:+[org.http4s.server.middleware.PushSupport.PushResponse[F]](PushSupport.this.PushResponse.apply[[_]F[_]](v.location, response))))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          7485
+        </td>
+        <td>
+          2889
+          -
+          2958
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          r.filter(((x: org.http4s.server.middleware.PushSupport.PushLocation) =&gt; verify.apply(x.location))).foldLeft[F[Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]]](emptyCollect)(((facc: F[Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]], v: org.http4s.server.middleware.PushSupport.PushLocation) =&gt; fetchAndAdd(facc, v)))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          7278
+        </td>
+        <td>
+          2910
+          -
+          2920
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.PushLocation.location
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x.location
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          9657
+        </td>
+        <td>
+          2903
+          -
+          2921
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          verify.apply(x.location)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          8541
+        </td>
+        <td>
+          2946
+          -
+          2957
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.PushSupport.fetchAndAdd
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fetchAndAdd(facc, v)
+        </td>
+      </tr><tr>
+        <td>
+          107
+        </td>
+        <td>
+          9269
+        </td>
+        <td>
+          3403
+          -
+          3701
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.attributes.lookup[Vector[org.http4s.server.middleware.PushSupport.PushLocation]](PushSupport.this.pushLocationKey).map[org.http4s.Response[F]](((fresource: Vector[org.http4s.server.middleware.PushSupport.PushLocation]) =&gt; {
+  val collected: F[Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]]] = PushSupport.this.collectResponse[[_]F[_]](fresource, req, verify, routes)(evidence$1);
+  {
+    &lt;artifact&gt; val x$1: org.typelevel.vault.Vault = resp.attributes.insert[F[Vector[org.http4s.server.middleware.PushSupport.PushResponse[[_]F[_]]]]](PushSupport.this.pushResponsesKey[F], collected);
+    &lt;artifact&gt; val x$2: org.http4s.Status = resp.copy$default$1;
+    &lt;artifact&gt; val x$3: org.http4s.HttpVersion = resp.copy$default$2;
+    &lt;artifact&gt; val x$4: org.http4s.Headers = resp.copy$default$3;
+    &lt;artifact&gt; val x$5: org.http4s.EntityBody[F] @scala.reflect.internal.annotations.uncheckedBounds = resp.copy$default$4;
+    resp.copy(x$2, x$3, x$4, x$5, x$1)
+  }
+})).getOrElse[org.http4s.Response[F]](resp)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          8210
+        </td>
+        <td>
+          3722
+          -
+          3750
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          routes.apply(req).map[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; gather(req)(resp)))(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          7677
+        </td>
+        <td>
+          3707
+          -
+          3751
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; routes.apply(req).map[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; gather(req)(resp)))(evidence$1)))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          9449
+        </td>
+        <td>
+          3987
+          -
+          4043
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.typelevel.vault.Key.newKey[cats.effect.SyncIO, Vector[org.http4s.server.middleware.PushSupport.PushLocation]](effect.this.SyncIO.syncForSyncIO, effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          8399
+        </td>
+        <td>
+          4128
+          -
+          4192
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.asInstanceOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          PushSupport.this.Keys.PushResponses.asInstanceOf[org.typelevel.vault.Key[F[Vector[org.http4s.server.middleware.PushSupport.PushResponse[F]]]]]
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          7285
+        </td>
+        <td>
+          4258
+          -
+          4297
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.typelevel.vault.Key.newKey[cats.effect.SyncIO, Any](effect.this.SyncIO.syncForSyncIO, effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

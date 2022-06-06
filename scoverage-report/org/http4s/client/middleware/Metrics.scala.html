@@ -1,0 +1,673 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/middleware/Metrics.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.client.middleware
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.effect.Clock
+</span>20 <span style=''>import cats.effect.Concurrent
+</span>21 <span style=''>import cats.effect.Ref
+</span>22 <span style=''>import cats.effect.Resource
+</span>23 <span style=''>import cats.syntax.all._
+</span>24 <span style=''>import org.http4s.Request
+</span>25 <span style=''>import org.http4s.Response
+</span>26 <span style=''>import org.http4s.Status
+</span>27 <span style=''>import org.http4s.client.Client
+</span>28 <span style=''>import org.http4s.metrics.MetricsOps
+</span>29 <span style=''>import org.http4s.metrics.TerminationType.Error
+</span>30 <span style=''>import org.http4s.metrics.TerminationType.Timeout
+</span>31 <span style=''>
+</span>32 <span style=''>import scala.concurrent.TimeoutException
+</span>33 <span style=''>
+</span>34 <span style=''>/** Client middleware to record metrics for the http4s client.
+</span>35 <span style=''>  *
+</span>36 <span style=''>  * This middleware will record:
+</span>37 <span style=''>  * - Number of active requests
+</span>38 <span style=''>  * - Time duration to receive the response headers
+</span>39 <span style=''>  * - Time duration to process the whole response body
+</span>40 <span style=''>  * - Time duration of errors, timeouts and other abnormal terminations
+</span>41 <span style=''>  *
+</span>42 <span style=''>  * This middleware can be extended to support any metrics ecosystem by
+</span>43 <span style=''>  * implementing the [[org.http4s.metrics.MetricsOps]] type
+</span>44 <span style=''>  */
+</span>45 <span style=''>object Metrics {
+</span>46 <span style=''>
+</span>47 <span style=''>  /** Wraps a [[Client]] with a middleware capable of recording metrics
+</span>48 <span style=''>    *
+</span>49 <span style=''>    * @param ops a algebra describing the metrics operations
+</span>50 <span style=''>    * @param classifierF a function that allows to add a classifier that can be customized per request
+</span>51 <span style=''>    * @param client the [[Client]] to gather metrics from
+</span>52 <span style=''>    * @return the metrics middleware wrapping the [[Client]]
+</span>53 <span style=''>    */
+</span>54 <span style=''>  def apply[F[_]](
+</span>55 <span style=''>      ops: MetricsOps[F],
+</span>56 <span style=''>      classifierF: Request[F] =&gt; Option[String] = { (_: Request[F]) =&gt;
+</span>57 <span style=''>        None
+</span>58 <span style=''>      },
+</span>59 <span style=''>  )(client: Client[F])(implicit F: Clock[F], C: Concurrent[F]): Client[F] =
+</span>60 <span style=''>    </span><span style='background: #F0ADAD'>effect(ops, classifierF.andThen(_.pure[F]))(client)</span><span style=''>
+</span>61 <span style=''>
+</span>62 <span style=''>  /** Wraps a [[Client]] with a middleware capable of recording metrics
+</span>63 <span style=''>    *
+</span>64 <span style=''>    * Same as [[apply]], but can classify requests effectually, e.g. performing side-effects or examining the body.
+</span>65 <span style=''>    * Failed attempt to classify the request (e.g. failing with `F.raiseError`) leads to not recording metrics for that request.
+</span>66 <span style=''>    *
+</span>67 <span style=''>    * @note Compiling the request body in `classifierF` is unsafe, unless you are using some caching middleware.
+</span>68 <span style=''>    *
+</span>69 <span style=''>    * @param ops a algebra describing the metrics operations
+</span>70 <span style=''>    * @param classifierF a function that allows to add a classifier that can be customized per request
+</span>71 <span style=''>    * @param client the [[Client]] to gather metrics from
+</span>72 <span style=''>    * @return the metrics middleware wrapping the [[Client]]
+</span>73 <span style=''>    */
+</span>74 <span style=''>  def effect[F[_]](ops: MetricsOps[F], classifierF: Request[F] =&gt; F[Option[String]])(
+</span>75 <span style=''>      client: Client[F]
+</span>76 <span style=''>  )(implicit F: Clock[F], C: Concurrent[F]): Client[F] =
+</span>77 <span style=''>    </span><span style='background: #F0ADAD'>Client(withMetrics(client, ops, classifierF))</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>  private def withMetrics[F[_]](
+</span>80 <span style=''>      client: Client[F],
+</span>81 <span style=''>      ops: MetricsOps[F],
+</span>82 <span style=''>      classifierF: Request[F] =&gt; F[Option[String]],
+</span>83 <span style=''>  )(req: Request[F])(implicit F: Clock[F], C: Concurrent[F]): Resource[F, Response[F]] =
+</span>84 <span style=''>    </span><span style='background: #F0ADAD'>for {
+</span>85 <span style=''></span><span style='background: #F0ADAD'>      statusRef &lt;- Resource.eval(C.ref[Option[Status]](None))
+</span>86 <span style=''></span><span style='background: #F0ADAD'>      start &lt;- Resource.eval(F.monotonic)
+</span>87 <span style=''></span><span style='background: #F0ADAD'>      resp &lt;- executeRequestAndRecordMetrics(
+</span>88 <span style=''></span><span style='background: #F0ADAD'>        client,
+</span>89 <span style=''></span><span style='background: #F0ADAD'>        ops,
+</span>90 <span style=''></span><span style='background: #F0ADAD'>        classifierF,
+</span>91 <span style=''></span><span style='background: #F0ADAD'>        req,
+</span>92 <span style=''></span><span style='background: #F0ADAD'>        statusRef,
+</span>93 <span style=''></span><span style='background: #F0ADAD'>        start.toNanos,
+</span>94 <span style=''></span><span style='background: #F0ADAD'>      )
+</span>95 <span style=''></span><span style='background: #F0ADAD'>    } yield resp</span><span style=''>
+</span>96 <span style=''>
+</span>97 <span style=''>  private def executeRequestAndRecordMetrics[F[_]](
+</span>98 <span style=''>      client: Client[F],
+</span>99 <span style=''>      ops: MetricsOps[F],
+</span>100 <span style=''>      classifierF: Request[F] =&gt; F[Option[String]],
+</span>101 <span style=''>      req: Request[F],
+</span>102 <span style=''>      statusRef: Ref[F, Option[Status]],
+</span>103 <span style=''>      start: Long,
+</span>104 <span style=''>  )(implicit F: Clock[F], C: Concurrent[F]): Resource[F, Response[F]] =
+</span>105 <span style=''>    </span><span style='background: #F0ADAD'>(for {
+</span>106 <span style=''></span><span style='background: #F0ADAD'>      classifier &lt;- Resource.eval(classifierF(req))
+</span>107 <span style=''></span><span style='background: #F0ADAD'>      _ &lt;- Resource.make(ops.increaseActiveRequests(classifier))(_ =&gt;
+</span>108 <span style=''></span><span style='background: #F0ADAD'>        ops.decreaseActiveRequests(classifier)
+</span>109 <span style=''></span><span style='background: #F0ADAD'>      )
+</span>110 <span style=''></span><span style='background: #F0ADAD'>      _ &lt;- Resource.onFinalize(
+</span>111 <span style=''></span><span style='background: #F0ADAD'>        F.monotonic
+</span>112 <span style=''></span><span style='background: #F0ADAD'>          .flatMap(now =&gt;
+</span>113 <span style=''></span><span style='background: #F0ADAD'>            statusRef.get.flatMap(oStatus =&gt;
+</span>114 <span style=''></span><span style='background: #F0ADAD'>              oStatus.traverse_(status =&gt;
+</span>115 <span style=''></span><span style='background: #F0ADAD'>                ops.recordTotalTime(req.method, status, now.toNanos - start, classifier)
+</span>116 <span style=''></span><span style='background: #F0ADAD'>              )
+</span>117 <span style=''></span><span style='background: #F0ADAD'>            )
+</span>118 <span style=''></span><span style='background: #F0ADAD'>          )
+</span>119 <span style=''></span><span style='background: #F0ADAD'>      )
+</span>120 <span style=''></span><span style='background: #F0ADAD'>      resp &lt;- client.run(req)
+</span>121 <span style=''></span><span style='background: #F0ADAD'>      _ &lt;- Resource.eval(statusRef.set(Some(resp.status)))
+</span>122 <span style=''></span><span style='background: #F0ADAD'>      end &lt;- Resource.eval(F.monotonic)
+</span>123 <span style=''></span><span style='background: #F0ADAD'>      _ &lt;- Resource.eval(ops.recordHeadersTime(req.method, end.toNanos - start, classifier))
+</span>124 <span style=''></span><span style='background: #F0ADAD'>    } yield resp).handleErrorWith { (e: Throwable) =&gt;
+</span>125 <span style=''></span><span style='background: #F0ADAD'>      Resource.eval(
+</span>126 <span style=''></span><span style='background: #F0ADAD'>        classifierF(req).flatMap(registerError(start, ops, _)(e)) *&gt; C.raiseError[Response[F]](e)
+</span>127 <span style=''></span><span style='background: #F0ADAD'>      )
+</span>128 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>129 <span style=''>
+</span>130 <span style=''>  private def registerError[F[_]](start: Long, ops: MetricsOps[F], classifier: Option[String])(
+</span>131 <span style=''>      e: Throwable
+</span>132 <span style=''>  )(implicit F: Clock[F], C: Concurrent[F]): F[Unit] =
+</span>133 <span style=''>    </span><span style='background: #F0ADAD'>F.monotonic
+</span>134 <span style=''></span><span style='background: #F0ADAD'>      .flatMap { now =&gt;
+</span>135 <span style=''></span><span style='background: #F0ADAD'>        if (e.isInstanceOf[TimeoutException])
+</span>136 <span style=''></span><span style='background: #F0ADAD'>          ops.recordAbnormalTermination(now.toNanos - start, Timeout, classifier)
+</span>137 <span style=''></span><span style='background: #F0ADAD'>        else
+</span>138 <span style=''></span><span style='background: #F0ADAD'>          ops.recordAbnormalTermination(now.toNanos - start, Error(e), classifier)
+</span>139 <span style=''></span><span style='background: #F0ADAD'>      }</span><span style=''>
+</span>140 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          11809
+        </td>
+        <td>
+          2108
+          -
+          2159
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.Metrics.effect
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Metrics.this.effect[F](ops, classifierF.andThen[F[Option[String]]](((x$2: Option[String]) =&gt; cats.syntax.`package`.all.catsSyntaxApplicativeId[Option[String]](x$2).pure[F](C))))(client)(F, C)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          11619
+        </td>
+        <td>
+          3070
+          -
+          3115
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.client.Client.apply[[_]F[_]](((req: org.http4s.Request[F]) =&gt; Metrics.this.withMetrics[F](client, ops, classifierF)(req)(F, C)))(C)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          11585
+        </td>
+        <td>
+          3346
+          -
+          3631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Resource.eval[F, cats.effect.kernel.Ref[F,Option[org.http4s.Status]]](C.ref[Option[org.http4s.Status]](scala.None)).flatMap[org.http4s.Response[F]](((statusRef: cats.effect.kernel.Ref[F,Option[org.http4s.Status]]) =&gt; cats.effect.`package`.Resource.eval[F, scala.concurrent.duration.FiniteDuration](F.monotonic).flatMap[org.http4s.Response[F]](((start: scala.concurrent.duration.FiniteDuration) =&gt; Metrics.this.executeRequestAndRecordMetrics[F](client, ops, classifierF, req, statusRef, start.toNanos)(F, C)))))
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          11883
+        </td>
+        <td>
+          3385
+          -
+          3412
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.GenConcurrent.ref
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          C.ref[Option[org.http4s.Status]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          11222
+        </td>
+        <td>
+          3407
+          -
+          3411
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          11989
+        </td>
+        <td>
+          3420
+          -
+          3631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Resource.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Resource.eval[F, scala.concurrent.duration.FiniteDuration](F.monotonic).flatMap[org.http4s.Response[F]](((start: scala.concurrent.duration.FiniteDuration) =&gt; Metrics.this.executeRequestAndRecordMetrics[F](client, ops, classifierF, req, statusRef, start.toNanos)(F, C)))
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          11464
+        </td>
+        <td>
+          3443
+          -
+          3454
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.Clock.monotonic
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.monotonic
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          11024
+        </td>
+        <td>
+          3462
+          -
+          3631
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.Metrics.executeRequestAndRecordMetrics
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Metrics.this.executeRequestAndRecordMetrics[F](client, ops, classifierF, req, statusRef, start.toNanos)(F, C)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          11082
+        </td>
+        <td>
+          3947
+          -
+          4843
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Resource.handleErrorWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.effect.`package`.Resource.eval[F, Option[String]](classifierF.apply(req)).flatMap[org.http4s.Response[F]](((classifier: Option[String]) =&gt; cats.effect.`package`.Resource.make[F, Unit](ops.increaseActiveRequests(classifier))(((x$3: Unit) =&gt; ops.decreaseActiveRequests(classifier)))(C).flatMap[org.http4s.Response[F]](((x$7: Unit) =&gt; (x$7: Unit @unchecked) match {
+  case _ =&gt; cats.effect.`package`.Resource.onFinalize[F](cats.syntax.`package`.all.toFlatMapOps[F, scala.concurrent.duration.FiniteDuration](F.monotonic)(C).flatMap[Unit](((now: scala.concurrent.duration.FiniteDuration) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Option[org.http4s.Status]](statusRef.get)(C).flatMap[Unit](((oStatus: Option[org.http4s.Status]) =&gt; cats.syntax.`package`.all.toFoldableOps[Option, org.http4s.Status](oStatus)(cats.this.UnorderedFoldable.catsTraverseForOption).traverse_[F, Unit](((status: org.http4s.Status) =&gt; ops.recordTotalTime(req.method, status, now.toNanos.-(start), classifier)))(C))))))(C).flatMap[org.http4s.Response[F]](((x$6: Unit) =&gt; (x$6: Unit @unchecked) match {
+    case _ =&gt; client.run(req).flatMap[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; cats.effect.`package`.Resource.eval[F, Unit](statusRef.set(scala.Some.apply[org.http4s.Status](resp.status))).flatMap[org.http4s.Response[F]](((x$5: Unit) =&gt; (x$5: Unit @unchecked) match {
+      case _ =&gt; cats.effect.`package`.Resource.eval[F, scala.concurrent.duration.FiniteDuration](F.monotonic).flatMap[org.http4s.Response[F]](((end: scala.concurrent.duration.FiniteDuration) =&gt; cats.effect.`package`.Resource.eval[F, Unit](ops.recordHeadersTime(req.method, end.toNanos.-(start), classifier)).map[org.http4s.Response[F]](((x$4: Unit) =&gt; (x$4: Unit @unchecked) match {
+        case _ =&gt; resp
+      }))))
+    }))))
+  }))
+})))).handleErrorWith[org.http4s.Response[F], Throwable](((e: Throwable) =&gt; cats.effect.`package`.Resource.eval[F, org.http4s.Response[F]](cats.syntax.`package`.all.catsSyntaxApply[F, Unit](cats.syntax.`package`.all.toFlatMapOps[F, Option[String]](classifierF.apply(req))(C).flatMap[Unit](((x$8: Option[String]) =&gt; Metrics.this.registerError[[_]F[_]](start, ops, x$8)(e)(F, C))))(C).*&gt;[org.http4s.Response[F]](C.raiseError[org.http4s.Response[F]](e)))))(C)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          11814
+        </td>
+        <td>
+          5019
+          -
+          5030
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.Clock.monotonic
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.monotonic
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          11405
+        </td>
+        <td>
+          5019
+          -
+          5286
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[F, scala.concurrent.duration.FiniteDuration](F.monotonic)(C).flatMap[Unit](((now: scala.concurrent.duration.FiniteDuration) =&gt; if (e.isInstanceOf[concurrent.TimeoutException])
+  ops.recordAbnormalTermination(now.toNanos.-(start), org.http4s.metrics.TerminationType.Timeout, classifier)
+else
+  ops.recordAbnormalTermination(now.toNanos.-(start), org.http4s.metrics.TerminationType.Error.apply(e), classifier)))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          11599
+        </td>
+        <td>
+          5067
+          -
+          5099
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.Any.isInstanceOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          e.isInstanceOf[concurrent.TimeoutException]
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          11483
+        </td>
+        <td>
+          5111
+          -
+          5182
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.metrics.MetricsOps.recordAbnormalTermination
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ops.recordAbnormalTermination(now.toNanos.-(start), org.http4s.metrics.TerminationType.Timeout, classifier)
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          11028
+        </td>
+        <td>
+          5111
+          -
+          5182
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.metrics.MetricsOps.recordAbnormalTermination
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ops.recordAbnormalTermination(now.toNanos.-(start), org.http4s.metrics.TerminationType.Timeout, classifier)
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          11945
+        </td>
+        <td>
+          5162
+          -
+          5169
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.metrics.TerminationType.Timeout
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.metrics.TerminationType.Timeout
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          11149
+        </td>
+        <td>
+          5141
+          -
+          5160
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          now.toNanos.-(start)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          11851
+        </td>
+        <td>
+          5206
+          -
+          5278
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.metrics.MetricsOps.recordAbnormalTermination
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ops.recordAbnormalTermination(now.toNanos.-(start), org.http4s.metrics.TerminationType.Error.apply(e), classifier)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          11070
+        </td>
+        <td>
+          5206
+          -
+          5278
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.metrics.MetricsOps.recordAbnormalTermination
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ops.recordAbnormalTermination(now.toNanos.-(start), org.http4s.metrics.TerminationType.Error.apply(e), classifier)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          11512
+        </td>
+        <td>
+          5257
+          -
+          5265
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.metrics.TerminationType.Error.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.metrics.TerminationType.Error.apply(e)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          12011
+        </td>
+        <td>
+          5236
+          -
+          5255
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          now.toNanos.-(start)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

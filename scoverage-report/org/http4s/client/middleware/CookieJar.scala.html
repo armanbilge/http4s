@@ -1,0 +1,2664 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/middleware/CookieJar.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.client.middleware
+</span>18 <span style=''>
+</span>19 <span style=''>import cats._
+</span>20 <span style=''>import cats.effect.kernel._
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import org.http4s._
+</span>23 <span style=''>import org.http4s.client.Client
+</span>24 <span style=''>
+</span>25 <span style=''>/** Algebra for Interfacing with the Cookie Jar.
+</span>26 <span style=''>  * Allows manual intervention and eviction.
+</span>27 <span style=''>  */
+</span>28 <span style=''>trait CookieJar[F[_]] {
+</span>29 <span style=''>
+</span>30 <span style=''>  /** Default Expiration Approach, Removes Expired Cookies
+</span>31 <span style=''>    */
+</span>32 <span style=''>  def evictExpired: F[Unit]
+</span>33 <span style=''>
+</span>34 <span style=''>  /** Available for Use To Relieve Memory Pressure
+</span>35 <span style=''>    */
+</span>36 <span style=''>  def evictAll: F[Unit]
+</span>37 <span style=''>
+</span>38 <span style=''>  /** Add Cookie to the cookie jar
+</span>39 <span style=''>    */
+</span>40 <span style=''>  def addCookie(c: ResponseCookie, uri: Uri): F[Unit] =
+</span>41 <span style=''>    </span><span style='background: #AEF1AE'>addCookies(List((c, uri)))</span><span style=''>
+</span>42 <span style=''>
+</span>43 <span style=''>  /** Like addCookie but puts several in at once
+</span>44 <span style=''>    */
+</span>45 <span style=''>  def addCookies[G[_]: Foldable](cookies: G[(ResponseCookie, Uri)]): F[Unit]
+</span>46 <span style=''>
+</span>47 <span style=''>  /** Enrich a Request with the cookies available
+</span>48 <span style=''>    */
+</span>49 <span style=''>  def enrichRequest[G[_]](r: Request[G]): F[Request[G]]
+</span>50 <span style=''>}
+</span>51 <span style=''>
+</span>52 <span style=''>/** Cookie Jar Companion Object
+</span>53 <span style=''>  * Contains constructors for client middleware or raw
+</span>54 <span style=''>  * jar creation, as well as the middleware
+</span>55 <span style=''>  */
+</span>56 <span style=''>object CookieJar {
+</span>57 <span style=''>
+</span>58 <span style=''>  /** Middleware Constructor Using a Provided [[CookieJar]].
+</span>59 <span style=''>    */
+</span>60 <span style=''>  def apply[F[_]: Async](
+</span>61 <span style=''>      alg: CookieJar[F]
+</span>62 <span style=''>  )(
+</span>63 <span style=''>      client: Client[F]
+</span>64 <span style=''>  ): Client[F] =
+</span>65 <span style=''>    </span><span style='background: #AEF1AE'>Client { req =&gt;
+</span>66 <span style=''></span><span style='background: #AEF1AE'>      for {
+</span>67 <span style=''></span><span style='background: #AEF1AE'>        _ &lt;- Resource.eval(alg.evictExpired)
+</span>68 <span style=''></span><span style='background: #AEF1AE'>        modRequest &lt;- Resource.eval(alg.enrichRequest(req))
+</span>69 <span style=''></span><span style='background: #AEF1AE'>        out &lt;- client.run(modRequest)
+</span>70 <span style=''></span><span style='background: #AEF1AE'>        _ &lt;- Resource.eval(
+</span>71 <span style=''></span><span style='background: #AEF1AE'>          out.cookies
+</span>72 <span style=''></span><span style='background: #AEF1AE'>            .map(r =&gt; r.domain.fold(r.copy(domain = req.uri.host.map(_.value)))(_ =&gt; r))
+</span>73 <span style=''></span><span style='background: #AEF1AE'>            .traverse_(alg.addCookie(_, req.uri))
+</span>74 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>75 <span style=''></span><span style='background: #AEF1AE'>      } yield out
+</span>76 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>77 <span style=''>
+</span>78 <span style=''>  /** Constructor which builds a non-exposed CookieJar
+</span>79 <span style=''>    * and applies it to the client.
+</span>80 <span style=''>    */
+</span>81 <span style=''>  def impl[F[_]: Async](c: Client[F]): F[Client[F]] =
+</span>82 <span style=''>    </span><span style='background: #F0ADAD'>in[F, F](c)</span><span style=''>
+</span>83 <span style=''>
+</span>84 <span style=''>  /** Like [[impl]] except it allows the creation of the middleware in a
+</span>85 <span style=''>    * different HKT than the client is in.
+</span>86 <span style=''>    */
+</span>87 <span style=''>  def in[F[_]: Async, G[_]: Sync](c: Client[F]): G[Client[F]] =
+</span>88 <span style=''>    </span><span style='background: #F0ADAD'>jarIn[F, G].map(apply(_)(c))</span><span style=''>
+</span>89 <span style=''>
+</span>90 <span style=''>  /** Jar Constructor
+</span>91 <span style=''>    */
+</span>92 <span style=''>  def jarImpl[F[_]: Async]: F[CookieJar[F]] =
+</span>93 <span style=''>    </span><span style='background: #AEF1AE'>jarIn[F, F]</span><span style=''>
+</span>94 <span style=''>
+</span>95 <span style=''>  /** Like [[jarImpl]] except it allows the creation of the CookieJar in a
+</span>96 <span style=''>    * different HKT than the client is in.
+</span>97 <span style=''>    */
+</span>98 <span style=''>  def jarIn[F[_]: Async, G[_]: Sync]: G[CookieJar[F]] =
+</span>99 <span style=''>    </span><span style='background: #AEF1AE'>Ref.in[G, F, Map[CookieKey, CookieValue]](Map.empty).map { ref =&gt;
+</span>100 <span style=''></span><span style='background: #AEF1AE'>      new CookieJarRefImpl[F](ref) {}
+</span>101 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>102 <span style=''>
+</span>103 <span style=''>  private[CookieJar] class CookieJarRefImpl[F[_]: Async](
+</span>104 <span style=''>      ref: Ref[F, Map[CookieKey, CookieValue]]
+</span>105 <span style=''>  ) extends CookieJar[F] {
+</span>106 <span style=''>    override def evictExpired: F[Unit] =
+</span>107 <span style=''>      </span><span style='background: #AEF1AE'>for {
+</span>108 <span style=''></span><span style='background: #AEF1AE'>        now &lt;- HttpDate.current[F]
+</span>109 <span style=''></span><span style='background: #AEF1AE'>        out &lt;- ref.update(
+</span>110 <span style=''></span><span style='background: #AEF1AE'>          _.filter { t =&gt;
+</span>111 <span style=''></span><span style='background: #AEF1AE'>            now &lt;= t._2.expiresAt
+</span>112 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>113 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>114 <span style=''></span><span style='background: #AEF1AE'>      } yield out</span><span style=''>
+</span>115 <span style=''>
+</span>116 <span style=''>    override def evictAll: F[Unit] = </span><span style='background: #F0ADAD'>ref.set(Map.empty)</span><span style=''>
+</span>117 <span style=''>
+</span>118 <span style=''>    override def addCookies[G[_]: Foldable](cookies: G[(ResponseCookie, Uri)]): F[Unit] =
+</span>119 <span style=''>      </span><span style='background: #AEF1AE'>for {
+</span>120 <span style=''></span><span style='background: #AEF1AE'>        now &lt;- HttpDate.current[F]
+</span>121 <span style=''></span><span style='background: #AEF1AE'>        out &lt;- ref.update(extractFromResponseCookies(_)(cookies, now))
+</span>122 <span style=''></span><span style='background: #AEF1AE'>      } yield out</span><span style=''>
+</span>123 <span style=''>
+</span>124 <span style=''>    override def enrichRequest[N[_]](r: Request[N]): F[Request[N]] =
+</span>125 <span style=''>      </span><span style='background: #AEF1AE'>for {
+</span>126 <span style=''></span><span style='background: #AEF1AE'>        cookies &lt;- ref.get.map(_.map(_._2.cookie).toList)
+</span>127 <span style=''></span><span style='background: #AEF1AE'>      } yield cookiesForRequest(r, cookies)
+</span>128 <span style=''></span><span style='background: #AEF1AE'>        .foldLeft(r) { case (req, cookie) =&gt; req.addCookie(cookie) }</span><span style=''>
+</span>129 <span style=''>  }
+</span>130 <span style=''>
+</span>131 <span style=''>  private[middleware] final case class CookieKey(
+</span>132 <span style=''>      name: String,
+</span>133 <span style=''>      domain: String,
+</span>134 <span style=''>      path: Option[String],
+</span>135 <span style=''>  )
+</span>136 <span style=''>
+</span>137 <span style=''>  private[middleware] final class CookieValue(
+</span>138 <span style=''>      val setAt: HttpDate,
+</span>139 <span style=''>      val expiresAt: HttpDate,
+</span>140 <span style=''>      val cookie: ResponseCookie,
+</span>141 <span style=''>  ) {
+</span>142 <span style=''>    override def equals(obj: Any): Boolean =
+</span>143 <span style=''>      obj match {
+</span>144 <span style=''>        case c: CookieValue =&gt;
+</span>145 <span style=''>          </span><span style='background: #F0ADAD'>setAt == c.setAt &amp;&amp;
+</span>146 <span style=''></span><span style='background: #F0ADAD'>          expiresAt == c.expiresAt &amp;&amp;
+</span>147 <span style=''></span><span style='background: #F0ADAD'>          cookie == c.cookie</span><span style=''>
+</span>148 <span style=''>        case _ =&gt; </span><span style='background: #F0ADAD'>false</span><span style=''>
+</span>149 <span style=''>      }
+</span>150 <span style=''>  }
+</span>151 <span style=''>
+</span>152 <span style=''>  private[middleware] object CookieValue {
+</span>153 <span style=''>    def apply(
+</span>154 <span style=''>        setAt: HttpDate,
+</span>155 <span style=''>        expiresAt: HttpDate,
+</span>156 <span style=''>        cookie: ResponseCookie,
+</span>157 <span style=''>    ): CookieValue = </span><span style='background: #AEF1AE'>new CookieValue(setAt, expiresAt, cookie)</span><span style=''>
+</span>158 <span style=''>  }
+</span>159 <span style=''>
+</span>160 <span style=''>  private[middleware] def expiresAt(
+</span>161 <span style=''>      now: HttpDate,
+</span>162 <span style=''>      c: ResponseCookie,
+</span>163 <span style=''>      default: HttpDate,
+</span>164 <span style=''>  ): HttpDate =
+</span>165 <span style=''>    </span><span style='background: #AEF1AE'>c.expires
+</span>166 <span style=''></span><span style='background: #AEF1AE'>      .orElse(
+</span>167 <span style=''></span><span style='background: #AEF1AE'>        c.maxAge.flatMap(seconds =&gt; HttpDate.fromEpochSecond(now.epochSecond + seconds).toOption)
+</span>168 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>169 <span style=''></span><span style='background: #AEF1AE'>      .getOrElse(default)</span><span style=''>
+</span>170 <span style=''>
+</span>171 <span style=''>  private[middleware] def extractFromResponseCookies[G[_]: Foldable](
+</span>172 <span style=''>      m: Map[CookieKey, CookieValue]
+</span>173 <span style=''>  )(
+</span>174 <span style=''>      cookies: G[(ResponseCookie, Uri)],
+</span>175 <span style=''>      httpDate: HttpDate,
+</span>176 <span style=''>  ): Map[CookieKey, CookieValue] =
+</span>177 <span style=''>    </span><span style='background: #AEF1AE'>cookies
+</span>178 <span style=''></span><span style='background: #AEF1AE'>      .foldRight(Eval.now(m)) { case ((rc, uri), eM) =&gt;
+</span>179 <span style=''></span><span style='background: #AEF1AE'>        eM.map(m =&gt; extractFromResponseCookie(m)(rc, httpDate, uri))
+</span>180 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>181 <span style=''></span><span style='background: #AEF1AE'>      .value</span><span style=''>
+</span>182 <span style=''>
+</span>183 <span style=''>  private[middleware] def extractFromResponseCookie(
+</span>184 <span style=''>      m: Map[CookieKey, CookieValue]
+</span>185 <span style=''>  )(c: ResponseCookie, httpDate: HttpDate, uri: Uri): Map[CookieKey, CookieValue] =
+</span>186 <span style=''>    </span><span style='background: #AEF1AE'>c.domain.orElse(</span><span style='background: #F0ADAD'>uri.host.map(_.value)</span><span style='background: #AEF1AE'>)</span><span style=''> match {
+</span>187 <span style=''>      case Some(domainS) =&gt;
+</span>188 <span style=''>        val key = </span><span style='background: #AEF1AE'>CookieKey(c.name, domainS, c.path)</span><span style=''>
+</span>189 <span style=''>        val newCookie = </span><span style='background: #AEF1AE'>c.copy(domain = domainS.some)</span><span style=''>
+</span>190 <span style=''>        val expires: HttpDate = </span><span style='background: #AEF1AE'>expiresAt(httpDate, c, HttpDate.MaxValue)</span><span style=''>
+</span>191 <span style=''>        val value = </span><span style='background: #AEF1AE'>CookieValue(httpDate, expires, newCookie)</span><span style=''>
+</span>192 <span style=''>        </span><span style='background: #AEF1AE'>m + (key -&gt; value)</span><span style=''>
+</span>193 <span style=''>      case None =&gt; // Ignore Cookies We Can't get a domain for
+</span>194 <span style=''>        m
+</span>195 <span style=''>    }
+</span>196 <span style=''>
+</span>197 <span style=''>  private[middleware] def responseCookieToRequestCookie(r: ResponseCookie): RequestCookie =
+</span>198 <span style=''>    </span><span style='background: #AEF1AE'>RequestCookie(r.name, r.content)</span><span style=''>
+</span>199 <span style=''>
+</span>200 <span style=''>  private[middleware] def cookieAppliesToRequest[N[_]](
+</span>201 <span style=''>      r: Request[N],
+</span>202 <span style=''>      c: ResponseCookie,
+</span>203 <span style=''>  ): Boolean = {
+</span>204 <span style=''>    val domainApplies = </span><span style='background: #AEF1AE'>c.domain.exists(s =&gt;
+</span>205 <span style=''></span><span style='background: #AEF1AE'>      r.uri.host.forall { authority =&gt;
+</span>206 <span style=''></span><span style='background: #AEF1AE'>        authority.renderString.contains(s)
+</span>207 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>208 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>209 <span style=''>    val pathApplies = </span><span style='background: #AEF1AE'>c.path.forall(s =&gt; </span><span style='background: #F0ADAD'>r.uri.path.renderString.contains(s)</span><span style='background: #AEF1AE'>)</span><span style=''>
+</span>210 <span style=''>
+</span>211 <span style=''>    val secureSatisfied =
+</span>212 <span style=''>      if (</span><span style='background: #AEF1AE'>c.secure</span><span style=''>)
+</span>213 <span style=''>        </span><span style='background: #AEF1AE'>r.uri.scheme.exists { scheme =&gt;
+</span>214 <span style=''></span><span style='background: #AEF1AE'>          scheme === Uri.Scheme.https
+</span>215 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>216 <span style=''>      else </span><span style='background: #AEF1AE'>true</span><span style=''>
+</span>217 <span style=''>
+</span>218 <span style=''>    </span><span style='background: #AEF1AE'>domainApplies &amp;&amp; pathApplies &amp;&amp; secureSatisfied</span><span style=''>
+</span>219 <span style=''>  }
+</span>220 <span style=''>
+</span>221 <span style=''>  private[middleware] def cookiesForRequest[N[_]](
+</span>222 <span style=''>      r: Request[N],
+</span>223 <span style=''>      l: List[ResponseCookie],
+</span>224 <span style=''>  ): List[RequestCookie] =
+</span>225 <span style=''>    </span><span style='background: #AEF1AE'>l.foldLeft(List.empty[RequestCookie]) { case (list, cookie) =&gt;
+</span>226 <span style=''></span><span style='background: #AEF1AE'>      if (cookieAppliesToRequest(r, cookie)) responseCookieToRequestCookie(cookie) :: list
+</span>227 <span style=''></span><span style='background: #AEF1AE'>      else </span><span style='background: #F0ADAD'>list</span><span style='background: #AEF1AE'>
+</span>228 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>229 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          11298
+        </td>
+        <td>
+          1157
+          -
+          1183
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.addCookies
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.addCookies[List](scala.`package`.List.apply[(org.http4s.ResponseCookie, org.http4s.Uri)](scala.Tuple2.apply[org.http4s.ResponseCookie, org.http4s.Uri](c, uri)))(cats.this.UnorderedFoldable.catsTraverseForList)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          11277
+        </td>
+        <td>
+          1173
+          -
+          1181
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Tuple2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Tuple2.apply[org.http4s.ResponseCookie, org.http4s.Uri](c, uri)
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          11760
+        </td>
+        <td>
+          1167
+          -
+          1167
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForList
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          10999
+        </td>
+        <td>
+          1168
+          -
+          1182
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[(org.http4s.ResponseCookie, org.http4s.Uri)](scala.Tuple2.apply[org.http4s.ResponseCookie, org.http4s.Uri](c, uri))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          12041
+        </td>
+        <td>
+          1759
+          -
+          2152
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.Client.apply
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.client.Client.apply[[_]F[_]](((req: org.http4s.Request[[_]F[_]]) =&gt; cats.effect.kernel.Resource.eval[F, Unit](alg.evictExpired).flatMap[org.http4s.Response[[_]F[_]]](((x$5: Unit) =&gt; (x$5: Unit @unchecked) match {
+  case _ =&gt; cats.effect.kernel.Resource.eval[F, org.http4s.Request[[_]F[_]]](alg.enrichRequest[[_]F[_]](req)).flatMap[org.http4s.Response[[_]F[_]]](((modRequest: org.http4s.Request[[_]F[_]]) =&gt; client.run(modRequest).flatMap[org.http4s.Response[[_]F[_]]](((out: org.http4s.Response[F]) =&gt; cats.effect.kernel.Resource.eval[F, Unit](cats.syntax.`package`.all.toFoldableOps[List, org.http4s.ResponseCookie](out.cookies.map[org.http4s.ResponseCookie](((r: org.http4s.ResponseCookie) =&gt; r.domain.fold[org.http4s.ResponseCookie]({
+  &lt;artifact&gt; val x$1: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = req.uri.host.map[String](((x$1: org.http4s.Uri.Host) =&gt; x$1.value));
+  &lt;artifact&gt; val x$2: String = r.copy$default$1;
+  &lt;artifact&gt; val x$3: String = r.copy$default$2;
+  &lt;artifact&gt; val x$4: Option[org.http4s.HttpDate] @scala.reflect.internal.annotations.uncheckedBounds = r.copy$default$3;
+  &lt;artifact&gt; val x$5: Option[Long] @scala.reflect.internal.annotations.uncheckedBounds = r.copy$default$4;
+  &lt;artifact&gt; val x$6: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = r.copy$default$6;
+  &lt;artifact&gt; val x$7: Option[org.http4s.SameSite] @scala.reflect.internal.annotations.uncheckedBounds = r.copy$default$7;
+  &lt;artifact&gt; val x$8: Boolean = r.copy$default$8;
+  &lt;artifact&gt; val x$9: Boolean = r.copy$default$9;
+  &lt;artifact&gt; val x$10: Option[String] @scala.reflect.internal.annotations.uncheckedBounds = r.copy$default$10;
+  r.copy(x$2, x$3, x$4, x$5, x$1, x$6, x$7, x$8, x$9, x$10)
+})(((x$2: String) =&gt; r)))))(cats.this.UnorderedFoldable.catsTraverseForList).traverse_[F, Unit](((x$3: org.http4s.ResponseCookie) =&gt; alg.addCookie(x$3, req.uri)))(evidence$2)).map[org.http4s.Response[[_]F[_]]](((x$4: Unit) =&gt; (x$4: Unit @unchecked) match {
+    case _ =&gt; out
+  }))))))
+}))))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          11826
+        </td>
+        <td>
+          2310
+          -
+          2321
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.in
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          CookieJar.this.in[F, F](c)(evidence$3, evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          11660
+        </td>
+        <td>
+          2514
+          -
+          2542
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[G, org.http4s.client.middleware.CookieJar[F]](CookieJar.this.jarIn[F, G](evidence$4, evidence$5))(evidence$5).map[org.http4s.client.Client[[_]F[_]]](((x$6: org.http4s.client.middleware.CookieJar[F]) =&gt; CookieJar.this.apply[[_]F[_]](x$6)(c)(evidence$4)))
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          12117
+        </td>
+        <td>
+          2530
+          -
+          2541
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          CookieJar.this.apply[[_]F[_]](x$6)(c)(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          11394
+        </td>
+        <td>
+          2514
+          -
+          2525
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.jarIn
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          CookieJar.this.jarIn[F, G](evidence$4, evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          11257
+        </td>
+        <td>
+          2623
+          -
+          2634
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.jarIn
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.jarIn[F, F](evidence$6, evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          11347
+        </td>
+        <td>
+          2821
+          -
+          2930
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[G, cats.effect.kernel.Ref[F,Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]]](cats.effect.kernel.Ref.in[G, F, Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](scala.Predef.Map.empty[org.http4s.client.middleware.CookieJar.CookieKey, Nothing])(evidence$8, evidence$7))(evidence$8).map[org.http4s.client.middleware.CookieJar[F]](((ref: cats.effect.kernel.Ref[F,Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]]) =&gt; {
+  final class $anon extends org.http4s.client.middleware.CookieJar.CookieJarRefImpl[F] {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.client.middleware.CookieJar.CookieJarRefImpl[F]&gt; = {
+      $anon.super.&lt;init&gt;(ref)(evidence$7);
+      ()
+    }
+  };
+  new $anon()
+}))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          11000
+        </td>
+        <td>
+          2821
+          -
+          2873
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.effect.kernel.Ref.in
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.kernel.Ref.in[G, F, Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](scala.Predef.Map.empty[org.http4s.client.middleware.CookieJar.CookieKey, Nothing])(evidence$8, evidence$7)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          11762
+        </td>
+        <td>
+          2893
+          -
+          2896
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          11352
+        </td>
+        <td>
+          3111
+          -
+          3278
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.HttpDate](org.http4s.HttpDate.current[F](CookieJarRefImpl.this.evidence$9, CookieJarRefImpl.this.evidence$9))(CookieJarRefImpl.this.evidence$9).flatMap[Unit](((now: org.http4s.HttpDate) =&gt; CookieJarRefImpl.this.ref.update(((x$7: Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]) =&gt; x$7.filter(((t: (org.http4s.client.middleware.CookieJar.CookieKey, org.http4s.client.middleware.CookieJar.CookieValue)) =&gt; now.&lt;=(t._2.expiresAt)))))))
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          11590
+        </td>
+        <td>
+          3148
+          -
+          3148
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieJarRefImpl.evidence$9
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.evidence$9
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          11371
+        </td>
+        <td>
+          3132
+          -
+          3151
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.HttpDate.current
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.HttpDate.current[F](CookieJarRefImpl.this.evidence$9, CookieJarRefImpl.this.evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          12118
+        </td>
+        <td>
+          3148
+          -
+          3148
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieJarRefImpl.evidence$9
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.evidence$9
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          12022
+        </td>
+        <td>
+          3148
+          -
+          3148
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieJarRefImpl.evidence$9
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.evidence$9
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          11740
+        </td>
+        <td>
+          3160
+          -
+          3278
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.ref.update(((x$7: Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]) =&gt; x$7.filter(((t: (org.http4s.client.middleware.CookieJar.CookieKey, org.http4s.client.middleware.CookieJar.CookieValue)) =&gt; now.&lt;=(t._2.expiresAt)))))
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          11002
+        </td>
+        <td>
+          3189
+          -
+          3250
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOps.filter
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$7.filter(((t: (org.http4s.client.middleware.CookieJar.CookieKey, org.http4s.client.middleware.CookieJar.CookieValue)) =&gt; now.&lt;=(t._2.expiresAt)))
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          11225
+        </td>
+        <td>
+          3217
+          -
+          3238
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.math.Ordered.&lt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          now.&lt;=(t._2.expiresAt)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          11712
+        </td>
+        <td>
+          3224
+          -
+          3238
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieValue.expiresAt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          t._2.expiresAt
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          11645
+        </td>
+        <td>
+          3317
+          -
+          3335
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.RefSink.set
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          CookieJarRefImpl.this.ref.set(scala.Predef.Map.empty[org.http4s.client.middleware.CookieJar.CookieKey, Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          12076
+        </td>
+        <td>
+          3325
+          -
+          3334
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.Map.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.Map.empty[org.http4s.client.middleware.CookieJar.CookieKey, Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11334
+        </td>
+        <td>
+          3433
+          -
+          3562
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.HttpDate](org.http4s.HttpDate.current[F](CookieJarRefImpl.this.evidence$9, CookieJarRefImpl.this.evidence$9))(CookieJarRefImpl.this.evidence$9).flatMap[Unit](((now: org.http4s.HttpDate) =&gt; CookieJarRefImpl.this.ref.update(((x$8: Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]) =&gt; CookieJar.this.extractFromResponseCookies[G](x$8)(cookies, now)(evidence$10)))))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          12129
+        </td>
+        <td>
+          3470
+          -
+          3470
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieJarRefImpl.evidence$9
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.evidence$9
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11252
+        </td>
+        <td>
+          3470
+          -
+          3470
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieJarRefImpl.evidence$9
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.evidence$9
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11718
+        </td>
+        <td>
+          3454
+          -
+          3473
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.HttpDate.current
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.HttpDate.current[F](CookieJarRefImpl.this.evidence$9, CookieJarRefImpl.this.evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          11374
+        </td>
+        <td>
+          3470
+          -
+          3470
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieJarRefImpl.evidence$9
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.evidence$9
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          11040
+        </td>
+        <td>
+          3500
+          -
+          3543
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.extractFromResponseCookies
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.extractFromResponseCookies[G](x$8)(cookies, now)(evidence$10)
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          11743
+        </td>
+        <td>
+          3482
+          -
+          3562
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Ref.update
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.ref.update(((x$8: Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]) =&gt; CookieJar.this.extractFromResponseCookies[G](x$8)(cookies, now)(evidence$10)))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          11648
+        </td>
+        <td>
+          3668
+          -
+          3668
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieJarRefImpl.evidence$9
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.evidence$9
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          11337
+        </td>
+        <td>
+          3639
+          -
+          3815
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, List[org.http4s.ResponseCookie]](cats.syntax.`package`.all.toFunctorOps[F, Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](CookieJarRefImpl.this.ref.get)(CookieJarRefImpl.this.evidence$9).map[List[org.http4s.ResponseCookie]](((x$9: Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]) =&gt; x$9.map[org.http4s.ResponseCookie](((x$10: (org.http4s.client.middleware.CookieJar.CookieKey, org.http4s.client.middleware.CookieJar.CookieValue)) =&gt; x$10._2.cookie)).toList)))(CookieJarRefImpl.this.evidence$9).map[org.http4s.Request[N]](((cookies: List[org.http4s.ResponseCookie]) =&gt; CookieJar.this.cookiesForRequest[[_]N[_]](r, cookies).foldLeft[org.http4s.Request[N]](r)(((x0$1: org.http4s.Request[N], x1$1: org.http4s.RequestCookie) =&gt; scala.Tuple2.apply[org.http4s.Request[N], org.http4s.RequestCookie](x0$1, x1$1) match {
+  case (_1: org.http4s.Request[N], _2: org.http4s.RequestCookie): (org.http4s.Request[N], org.http4s.RequestCookie)((req @ _), (cookie @ _)) =&gt; req.addCookie(cookie)
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          12132
+        </td>
+        <td>
+          3676
+          -
+          3701
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$9.map[org.http4s.ResponseCookie](((x$10: (org.http4s.client.middleware.CookieJar.CookieKey, org.http4s.client.middleware.CookieJar.CookieValue)) =&gt; x$10._2.cookie)).toList
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          11698
+        </td>
+        <td>
+          3664
+          -
+          3702
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](CookieJarRefImpl.this.ref.get)(CookieJarRefImpl.this.evidence$9).map[List[org.http4s.ResponseCookie]](((x$9: Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]) =&gt; x$9.map[org.http4s.ResponseCookie](((x$10: (org.http4s.client.middleware.CookieJar.CookieKey, org.http4s.client.middleware.CookieJar.CookieValue)) =&gt; x$10._2.cookie)).toList))
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          11254
+        </td>
+        <td>
+          3675
+          -
+          3675
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieJarRefImpl.evidence$9
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.evidence$9
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          12079
+        </td>
+        <td>
+          3664
+          -
+          3671
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.effect.kernel.RefSource.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJarRefImpl.this.ref.get
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          11412
+        </td>
+        <td>
+          3682
+          -
+          3693
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieValue.cookie
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$10._2.cookie
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          12008
+        </td>
+        <td>
+          3792
+          -
+          3813
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.addCookie
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.addCookie(cookie)
+        </td>
+      </tr><tr>
+        <td>
+          128
+        </td>
+        <td>
+          11735
+        </td>
+        <td>
+          3717
+          -
+          3815
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.cookiesForRequest[[_]N[_]](r, cookies).foldLeft[org.http4s.Request[N]](r)(((x0$1: org.http4s.Request[N], x1$1: org.http4s.RequestCookie) =&gt; scala.Tuple2.apply[org.http4s.Request[N], org.http4s.RequestCookie](x0$1, x1$1) match {
+  case (_1: org.http4s.Request[N], _2: org.http4s.RequestCookie): (org.http4s.Request[N], org.http4s.RequestCookie)((req @ _), (cookie @ _)) =&gt; req.addCookie(cookie)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          12043
+        </td>
+        <td>
+          4204
+          -
+          4211
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieValue.setAt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          c.setAt
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          11259
+        </td>
+        <td>
+          4195
+          -
+          4281
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          CookieValue.this.setAt.==(c.setAt).&amp;&amp;(CookieValue.this.expiresAt.==(c.expiresAt)).&amp;&amp;(CookieValue.this.cookie.==(c.cookie))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          11413
+        </td>
+        <td>
+          4225
+          -
+          4249
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          CookieValue.this.expiresAt.==(c.expiresAt)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          11627
+        </td>
+        <td>
+          4238
+          -
+          4249
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieValue.expiresAt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          c.expiresAt
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          11703
+        </td>
+        <td>
+          4263
+          -
+          4281
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          CookieValue.this.cookie.==(c.cookie)
+        </td>
+      </tr><tr>
+        <td>
+          147
+        </td>
+        <td>
+          12097
+        </td>
+        <td>
+          4273
+          -
+          4281
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieValue.cookie
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          c.cookie
+        </td>
+      </tr><tr>
+        <td>
+          148
+        </td>
+        <td>
+          11995
+        </td>
+        <td>
+          4300
+          -
+          4305
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          157
+        </td>
+        <td>
+          11737
+        </td>
+        <td>
+          4484
+          -
+          4525
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieValue.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new CookieJar.this.CookieValue(setAt, expiresAt, cookie)
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          11303
+        </td>
+        <td>
+          4659
+          -
+          4815
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.expires.orElse[org.http4s.HttpDate](c.maxAge.flatMap[org.http4s.HttpDate](((seconds: Long) =&gt; org.http4s.HttpDate.fromEpochSecond(now.epochSecond.+(seconds)).toOption))).getOrElse[org.http4s.HttpDate](default)
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          12029
+        </td>
+        <td>
+          5060
+          -
+          5071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Eval.now
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.Eval.now[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](m)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          11631
+        </td>
+        <td>
+          5119
+          -
+          5166
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.extractFromResponseCookie
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.extractFromResponseCookie(m)(rc, httpDate, uri)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          11158
+        </td>
+        <td>
+          5107
+          -
+          5167
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Eval.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          eM.map[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](((m: Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]) =&gt; CookieJar.this.extractFromResponseCookie(m)(rc, httpDate, uri)))
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          12101
+        </td>
+        <td>
+          5035
+          -
+          5188
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.Eval.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFoldableOps[G, (org.http4s.ResponseCookie, org.http4s.Uri)](cookies)(evidence$11).foldRight[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](cats.Eval.now[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](m))(((x0$1: (org.http4s.ResponseCookie, org.http4s.Uri), x1$1: cats.Eval[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]]) =&gt; scala.Tuple2.apply[(org.http4s.ResponseCookie, org.http4s.Uri), cats.Eval[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]]](x0$1, x1$1) match {
+  case (_1: (org.http4s.ResponseCookie, org.http4s.Uri), _2: cats.Eval[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]]): ((org.http4s.ResponseCookie, org.http4s.Uri), cats.Eval[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]])((_1: org.http4s.ResponseCookie, _2: org.http4s.Uri): (org.http4s.ResponseCookie, org.http4s.Uri)((rc @ _), (uri @ _)), (eM @ _)) =&gt; eM.map[Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]](((m: Map[org.http4s.client.middleware.CookieJar.CookieKey,org.http4s.client.middleware.CookieJar.CookieValue]) =&gt; CookieJar.this.extractFromResponseCookie(m)(rc, httpDate, uri)))
+})).value
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          11999
+        </td>
+        <td>
+          5368
+          -
+          5406
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.domain.orElse[String](uri.host.map[String](((x$11: org.http4s.Uri.Host) =&gt; x$11.value)))
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          11236
+        </td>
+        <td>
+          5384
+          -
+          5405
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          uri.host.map[String](((x$11: org.http4s.Uri.Host) =&gt; x$11.value))
+        </td>
+      </tr><tr>
+        <td>
+          186
+        </td>
+        <td>
+          11714
+        </td>
+        <td>
+          5397
+          -
+          5404
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Host.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$11.value
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          11788
+        </td>
+        <td>
+          5471
+          -
+          5477
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.name
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          11306
+        </td>
+        <td>
+          5488
+          -
+          5494
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.path
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.path
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          12080
+        </td>
+        <td>
+          5461
+          -
+          5495
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieKey.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.CookieKey.apply(c.name, domainS, c.path)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11289
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          12066
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$9
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$9
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          12102
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11160
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$1
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11217
+        </td>
+        <td>
+          5520
+          -
+          5549
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy(x$2, x$3, x$4, x$5, x$1, x$6, x$7, x$8, x$9, x$10)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          12015
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$6
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$6
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11791
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$7
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$7
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11309
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$8
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$8
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11695
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11655
+        </td>
+        <td>
+          5522
+          -
+          5522
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.copy$default$10
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.copy$default$10
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          11607
+        </td>
+        <td>
+          5536
+          -
+          5548
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.OptionIdOps.some
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOptionId[String](domainS).some
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          12147
+        </td>
+        <td>
+          5605
+          -
+          5622
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.MaxValue
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.HttpDate.MaxValue
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          11701
+        </td>
+        <td>
+          5582
+          -
+          5623
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.expiresAt
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.expiresAt(httpDate, c, org.http4s.HttpDate.MaxValue)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          11279
+        </td>
+        <td>
+          5644
+          -
+          5685
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.CookieValue.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.CookieValue.apply(httpDate, expires, newCookie)
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          11523
+        </td>
+        <td>
+          5694
+          -
+          5712
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.MapOps.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          m.+[org.http4s.client.middleware.CookieJar.CookieValue](scala.Predef.ArrowAssoc[org.http4s.client.middleware.CookieJar.CookieKey](key).-&gt;[org.http4s.client.middleware.CookieJar.CookieValue](value))
+        </td>
+      </tr><tr>
+        <td>
+          192
+        </td>
+        <td>
+          11992
+        </td>
+        <td>
+          5699
+          -
+          5711
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.ArrowAssoc[org.http4s.client.middleware.CookieJar.CookieKey](key).-&gt;[org.http4s.client.middleware.CookieJar.CookieValue](value)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11603
+        </td>
+        <td>
+          5889
+          -
+          5921
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RequestCookie.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.RequestCookie.apply(r.name, r.content)
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          12069
+        </td>
+        <td>
+          5911
+          -
+          5920
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.content
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.content
+        </td>
+      </tr><tr>
+        <td>
+          198
+        </td>
+        <td>
+          11326
+        </td>
+        <td>
+          5903
+          -
+          5909
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.name
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.name
+        </td>
+      </tr><tr>
+        <td>
+          204
+        </td>
+        <td>
+          11685
+        </td>
+        <td>
+          6066
+          -
+          6182
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.domain.exists(((s: String) =&gt; r.uri.host.forall(((authority: org.http4s.Uri.Host) =&gt; authority.renderString.contains(s)))))
+        </td>
+      </tr><tr>
+        <td>
+          205
+        </td>
+        <td>
+          12084
+        </td>
+        <td>
+          6093
+          -
+          6176
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.forall
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.uri.host.forall(((authority: org.http4s.Uri.Host) =&gt; authority.renderString.contains(s)))
+        </td>
+      </tr><tr>
+        <td>
+          206
+        </td>
+        <td>
+          11197
+        </td>
+        <td>
+          6134
+          -
+          6168
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          authority.renderString.contains(s)
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          11974
+        </td>
+        <td>
+          6205
+          -
+          6260
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.forall
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.path.forall(((s: String) =&gt; r.uri.path.renderString.contains(s)))
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          11284
+        </td>
+        <td>
+          6224
+          -
+          6259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.contains
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          r.uri.path.renderString.contains(s)
+        </td>
+      </tr><tr>
+        <td>
+          212
+        </td>
+        <td>
+          11548
+        </td>
+        <td>
+          6298
+          -
+          6306
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ResponseCookie.secure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          c.secure
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          12144
+        </td>
+        <td>
+          6316
+          -
+          6395
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          r.uri.scheme.exists(((scheme: org.http4s.Uri.Scheme) =&gt; cats.syntax.`package`.all.catsSyntaxEq[org.http4s.Uri.Scheme](scheme)(Uri.this.Scheme.http4sOrderForScheme).===(org.http4s.Uri.Scheme.https)))
+        </td>
+      </tr><tr>
+        <td>
+          213
+        </td>
+        <td>
+          11198
+        </td>
+        <td>
+          6316
+          -
+          6395
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          r.uri.scheme.exists(((scheme: org.http4s.Uri.Scheme) =&gt; cats.syntax.`package`.all.catsSyntaxEq[org.http4s.Uri.Scheme](scheme)(Uri.this.Scheme.http4sOrderForScheme).===(org.http4s.Uri.Scheme.https)))
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          11327
+        </td>
+        <td>
+          6358
+          -
+          6358
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme.http4sOrderForScheme
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Uri.this.Scheme.http4sOrderForScheme
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          11608
+        </td>
+        <td>
+          6358
+          -
+          6385
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EqOps.===
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEq[org.http4s.Uri.Scheme](scheme)(Uri.this.Scheme.http4sOrderForScheme).===(org.http4s.Uri.Scheme.https)
+        </td>
+      </tr><tr>
+        <td>
+          214
+        </td>
+        <td>
+          12049
+        </td>
+        <td>
+          6369
+          -
+          6385
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme.https
+        </td>
+        <td>
+          org.http4s.client.middleware.cookiejarsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Scheme.https
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          11226
+        </td>
+        <td>
+          6407
+          -
+          6411
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          11689
+        </td>
+        <td>
+          6407
+          -
+          6411
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          218
+        </td>
+        <td>
+          11978
+        </td>
+        <td>
+          6417
+          -
+          6464
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          domainApplies.&amp;&amp;(pathApplies).&amp;&amp;(secureSatisfied)
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          11549
+        </td>
+        <td>
+          6615
+          -
+          6640
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.collection.immutable.List.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.empty[org.http4s.RequestCookie]
+        </td>
+      </tr><tr>
+        <td>
+          225
+        </td>
+        <td>
+          11879
+        </td>
+        <td>
+          6604
+          -
+          6779
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          l.foldLeft[List[org.http4s.RequestCookie]](scala.`package`.List.empty[org.http4s.RequestCookie])(((x0$1: List[org.http4s.RequestCookie], x1$1: org.http4s.ResponseCookie) =&gt; scala.Tuple2.apply[List[org.http4s.RequestCookie], org.http4s.ResponseCookie](x0$1, x1$1) match {
+  case (_1: List[org.http4s.RequestCookie], _2: org.http4s.ResponseCookie): (List[org.http4s.RequestCookie], org.http4s.ResponseCookie)((list @ _), (cookie @ _)) =&gt; if (CookieJar.this.cookieAppliesToRequest[[_]N[_]](r, cookie))
+    {
+      final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.RequestCookie = CookieJar.this.responseCookieToRequestCookie(cookie);
+      list.::[org.http4s.RequestCookie](rassoc$1)
+    }
+  else
+    list
+}))
+        </td>
+      </tr><tr>
+        <td>
+          226
+        </td>
+        <td>
+          11354
+        </td>
+        <td>
+          6677
+          -
+          6710
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.cookieAppliesToRequest
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          CookieJar.this.cookieAppliesToRequest[[_]N[_]](r, cookie)
+        </td>
+      </tr><tr>
+        <td>
+          226
+        </td>
+        <td>
+          11610
+        </td>
+        <td>
+          6712
+          -
+          6757
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  final &lt;synthetic&gt; &lt;artifact&gt; val rassoc$1: org.http4s.RequestCookie = CookieJar.this.responseCookieToRequestCookie(cookie);
+  list.::[org.http4s.RequestCookie](rassoc$1)
+}
+        </td>
+      </tr><tr>
+        <td>
+          226
+        </td>
+        <td>
+          12055
+        </td>
+        <td>
+          6750
+          -
+          6757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.::
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          list.::[org.http4s.RequestCookie](rassoc$1)
+        </td>
+      </tr><tr>
+        <td>
+          227
+        </td>
+        <td>
+          11184
+        </td>
+        <td>
+          6769
+          -
+          6773
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.client.middleware.CookieJar.list
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          list
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,2394 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/Caching.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server.middleware
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.data._
+</span>20 <span style=''>import cats.effect._
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import org.http4s._
+</span>23 <span style=''>import org.http4s.headers.{Date =&gt; HDate, _}
+</span>24 <span style=''>import org.typelevel.ci.CIString
+</span>25 <span style=''>
+</span>26 <span style=''>import scala.concurrent.duration._
+</span>27 <span style=''>
+</span>28 <span style=''>/** Caching contains middlewares to support caching functionality.
+</span>29 <span style=''>  *
+</span>30 <span style=''>  * Helper functions to support [[Caching.cache]] can be found in
+</span>31 <span style=''>  * [[Caching.Helpers]]
+</span>32 <span style=''>  */
+</span>33 <span style=''>object Caching {
+</span>34 <span style=''>
+</span>35 <span style=''>  /** Middleware that implies responses should NOT be cached.
+</span>36 <span style=''>    * This is a best attempt, many implementors of caching have done so differently.
+</span>37 <span style=''>    */
+</span>38 <span style=''>  def `no-store`[G[_]: Temporal, F[_], A](
+</span>39 <span style=''>      http: Kleisli[G, A, Response[F]]
+</span>40 <span style=''>  ): Kleisli[G, A, Response[F]] =
+</span>41 <span style=''>    </span><span style='background: #F0ADAD'>Kleisli { (a: A) =&gt;
+</span>42 <span style=''></span><span style='background: #F0ADAD'>      for {
+</span>43 <span style=''></span><span style='background: #F0ADAD'>        resp &lt;- http(a)
+</span>44 <span style=''></span><span style='background: #F0ADAD'>        out &lt;- `no-store-response`[G](resp)
+</span>45 <span style=''></span><span style='background: #F0ADAD'>      } yield out
+</span>46 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>47 <span style=''>
+</span>48 <span style=''>  /** Transform a Response so that it will not be cached.
+</span>49 <span style=''>    */
+</span>50 <span style=''>  def `no-store-response`[G[_]]: PartiallyAppliedNoStoreCache[G] =
+</span>51 <span style=''>    </span><span style='background: #F0ADAD'>new</span><span style=''> PartiallyAppliedNoStoreCache[G] {
+</span>52 <span style=''>      def apply[F[_]](resp: Response[F])(implicit G: Temporal[G]): G[Response[F]] =
+</span>53 <span style=''>        </span><span style='background: #F0ADAD'>HttpDate.current[G].map(now =&gt; resp.putHeaders(HDate(now)).putHeaders(noStoreStaticHeaders))</span><span style=''>
+</span>54 <span style=''>    }
+</span>55 <span style=''>
+</span>56 <span style=''>  // These never change, so don't recreate them each time.
+</span>57 <span style=''>  private val noStoreStaticHeaders: List[Header.ToRaw] = </span><span style='background: #F0ADAD'>List(
+</span>58 <span style=''></span><span style='background: #F0ADAD'>    `Cache-Control`(
+</span>59 <span style=''></span><span style='background: #F0ADAD'>      NonEmptyList.of[CacheDirective](
+</span>60 <span style=''></span><span style='background: #F0ADAD'>        CacheDirective.`no-store`,
+</span>61 <span style=''></span><span style='background: #F0ADAD'>        CacheDirective.`no-cache`(),
+</span>62 <span style=''></span><span style='background: #F0ADAD'>        CacheDirective.`max-age`(0.seconds),
+</span>63 <span style=''></span><span style='background: #F0ADAD'>      )
+</span>64 <span style=''></span><span style='background: #F0ADAD'>    ),
+</span>65 <span style=''></span><span style='background: #F0ADAD'>    &quot;Pragma&quot; -&gt; &quot;no-cache&quot;,
+</span>66 <span style=''></span><span style='background: #F0ADAD'>    Expires(HttpDate.Epoch), // Expire at the epoch for no time confusion
+</span>67 <span style=''></span><span style='background: #F0ADAD'>  )</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>  /** Helpers Contains the default arguments used to help construct middleware
+</span>70 <span style=''>    * with caching. They serve to support the default arguments for
+</span>71 <span style=''>    * [[publicCache]] and [[privateCache]].
+</span>72 <span style=''>    */
+</span>73 <span style=''>  object Helpers {
+</span>74 <span style=''>    def defaultStatusToSetOn(s: Status): Boolean =
+</span>75 <span style=''>      s match {
+</span>76 <span style=''>        case Status.NotModified =&gt; </span><span style='background: #F0ADAD'>true</span><span style=''>
+</span>77 <span style=''>        case otherwise =&gt; </span><span style='background: #F0ADAD'>otherwise.isSuccess</span><span style=''>
+</span>78 <span style=''>      }
+</span>79 <span style=''>
+</span>80 <span style=''>    def defaultMethodsToSetOn(m: Method): Boolean =
+</span>81 <span style=''>      </span><span style='background: #F0ADAD'>m == Method.GET || m == Method.HEAD</span><span style=''>
+</span>82 <span style=''>  }
+</span>83 <span style=''>
+</span>84 <span style=''>  /** Sets headers for response to be publicly cached for the specified duration.
+</span>85 <span style=''>    *
+</span>86 <span style=''>    * Note: If set to Duration.Inf, lifetime falls back to
+</span>87 <span style=''>    * 10 years for support of Http1 caches.
+</span>88 <span style=''>    */
+</span>89 <span style=''>  def publicCache[G[_]: Temporal, F[_]](lifetime: Duration, http: Http[G, F]): Http[G, F] =
+</span>90 <span style=''>    </span><span style='background: #F0ADAD'>cache(
+</span>91 <span style=''></span><span style='background: #F0ADAD'>      lifetime,
+</span>92 <span style=''></span><span style='background: #F0ADAD'>      Either.left(CacheDirective.public),
+</span>93 <span style=''></span><span style='background: #F0ADAD'>      Helpers.defaultMethodsToSetOn,
+</span>94 <span style=''></span><span style='background: #F0ADAD'>      Helpers.defaultStatusToSetOn,
+</span>95 <span style=''></span><span style='background: #F0ADAD'>      http,
+</span>96 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>97 <span style=''>
+</span>98 <span style=''>  /** Publicly Cache a Response for the given lifetime.
+</span>99 <span style=''>    *
+</span>100 <span style=''>    * Note: If set to Duration.Inf, lifetime falls back to
+</span>101 <span style=''>    * 10 years for support of Http1 caches.
+</span>102 <span style=''>    */
+</span>103 <span style=''>  def publicCacheResponse[G[_]](lifetime: Duration): PartiallyAppliedCache[G] =
+</span>104 <span style=''>    </span><span style='background: #F0ADAD'>cacheResponse(lifetime, Either.left(CacheDirective.public))</span><span style=''>
+</span>105 <span style=''>
+</span>106 <span style=''>  /** Sets headers for response to be privately cached for the specified duration.
+</span>107 <span style=''>    *
+</span>108 <span style=''>    * Note: If set to Duration.Inf, lifetime falls back to
+</span>109 <span style=''>    * 10 years for support of Http1 caches.
+</span>110 <span style=''>    */
+</span>111 <span style=''>  def privateCache[G[_]: Temporal, F[_]](
+</span>112 <span style=''>      lifetime: Duration,
+</span>113 <span style=''>      http: Http[G, F],
+</span>114 <span style=''>      fieldNames: List[CIString] = Nil,
+</span>115 <span style=''>  ): Http[G, F] =
+</span>116 <span style=''>    </span><span style='background: #F0ADAD'>cache(
+</span>117 <span style=''></span><span style='background: #F0ADAD'>      lifetime,
+</span>118 <span style=''></span><span style='background: #F0ADAD'>      Either.right(CacheDirective.`private`(fieldNames)),
+</span>119 <span style=''></span><span style='background: #F0ADAD'>      Helpers.defaultMethodsToSetOn,
+</span>120 <span style=''></span><span style='background: #F0ADAD'>      Helpers.defaultStatusToSetOn,
+</span>121 <span style=''></span><span style='background: #F0ADAD'>      http,
+</span>122 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>123 <span style=''>
+</span>124 <span style=''>  /** Privately Caches A Response for the given lifetime.
+</span>125 <span style=''>    *
+</span>126 <span style=''>    * Note: If set to Duration.Inf, lifetime falls back to
+</span>127 <span style=''>    * 10 years for support of Http1 caches.
+</span>128 <span style=''>    */
+</span>129 <span style=''>  def privateCacheResponse[G[_]](
+</span>130 <span style=''>      lifetime: Duration,
+</span>131 <span style=''>      fieldNames: List[CIString] = Nil,
+</span>132 <span style=''>  ): PartiallyAppliedCache[G] =
+</span>133 <span style=''>    </span><span style='background: #F0ADAD'>cacheResponse(lifetime, Either.right(CacheDirective.`private`(fieldNames)))</span><span style=''>
+</span>134 <span style=''>
+</span>135 <span style=''>  /** Construct a Middleware that will apply the appropriate caching headers.
+</span>136 <span style=''>    *
+</span>137 <span style=''>    * Helper functions for methodToSetOn and statusToSetOn can be found in [[Helpers]].
+</span>138 <span style=''>    *
+</span>139 <span style=''>    * Note: If set to Duration.Inf, lifetime falls back to
+</span>140 <span style=''>    * 10 years for support of Http1 caches.
+</span>141 <span style=''>    */
+</span>142 <span style=''>  def cache[G[_]: Temporal, F[_]](
+</span>143 <span style=''>      lifetime: Duration,
+</span>144 <span style=''>      isPublic: Either[CacheDirective.public.type, CacheDirective.`private`],
+</span>145 <span style=''>      methodToSetOn: Method =&gt; Boolean,
+</span>146 <span style=''>      statusToSetOn: Status =&gt; Boolean,
+</span>147 <span style=''>      http: Http[G, F],
+</span>148 <span style=''>  ): Http[G, F] = {
+</span>149 <span style=''>    val cacher = </span><span style='background: #F0ADAD'>cacheResponse[G](lifetime, isPublic)</span><span style=''>
+</span>150 <span style=''>    </span><span style='background: #F0ADAD'>Kleisli { (req: Request[F]) =&gt;
+</span>151 <span style=''></span><span style='background: #F0ADAD'>      if (methodToSetOn(req.method)) {
+</span>152 <span style=''></span><span style='background: #F0ADAD'>        http(req).flatMap { resp =&gt;
+</span>153 <span style=''></span><span style='background: #F0ADAD'>          if (statusToSetOn(resp.status)) cacher(resp) else resp.pure[G]
+</span>154 <span style=''></span><span style='background: #F0ADAD'>        }
+</span>155 <span style=''></span><span style='background: #F0ADAD'>      } else http(req)
+</span>156 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>157 <span style=''>  }
+</span>158 <span style=''>
+</span>159 <span style=''>  // Here as an optimization so we don't recreate durations
+</span>160 <span style=''>  // in cacheResponse #TeamStatic
+</span>161 <span style=''>  private val tenYearDuration: FiniteDuration = </span><span style='background: #F0ADAD'>315360000.seconds</span><span style=''>
+</span>162 <span style=''>
+</span>163 <span style=''>  /**  Method in order to turn a generated Response into one that
+</span>164 <span style=''>    * will be appropriately cached.
+</span>165 <span style=''>    *
+</span>166 <span style=''>    *  Note: If set to Duration.Inf, lifetime falls back to
+</span>167 <span style=''>    * 10 years for support of Http1 caches.
+</span>168 <span style=''>    */
+</span>169 <span style=''>  def cacheResponse[G[_]](
+</span>170 <span style=''>      lifetime: Duration,
+</span>171 <span style=''>      isPublic: Either[CacheDirective.public.type, CacheDirective.`private`],
+</span>172 <span style=''>  ): PartiallyAppliedCache[G] =
+</span>173 <span style=''>    </span><span style='background: #F0ADAD'>new</span><span style=''> PartiallyAppliedCache[G] {
+</span>174 <span style=''>      val actualLifetime = lifetime match {
+</span>175 <span style=''>        case finite: FiniteDuration =&gt; finite
+</span>176 <span style=''>        case _ =&gt; </span><span style='background: #F0ADAD'>tenYearDuration</span><span style=''>
+</span>177 <span style=''>        // Http1 caches do not respect max-age headers, so to work globally it is recommended
+</span>178 <span style=''>        // to explicitly set an Expire which requires some time interval to work
+</span>179 <span style=''>      }
+</span>180 <span style=''>      val cacheControl = {
+</span>181 <span style=''>        val cacheDirective = </span><span style='background: #F0ADAD'>isPublic.fold(identity, identity)</span><span style=''>
+</span>182 <span style=''>        val maxAge = </span><span style='background: #F0ADAD'>CacheDirective.`max-age`(actualLifetime)</span><span style=''>
+</span>183 <span style=''>        </span><span style='background: #F0ADAD'>`Cache-Control`(NonEmptyList.of(cacheDirective, maxAge))</span><span style=''>
+</span>184 <span style=''>      }
+</span>185 <span style=''>
+</span>186 <span style=''>      override def apply[F[_]](resp: Response[F])(implicit G: Temporal[G]): G[Response[F]] =
+</span>187 <span style=''>        </span><span style='background: #F0ADAD'>for {
+</span>188 <span style=''></span><span style='background: #F0ADAD'>          now &lt;- HttpDate.current[G]
+</span>189 <span style=''></span><span style='background: #F0ADAD'>          eps = now.epochSecond + actualLifetime.toSeconds
+</span>190 <span style=''></span><span style='background: #F0ADAD'>          expires &lt;- HttpDate.fromEpochSecond(eps).liftTo[G]
+</span>191 <span style=''></span><span style='background: #F0ADAD'>        } yield resp.putHeaders(cacheControl, HDate(now), Expires(expires))</span><span style=''>
+</span>192 <span style=''>    }
+</span>193 <span style=''>
+</span>194 <span style=''>  trait PartiallyAppliedCache[G[_]] {
+</span>195 <span style=''>    def apply[F[_]](resp: Response[F])(implicit G: Temporal[G]): G[Response[F]]
+</span>196 <span style=''>  }
+</span>197 <span style=''>
+</span>198 <span style=''>  trait PartiallyAppliedNoStoreCache[G[_]] {
+</span>199 <span style=''>    def apply[F[_]](resp: Response[F])(implicit G: Temporal[G]): G[Response[F]]
+</span>200 <span style=''>  }
+</span>201 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          9254
+        </td>
+        <td>
+          1291
+          -
+          1414
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[G, A, org.http4s.Response[[_]F[_]]](((a: A) =&gt; cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Response[F]](http.apply(a))(evidence$1).flatMap[org.http4s.Response[[_]F[_]]](((resp: org.http4s.Response[F]) =&gt; Caching.this.no-store-response[G].apply[[_]F[_]](resp)(evidence$1)))))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          9165
+        </td>
+        <td>
+          1339
+          -
+          1346
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http.apply(a)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          7471
+        </td>
+        <td>
+          1317
+          -
+          1408
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Response[F]](http.apply(a))(evidence$1).flatMap[org.http4s.Response[[_]F[_]]](((resp: org.http4s.Response[F]) =&gt; Caching.this.no-store-response[G].apply[[_]F[_]](resp)(evidence$1)))
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          8021
+        </td>
+        <td>
+          1355
+          -
+          1408
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.PartiallyAppliedNoStoreCache.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Caching.this.no-store-response[G].apply[[_]F[_]](resp)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8199
+        </td>
+        <td>
+          1552
+          -
+          1555
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8322
+        </td>
+        <td>
+          1729
+          -
+          1739
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](org.http4s.headers.Date.apply(now))(headers.this.Date.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9022
+        </td>
+        <td>
+          1752
+          -
+          1752
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.identityToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.identityToRaw(h)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8908
+        </td>
+        <td>
+          1734
+          -
+          1734
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Date.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Date.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7983
+        </td>
+        <td>
+          1752
+          -
+          1772
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.scalaCollectionSeqToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](Caching.this.noStoreStaticHeaders)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h)))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8192
+        </td>
+        <td>
+          1682
+          -
+          1701
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.HttpDate.current
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.HttpDate.current[G](G, G)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7507
+        </td>
+        <td>
+          1713
+          -
+          1773
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](org.http4s.headers.Date.apply(now))(headers.this.Date.headerInstance)).putHeaders(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](Caching.this.noStoreStaticHeaders)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9971
+        </td>
+        <td>
+          1729
+          -
+          1739
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Date.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Date.apply(now)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9226
+        </td>
+        <td>
+          1682
+          -
+          1774
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[G, org.http4s.HttpDate](org.http4s.HttpDate.current[G](G, G))(G).map[org.http4s.Response[F]](((now: org.http4s.HttpDate) =&gt; resp.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](org.http4s.headers.Date.apply(now))(headers.this.Date.headerInstance)).putHeaders(Header.this.ToRaw.scalaCollectionSeqToRaw[org.http4s.Header.ToRaw](Caching.this.noStoreStaticHeaders)(((h: org.http4s.Header.ToRaw) =&gt; Header.this.ToRaw.identityToRaw(h))))))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7267
+        </td>
+        <td>
+          1752
+          -
+          1772
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.noStoreStaticHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Caching.this.noStoreStaticHeaders
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          9298
+        </td>
+        <td>
+          1898
+          -
+          2201
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.List.apply[org.http4s.Header.ToRaw with org.http4s.Header.ToRaw.Primitive](Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Cache-Control](org.http4s.headers.Cache-Control.apply(cats.data.NonEmptyList.of[org.http4s.CacheDirective](org.http4s.CacheDirective.no-store, org.http4s.CacheDirective.no-cache.apply(org.http4s.CacheDirective.no-cache.apply$default$1), org.http4s.CacheDirective.max-age.apply(scala.concurrent.duration.`package`.DurationInt(0).seconds))))(headers.this.Cache-Control.headerInstance), Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](&quot;Pragma&quot;).-&gt;[String](&quot;no-cache&quot;)), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Expires](org.http4s.headers.Expires.apply(org.http4s.HttpDate.Epoch))(headers.this.Expires.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          8113
+        </td>
+        <td>
+          1923
+          -
+          1923
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Cache-Control.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Cache-Control.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          9345
+        </td>
+        <td>
+          1908
+          -
+          2094
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Cache-Control.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Cache-Control.apply(cats.data.NonEmptyList.of[org.http4s.CacheDirective](org.http4s.CacheDirective.no-store, org.http4s.CacheDirective.no-cache.apply(org.http4s.CacheDirective.no-cache.apply$default$1), org.http4s.CacheDirective.max-age.apply(scala.concurrent.duration.`package`.DurationInt(0).seconds)))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          9930
+        </td>
+        <td>
+          1908
+          -
+          2094
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Cache-Control](org.http4s.headers.Cache-Control.apply(cats.data.NonEmptyList.of[org.http4s.CacheDirective](org.http4s.CacheDirective.no-store, org.http4s.CacheDirective.no-cache.apply(org.http4s.CacheDirective.no-cache.apply$default$1), org.http4s.CacheDirective.max-age.apply(scala.concurrent.duration.`package`.DurationInt(0).seconds))))(headers.this.Cache-Control.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          9868
+        </td>
+        <td>
+          1931
+          -
+          2088
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.of
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.NonEmptyList.of[org.http4s.CacheDirective](org.http4s.CacheDirective.no-store, org.http4s.CacheDirective.no-cache.apply(org.http4s.CacheDirective.no-cache.apply$default$1), org.http4s.CacheDirective.max-age.apply(scala.concurrent.duration.`package`.DurationInt(0).seconds))
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          9980
+        </td>
+        <td>
+          1972
+          -
+          1997
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.CacheDirective.no-store
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.CacheDirective.no-store
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          8884
+        </td>
+        <td>
+          2022
+          -
+          2022
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.CacheDirective.no-cache.apply$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.CacheDirective.no-cache.apply$default$1
+        </td>
+      </tr><tr>
+        <td>
+          61
+        </td>
+        <td>
+          8420
+        </td>
+        <td>
+          2007
+          -
+          2034
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.CacheDirective.no-cache.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.CacheDirective.no-cache.apply(org.http4s.CacheDirective.no-cache.apply$default$1)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7990
+        </td>
+        <td>
+          2044
+          -
+          2079
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.CacheDirective.max-age.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.CacheDirective.max-age.apply(scala.concurrent.duration.`package`.DurationInt(0).seconds)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          9025
+        </td>
+        <td>
+          2069
+          -
+          2078
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.DurationConversions.seconds
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.concurrent.duration.`package`.DurationInt(0).seconds
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          7224
+        </td>
+        <td>
+          2069
+          -
+          2070
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          8373
+        </td>
+        <td>
+          2100
+          -
+          2122
+        </td>
+        <td>
+          ApplyImplicitView
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.keyValuesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.keyValuesToRaw(scala.Predef.ArrowAssoc[String](&quot;Pragma&quot;).-&gt;[String](&quot;no-cache&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          8974
+        </td>
+        <td>
+          2100
+          -
+          2122
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.ArrowAssoc.-&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.ArrowAssoc[String](&quot;Pragma&quot;).-&gt;[String](&quot;no-cache&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          9028
+        </td>
+        <td>
+          2128
+          -
+          2151
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Expires.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Expires.apply(org.http4s.HttpDate.Epoch)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          7353
+        </td>
+        <td>
+          2136
+          -
+          2150
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.HttpDate.Epoch
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.HttpDate.Epoch
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          7936
+        </td>
+        <td>
+          2135
+          -
+          2135
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Expires.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Expires.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          9875
+        </td>
+        <td>
+          2128
+          -
+          2151
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Expires](org.http4s.headers.Expires.apply(org.http4s.HttpDate.Epoch))(headers.this.Expires.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          8189
+        </td>
+        <td>
+          2522
+          -
+          2526
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          9934
+        </td>
+        <td>
+          2553
+          -
+          2572
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.isSuccess
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          otherwise.isSuccess
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          7888
+        </td>
+        <td>
+          2664
+          -
+          2675
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.HEAD
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Method.HEAD
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          8934
+        </td>
+        <td>
+          2645
+          -
+          2655
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Method.GET
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.Method.GET
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          9128
+        </td>
+        <td>
+          2640
+          -
+          2675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          m.==(org.http4s.Method.GET).||(m.==(org.http4s.Method.HEAD))
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          7264
+        </td>
+        <td>
+          2659
+          -
+          2675
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          m.==(org.http4s.Method.HEAD)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          7947
+        </td>
+        <td>
+          2975
+          -
+          3130
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.cache
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Caching.this.cache[[_]G[_], [_]F[_]](lifetime, cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).left[org.http4s.CacheDirective.public.type, Nothing](org.http4s.CacheDirective.public), ((m: org.http4s.Method) =&gt; Caching.this.Helpers.defaultMethodsToSetOn(m)), ((s: org.http4s.Status) =&gt; Caching.this.Helpers.defaultStatusToSetOn(s)), http)(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          9825
+        </td>
+        <td>
+          3412
+          -
+          3418
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          8195
+        </td>
+        <td>
+          3412
+          -
+          3446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.left
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).left[org.http4s.CacheDirective.public.type, Nothing](org.http4s.CacheDirective.public)
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          10031
+        </td>
+        <td>
+          3388
+          -
+          3447
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.cacheResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Caching.this.cacheResponse[[_]G[_]](lifetime, cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).left[org.http4s.CacheDirective.public.type, Nothing](org.http4s.CacheDirective.public))
+        </td>
+      </tr><tr>
+        <td>
+          104
+        </td>
+        <td>
+          9307
+        </td>
+        <td>
+          3424
+          -
+          3445
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.CacheDirective.public
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.CacheDirective.public
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          8938
+        </td>
+        <td>
+          3802
+          -
+          3973
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.cache
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Caching.this.cache[[_]G[_], [_]F[_]](lifetime, cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[org.http4s.CacheDirective.public.type, org.http4s.CacheDirective.private](org.http4s.CacheDirective.`private`.apply(fieldNames)), ((m: org.http4s.Method) =&gt; Caching.this.Helpers.defaultMethodsToSetOn(m)), ((s: org.http4s.Status) =&gt; Caching.this.Helpers.defaultStatusToSetOn(s)), http)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          9129
+        </td>
+        <td>
+          4309
+          -
+          4359
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.syntax.EitherObjectOps.right
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[org.http4s.CacheDirective.public.type, org.http4s.CacheDirective.private](org.http4s.CacheDirective.`private`.apply(fieldNames))
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          7221
+        </td>
+        <td>
+          4322
+          -
+          4358
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.CacheDirective.private.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.CacheDirective.`private`.apply(fieldNames)
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          7836
+        </td>
+        <td>
+          4309
+          -
+          4315
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Either
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Either
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          7928
+        </td>
+        <td>
+          4285
+          -
+          4360
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.cacheResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Caching.this.cacheResponse[[_]G[_]](lifetime, cats.syntax.`package`.all.catsSyntaxEitherObject(scala.`package`.Either).right[org.http4s.CacheDirective.public.type, org.http4s.CacheDirective.private](org.http4s.CacheDirective.`private`.apply(fieldNames)))
+        </td>
+      </tr><tr>
+        <td>
+          149
+        </td>
+        <td>
+          9834
+        </td>
+        <td>
+          4930
+          -
+          4966
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.cacheResponse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Caching.this.cacheResponse[G](lifetime, isPublic)
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          7886
+        </td>
+        <td>
+          4971
+          -
+          5188
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.Kleisli.apply[G, org.http4s.Request[F], org.http4s.Response[F]](((req: org.http4s.Request[F]) =&gt; if (methodToSetOn.apply(req.method))
+  cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Response[F]](http.apply(req))(evidence$4).flatMap[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; if (statusToSetOn.apply(resp.status))
+    cacher.apply[[_]F[_]](resp)(evidence$4)
+  else
+    cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](resp).pure[G](evidence$4)))
+else
+  http.apply(req)))
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          9230
+        </td>
+        <td>
+          5026
+          -
+          5036
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.method
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          req.method
+        </td>
+      </tr><tr>
+        <td>
+          151
+        </td>
+        <td>
+          8147
+        </td>
+        <td>
+          5012
+          -
+          5037
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          methodToSetOn.apply(req.method)
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          8157
+        </td>
+        <td>
+          5049
+          -
+          5159
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Response[F]](http.apply(req))(evidence$4).flatMap[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; if (statusToSetOn.apply(resp.status))
+  cacher.apply[[_]F[_]](resp)(evidence$4)
+else
+  cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](resp).pure[G](evidence$4)))
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          8671
+        </td>
+        <td>
+          5049
+          -
+          5159
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.Response[F]](http.apply(req))(evidence$4).flatMap[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; if (statusToSetOn.apply(resp.status))
+  cacher.apply[[_]F[_]](resp)(evidence$4)
+else
+  cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](resp).pure[G](evidence$4)))
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          10034
+        </td>
+        <td>
+          5049
+          -
+          5058
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          7933
+        </td>
+        <td>
+          5137
+          -
+          5149
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](resp).pure[G](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          8842
+        </td>
+        <td>
+          5105
+          -
+          5116
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.status
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.status
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          9772
+        </td>
+        <td>
+          5137
+          -
+          5149
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[F]](resp).pure[G](evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          9083
+        </td>
+        <td>
+          5119
+          -
+          5131
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.PartiallyAppliedCache.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cacher.apply[[_]F[_]](resp)(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          7845
+        </td>
+        <td>
+          5091
+          -
+          5117
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          statusToSetOn.apply(resp.status)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          7226
+        </td>
+        <td>
+          5119
+          -
+          5131
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.PartiallyAppliedCache.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cacher.apply[[_]F[_]](resp)(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          8849
+        </td>
+        <td>
+          5173
+          -
+          5182
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          10075
+        </td>
+        <td>
+          5173
+          -
+          5182
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          9090
+        </td>
+        <td>
+          5336
+          -
+          5353
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.DurationConversions.seconds
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.concurrent.duration.`package`.DurationInt(315360000).seconds
+        </td>
+      </tr><tr>
+        <td>
+          161
+        </td>
+        <td>
+          7202
+        </td>
+        <td>
+          5336
+          -
+          5345
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          315360000
+        </td>
+      </tr><tr>
+        <td>
+          173
+        </td>
+        <td>
+          7792
+        </td>
+        <td>
+          5741
+          -
+          5744
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          8076
+        </td>
+        <td>
+          5880
+          -
+          5895
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.tenYearDuration
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Caching.this.tenYearDuration
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          9749
+        </td>
+        <td>
+          6149
+          -
+          6157
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.identity[org.http4s.CacheDirective.public.type](x)
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          8811
+        </td>
+        <td>
+          6159
+          -
+          6167
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.identity[org.http4s.CacheDirective.private](x)
+        </td>
+      </tr><tr>
+        <td>
+          181
+        </td>
+        <td>
+          8120
+        </td>
+        <td>
+          6135
+          -
+          6168
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.fold
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          isPublic.fold[org.http4s.CacheDirective with java.io.Serializable](((x: org.http4s.CacheDirective.public.type) =&gt; scala.Predef.identity[org.http4s.CacheDirective.public.type](x)), ((x: org.http4s.CacheDirective.private) =&gt; scala.Predef.identity[org.http4s.CacheDirective.private](x)))
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          8854
+        </td>
+        <td>
+          6190
+          -
+          6230
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.CacheDirective.max-age.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.CacheDirective.max-age.apply($anon.this.actualLifetime)
+        </td>
+      </tr><tr>
+        <td>
+          182
+        </td>
+        <td>
+          10079
+        </td>
+        <td>
+          6215
+          -
+          6229
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.$anon.actualLifetime
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          $anon.this.actualLifetime
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          7834
+        </td>
+        <td>
+          6255
+          -
+          6294
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.of
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.data.NonEmptyList.of[org.http4s.CacheDirective with java.io.Serializable](cacheDirective, maxAge)
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          7322
+        </td>
+        <td>
+          6239
+          -
+          6295
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Cache-Control.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Cache-Control.apply(cats.data.NonEmptyList.of[org.http4s.CacheDirective with java.io.Serializable](cacheDirective, maxAge))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          8999
+        </td>
+        <td>
+          6406
+          -
+          6644
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFlatMapOps[G, org.http4s.HttpDate](org.http4s.HttpDate.current[G](G, G))(G).flatMap[resp.Self](((now: org.http4s.HttpDate) =&gt; {
+  val eps: Long = now.epochSecond.+($anon.this.actualLifetime.toSeconds);
+  cats.syntax.`package`.all.toFunctorOps[G, org.http4s.HttpDate](cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.HttpDate](org.http4s.HttpDate.fromEpochSecond(eps)).liftTo[G](G))(G).map[resp.Self](((expires: org.http4s.HttpDate) =&gt; resp.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Cache-Control]($anon.this.cacheControl)(headers.this.Cache-Control.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](org.http4s.headers.Date.apply(now))(headers.this.Date.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Expires](org.http4s.headers.Expires.apply(expires))(headers.this.Expires.headerInstance))))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          188
+        </td>
+        <td>
+          9175
+        </td>
+        <td>
+          6429
+          -
+          6448
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.HttpDate.current
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.HttpDate.current[G](G, G)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          9828
+        </td>
+        <td>
+          6465
+          -
+          6507
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          now.epochSecond.+($anon.this.actualLifetime.toSeconds)
+        </td>
+      </tr><tr>
+        <td>
+          189
+        </td>
+        <td>
+          8081
+        </td>
+        <td>
+          6483
+          -
+          6507
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.toSeconds
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          $anon.this.actualLifetime.toSeconds
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          9988
+        </td>
+        <td>
+          6518
+          -
+          6644
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[G, org.http4s.HttpDate](cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.HttpDate](org.http4s.HttpDate.fromEpochSecond(eps)).liftTo[G](G))(G).map[resp.Self](((expires: org.http4s.HttpDate) =&gt; resp.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Cache-Control]($anon.this.cacheControl)(headers.this.Cache-Control.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](org.http4s.headers.Date.apply(now))(headers.this.Date.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Expires](org.http4s.headers.Expires.apply(expires))(headers.this.Expires.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          8764
+        </td>
+        <td>
+          6529
+          -
+          6568
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.EitherOps.liftTo
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxEither[org.http4s.ParseFailure, org.http4s.HttpDate](org.http4s.HttpDate.fromEpochSecond(eps)).liftTo[G](G)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          8992
+        </td>
+        <td>
+          6601
+          -
+          6613
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Cache-Control]($anon.this.cacheControl)(headers.this.Cache-Control.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          9688
+        </td>
+        <td>
+          6620
+          -
+          6620
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Date.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Date.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          9078
+        </td>
+        <td>
+          6615
+          -
+          6625
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](org.http4s.headers.Date.apply(now))(headers.this.Date.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          7843
+        </td>
+        <td>
+          6615
+          -
+          6625
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Date.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Date.apply(now)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          8087
+        </td>
+        <td>
+          6627
+          -
+          6643
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Expires.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Expires.apply(expires)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          8249
+        </td>
+        <td>
+          6601
+          -
+          6613
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.middleware.Caching.$anon.cacheControl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          $anon.this.cacheControl
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          8114
+        </td>
+        <td>
+          6585
+          -
+          6644
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Message.putHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          resp.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Cache-Control]($anon.this.cacheControl)(headers.this.Cache-Control.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Date](org.http4s.headers.Date.apply(now))(headers.this.Date.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Expires](org.http4s.headers.Expires.apply(expires))(headers.this.Expires.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          9795
+        </td>
+        <td>
+          6634
+          -
+          6634
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Expires.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Expires.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          8775
+        </td>
+        <td>
+          6627
+          -
+          6643
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Expires](org.http4s.headers.Expires.apply(expires))(headers.this.Expires.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          191
+        </td>
+        <td>
+          10081
+        </td>
+        <td>
+          6601
+          -
+          6601
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Cache-Control.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Cache-Control.headerInstance
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

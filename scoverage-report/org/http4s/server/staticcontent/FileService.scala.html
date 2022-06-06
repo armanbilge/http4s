@@ -1,0 +1,4991 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/staticcontent/FileService.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package staticcontent
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.data.Kleisli
+</span>22 <span style=''>import cats.data.NonEmptyList
+</span>23 <span style=''>import cats.data.OptionT
+</span>24 <span style=''>import cats.effect.kernel.Async
+</span>25 <span style=''>import cats.syntax.all._
+</span>26 <span style=''>import fs2.io.file.Files
+</span>27 <span style=''>import fs2.io.file.NoSuchFileException
+</span>28 <span style=''>import fs2.io.file.Path
+</span>29 <span style=''>import org.http4s.headers.Range.SubRange
+</span>30 <span style=''>import org.http4s.headers._
+</span>31 <span style=''>import org.http4s.server.middleware.TranslateUri
+</span>32 <span style=''>import org.log4s.getLogger
+</span>33 <span style=''>import org.typelevel.ci._
+</span>34 <span style=''>
+</span>35 <span style=''>import java.io.File
+</span>36 <span style=''>import scala.annotation.nowarn
+</span>37 <span style=''>import scala.util.control.NoStackTrace
+</span>38 <span style=''>
+</span>39 <span style=''>object FileService {
+</span>40 <span style=''>  private[this] val logger = getLogger
+</span>41 <span style=''>
+</span>42 <span style=''>  @deprecated(&quot;use FileService.Fs2PathCollector&quot;, &quot;0.23.8&quot;)
+</span>43 <span style=''>  type PathCollector[F[_]] = (File, Config[F], Request[F]) =&gt; OptionT[F, Response[F]]
+</span>44 <span style=''>
+</span>45 <span style=''>  type Fs2PathCollector[F[_]] = (Path, Config[F], Request[F]) =&gt; OptionT[F, Response[F]]
+</span>46 <span style=''>
+</span>47 <span style=''>  /** [[org.http4s.server.staticcontent.FileService]] configuration
+</span>48 <span style=''>    *
+</span>49 <span style=''>    * @param systemPath path prefix to the folder from which content will be served
+</span>50 <span style=''>    * @param fs2PathCollector function that performs the work of collecting the file or rendering the directory into a response.
+</span>51 <span style=''>    * @param pathPrefix prefix of Uri from which content will be served
+</span>52 <span style=''>    * @param cacheStrategy strategy to use for caching purposes. Default to no caching.
+</span>53 <span style=''>    * @param bufferSize buffer size to use for internal read buffers
+</span>54 <span style=''>    */
+</span>55 <span style=''>  final class Config[F[_]](
+</span>56 <span style=''>      val systemPath: String,
+</span>57 <span style=''>      val fs2PathCollector: Fs2PathCollector[F],
+</span>58 <span style=''>      val pathPrefix: String,
+</span>59 <span style=''>      val cacheStrategy: CacheStrategy[F],
+</span>60 <span style=''>      val bufferSize: Int,
+</span>61 <span style=''>  ) extends Product
+</span>62 <span style=''>      with Serializable
+</span>63 <span style=''>      with Equals {
+</span>64 <span style=''>
+</span>65 <span style=''>    /** For binary compatibility.
+</span>66 <span style=''>      * @param systemPath path prefix to the folder from which content will be served
+</span>67 <span style=''>      * @param pathCollector function that performs the work of collecting the file or rendering the directory into a response.
+</span>68 <span style=''>      * @param pathPrefix prefix of Uri from which content will be served
+</span>69 <span style=''>      * @param bufferSize buffer size to use for internal read buffers
+</span>70 <span style=''>      * @param cacheStrategy strategy to use for caching purposes. Default to no caching.
+</span>71 <span style=''>      */
+</span>72 <span style=''>    @deprecated(&quot;use the constructor with fs2PathCollector&quot;, &quot;0.23.8&quot;)
+</span>73 <span style=''>    def this(
+</span>74 <span style=''>        systemPath: String,
+</span>75 <span style=''>        pathCollector: PathCollector[F],
+</span>76 <span style=''>        pathPrefix: String,
+</span>77 <span style=''>        bufferSize: Int,
+</span>78 <span style=''>        cacheStrategy: CacheStrategy[F],
+</span>79 <span style=''>    ) =
+</span>80 <span style=''>      </span><span style='background: #F0ADAD'>this(
+</span>81 <span style=''></span><span style='background: #F0ADAD'>        systemPath,
+</span>82 <span style=''></span><span style='background: #F0ADAD'>        (path: Path, config: Config[F], request: Request[F]) =&gt;
+</span>83 <span style=''></span><span style='background: #F0ADAD'>          pathCollector(
+</span>84 <span style=''></span><span style='background: #F0ADAD'>            path.toNioPath.toFile,
+</span>85 <span style=''></span><span style='background: #F0ADAD'>            config,
+</span>86 <span style=''></span><span style='background: #F0ADAD'>            request,
+</span>87 <span style=''></span><span style='background: #F0ADAD'>          ),
+</span>88 <span style=''></span><span style='background: #F0ADAD'>        pathPrefix,
+</span>89 <span style=''></span><span style='background: #F0ADAD'>        cacheStrategy,
+</span>90 <span style=''></span><span style='background: #F0ADAD'>        bufferSize,
+</span>91 <span style=''></span><span style='background: #F0ADAD'>      )</span><span style=''>
+</span>92 <span style=''>
+</span>93 <span style=''>    /** For binary compatibility.
+</span>94 <span style=''>      * @return an instance of PathCollector[F] created (converted) from fs2PathCollector
+</span>95 <span style=''>      */
+</span>96 <span style=''>    @deprecated(&quot;use fs2PathCollector&quot;, &quot;0.23.8&quot;)
+</span>97 <span style=''>    def pathCollector: PathCollector[F] = (file, config, request) =&gt;
+</span>98 <span style=''>      </span><span style='background: #F0ADAD'>fs2PathCollector(
+</span>99 <span style=''></span><span style='background: #F0ADAD'>        Path.fromNioPath(file.toPath()),
+</span>100 <span style=''></span><span style='background: #F0ADAD'>        config,
+</span>101 <span style=''></span><span style='background: #F0ADAD'>        request,
+</span>102 <span style=''></span><span style='background: #F0ADAD'>      )</span><span style=''>
+</span>103 <span style=''>
+</span>104 <span style=''>    @deprecated(
+</span>105 <span style=''>      &quot;Config is no longer a case class. The copy method is provided for binary compatibility.&quot;,
+</span>106 <span style=''>      &quot;0.23.8&quot;,
+</span>107 <span style=''>    )
+</span>108 <span style=''>    def copy(
+</span>109 <span style=''>        systemPath: String = this.systemPath,
+</span>110 <span style=''>        @nowarn pathCollector: PathCollector[F] = this.pathCollector,
+</span>111 <span style=''>        pathPrefix: String = this.pathPrefix,
+</span>112 <span style=''>        bufferSize: Int = this.bufferSize,
+</span>113 <span style=''>        cacheStrategy: CacheStrategy[F] = this.cacheStrategy,
+</span>114 <span style=''>    ): Config[F] = </span><span style='background: #F0ADAD'>new Config[F](
+</span>115 <span style=''></span><span style='background: #F0ADAD'>      systemPath,
+</span>116 <span style=''></span><span style='background: #F0ADAD'>      fs2PathCollector,
+</span>117 <span style=''></span><span style='background: #F0ADAD'>      pathPrefix,
+</span>118 <span style=''></span><span style='background: #F0ADAD'>      cacheStrategy,
+</span>119 <span style=''></span><span style='background: #F0ADAD'>      bufferSize,
+</span>120 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>121 <span style=''>
+</span>122 <span style=''>    @deprecated(
+</span>123 <span style=''>      &quot;Config is no longer a case class. The productArity method is provided for binary compatibility.&quot;,
+</span>124 <span style=''>      &quot;0.23.8&quot;,
+</span>125 <span style=''>    )
+</span>126 <span style=''>    override def productArity: Int = </span><span style='background: #F0ADAD'>5</span><span style=''>
+</span>127 <span style=''>
+</span>128 <span style=''>    @deprecated(
+</span>129 <span style=''>      &quot;Config is no longer a case class. The productElement method is provided for binary compatibility.&quot;,
+</span>130 <span style=''>      &quot;0.23.8&quot;,
+</span>131 <span style=''>    )
+</span>132 <span style=''>    override def productElement(n: Int): Any = n match {
+</span>133 <span style=''>      case 0 =&gt; </span><span style='background: #F0ADAD'>systemPath</span><span style=''>
+</span>134 <span style=''>      case 1 =&gt; if (</span><span style='background: #F0ADAD'>Platform.isJvm</span><span style=''>) </span><span style='background: #F0ADAD'>pathCollector</span><span style=''> else </span><span style='background: #F0ADAD'>fs2PathCollector</span><span style=''>
+</span>135 <span style=''>      case 2 =&gt; </span><span style='background: #F0ADAD'>pathPrefix</span><span style=''>
+</span>136 <span style=''>      case 3 =&gt; </span><span style='background: #F0ADAD'>bufferSize</span><span style=''>
+</span>137 <span style=''>      case 4 =&gt; </span><span style='background: #F0ADAD'>cacheStrategy</span><span style=''>
+</span>138 <span style=''>    }
+</span>139 <span style=''>
+</span>140 <span style=''>    @deprecated(
+</span>141 <span style=''>      &quot;Config is no longer a case class. The _1 method is provided for binary compatibility.&quot;,
+</span>142 <span style=''>      &quot;0.23.8&quot;,
+</span>143 <span style=''>    )
+</span>144 <span style=''>    def _1: String = </span><span style='background: #F0ADAD'>systemPath</span><span style=''>
+</span>145 <span style=''>    @deprecated(
+</span>146 <span style=''>      &quot;Config is no longer a case class. The _2 method is provided for binary compatibility.&quot;,
+</span>147 <span style=''>      &quot;0.23.8&quot;,
+</span>148 <span style=''>    )
+</span>149 <span style=''>    def _2: Function3[_, _, _, _] =
+</span>150 <span style=''>      if (</span><span style='background: #F0ADAD'>Platform.isJvm</span><span style=''>) </span><span style='background: #F0ADAD'>pathCollector</span><span style=''> else </span><span style='background: #F0ADAD'>fs2PathCollector</span><span style=''>
+</span>151 <span style=''>    @deprecated(
+</span>152 <span style=''>      &quot;Config is no longer a case class. The _3 method is provided for binary compatibility.&quot;,
+</span>153 <span style=''>      &quot;0.23.8&quot;,
+</span>154 <span style=''>    )
+</span>155 <span style=''>    def _3: String = </span><span style='background: #F0ADAD'>pathPrefix</span><span style=''>
+</span>156 <span style=''>    @deprecated(
+</span>157 <span style=''>      &quot;Config is no longer a case class. The _4 method is provided for binary compatibility.&quot;,
+</span>158 <span style=''>      &quot;0.23.8&quot;,
+</span>159 <span style=''>    )
+</span>160 <span style=''>    def _4: Int = </span><span style='background: #F0ADAD'>bufferSize</span><span style=''>
+</span>161 <span style=''>    @deprecated(
+</span>162 <span style=''>      &quot;Config is no longer a case class. The _5 method is provided for binary compatibility.&quot;,
+</span>163 <span style=''>      &quot;0.23.8&quot;,
+</span>164 <span style=''>    )
+</span>165 <span style=''>    def _5: CacheStrategy[F] = </span><span style='background: #F0ADAD'>cacheStrategy</span><span style=''>
+</span>166 <span style=''>
+</span>167 <span style=''>    override def canEqual(that: Any): Boolean = that match {
+</span>168 <span style=''>      case _: Config[_] =&gt; </span><span style='background: #F0ADAD'>true</span><span style=''>
+</span>169 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>false</span><span style=''>
+</span>170 <span style=''>    }
+</span>171 <span style=''>
+</span>172 <span style=''>    override def equals(other: Any): Boolean = other match {
+</span>173 <span style=''>      case that: Config[_] =&gt;
+</span>174 <span style=''>        </span><span style='background: #F0ADAD'>systemPath == that.systemPath &amp;&amp;
+</span>175 <span style=''></span><span style='background: #F0ADAD'>        fs2PathCollector == that.fs2PathCollector &amp;&amp;
+</span>176 <span style=''></span><span style='background: #F0ADAD'>        pathPrefix == that.pathPrefix &amp;&amp;
+</span>177 <span style=''></span><span style='background: #F0ADAD'>        cacheStrategy == that.cacheStrategy &amp;&amp;
+</span>178 <span style=''></span><span style='background: #F0ADAD'>        bufferSize == that.bufferSize</span><span style=''>
+</span>179 <span style=''>      case _ =&gt; </span><span style='background: #F0ADAD'>false</span><span style=''>
+</span>180 <span style=''>    }
+</span>181 <span style=''>
+</span>182 <span style=''>    override def hashCode(): Int = {
+</span>183 <span style=''>      val state = </span><span style='background: #F0ADAD'>Seq[Any](systemPath, fs2PathCollector, pathPrefix, bufferSize, cacheStrategy)</span><span style=''>
+</span>184 <span style=''>      </span><span style='background: #F0ADAD'>state.map(_.hashCode()).foldLeft(0)((a, b) =&gt; 31 * a + b)</span><span style=''>
+</span>185 <span style=''>    }
+</span>186 <span style=''>
+</span>187 <span style=''>    override def toString: String =
+</span>188 <span style=''>      s&quot;Config($systemPath, $fs2PathCollector, $pathPrefix, $bufferSize, $cacheStrategy)&quot;
+</span>189 <span style=''>
+</span>190 <span style=''>  }
+</span>191 <span style=''>
+</span>192 <span style=''>  object Config extends FileServiceConfigCompanionCompat {
+</span>193 <span style=''>
+</span>194 <span style=''>    /** Creates an instance of [[org.http4s.server.staticcontent.FileService]] configuration.
+</span>195 <span style=''>      *
+</span>196 <span style=''>      * @param systemPath path prefix to the folder from which content will be served
+</span>197 <span style=''>      * @param fs2PathCollector function that performs the work of collecting the file or rendering the directory into a response.
+</span>198 <span style=''>      * @param pathPrefix prefix of Uri from which content will be served
+</span>199 <span style=''>      * @param cacheStrategy strategy to use for caching purposes. Default to no caching.
+</span>200 <span style=''>      * @param bufferSize buffer size to use for internal read buffers
+</span>201 <span style=''>      */
+</span>202 <span style=''>    def apply[F[_]](
+</span>203 <span style=''>        systemPath: String,
+</span>204 <span style=''>        fs2PathCollector: Fs2PathCollector[F],
+</span>205 <span style=''>        pathPrefix: String,
+</span>206 <span style=''>        cacheStrategy: CacheStrategy[F],
+</span>207 <span style=''>        bufferSize: Int,
+</span>208 <span style=''>    ): Config[F] =
+</span>209 <span style=''>      </span><span style='background: #AEF1AE'>new Config[F](systemPath, fs2PathCollector, pathPrefix, cacheStrategy, bufferSize)</span><span style=''>
+</span>210 <span style=''>
+</span>211 <span style=''>    /** Creates an instance of [[org.http4s.server.staticcontent.FileService]] configuration.
+</span>212 <span style=''>      * A constructor that accepts PathCollector[F] for binary compatibility.
+</span>213 <span style=''>      *
+</span>214 <span style=''>      * @param systemPath path prefix to the folder from which content will be served
+</span>215 <span style=''>      * @param pathCollector function that performs the work of collecting the file or rendering the directory into a response.
+</span>216 <span style=''>      * @param pathPrefix prefix of Uri from which content will be served
+</span>217 <span style=''>      * @param bufferSize buffer size to use for internal read buffers
+</span>218 <span style=''>      * @param cacheStrategy strategy to use for caching purposes. Default to no caching.
+</span>219 <span style=''>      */
+</span>220 <span style=''>    @deprecated(
+</span>221 <span style=''>      &quot;use FileService.Config(systemPath: String, fs2PathCollector: Fs2PathCollector[F], ...)&quot;,
+</span>222 <span style=''>      &quot;0.23.8&quot;,
+</span>223 <span style=''>    )
+</span>224 <span style=''>    def apply[F[_]](
+</span>225 <span style=''>        systemPath: String,
+</span>226 <span style=''>        pathCollector: PathCollector[F],
+</span>227 <span style=''>        pathPrefix: String,
+</span>228 <span style=''>        bufferSize: Int,
+</span>229 <span style=''>        cacheStrategy: CacheStrategy[F],
+</span>230 <span style=''>    ): Config[F] = </span><span style='background: #F0ADAD'>new Config[F](
+</span>231 <span style=''></span><span style='background: #F0ADAD'>      systemPath,
+</span>232 <span style=''></span><span style='background: #F0ADAD'>      pathCollector,
+</span>233 <span style=''></span><span style='background: #F0ADAD'>      pathPrefix,
+</span>234 <span style=''></span><span style='background: #F0ADAD'>      bufferSize,
+</span>235 <span style=''></span><span style='background: #F0ADAD'>      cacheStrategy,
+</span>236 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>237 <span style=''>
+</span>238 <span style=''>    def apply[F[_]: Async](
+</span>239 <span style=''>        systemPath: String,
+</span>240 <span style=''>        pathPrefix: String = &quot;&quot;,
+</span>241 <span style=''>        bufferSize: Int = 50 * 1024,
+</span>242 <span style=''>        cacheStrategy: CacheStrategy[F] = NoopCacheStrategy[F],
+</span>243 <span style=''>    ): Config[F] = {
+</span>244 <span style=''>      val pathCollector: Fs2PathCollector[F] = (f, c, r) =&gt; </span><span style='background: #AEF1AE'>filesOnly(f, c, r)</span><span style=''>
+</span>245 <span style=''>      </span><span style='background: #AEF1AE'>Config(systemPath, pathCollector, pathPrefix, cacheStrategy, bufferSize)</span><span style=''>
+</span>246 <span style=''>    }
+</span>247 <span style=''>  }
+</span>248 <span style=''>
+</span>249 <span style=''>  /** Make a new [[org.http4s.HttpRoutes]] that serves static files. */
+</span>250 <span style=''>  private[staticcontent] def apply[F[_]](config: Config[F])(implicit F: Async[F]): HttpRoutes[F] = {
+</span>251 <span style=''>    object BadTraversal extends Exception with NoStackTrace
+</span>252 <span style=''>    def withPath(rootPath: Path)(request: Request[F]): OptionT[F, Response[F]] = {
+</span>253 <span style=''>      val resolvePath: F[Path] =
+</span>254 <span style=''>        if (</span><span style='background: #AEF1AE'>request.pathInfo.isEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>F.pure(rootPath)</span><span style=''>
+</span>255 <span style=''>        else </span><span style='background: #AEF1AE'>{
+</span>256 <span style=''></span><span style='background: #AEF1AE'>          val segments = request.pathInfo.segments.map(_.decoded(plusIsSpace = true))
+</span>257 <span style=''></span><span style='background: #AEF1AE'>          F.catchNonFatal {
+</span>258 <span style=''></span><span style='background: #AEF1AE'>            segments.foldLeft(rootPath) {
+</span>259 <span style=''></span><span style='background: #AEF1AE'>              case (_, &quot;&quot; | &quot;.&quot; | &quot;..&quot;) =&gt; throw BadTraversal
+</span>260 <span style=''></span><span style='background: #AEF1AE'>              case (path, segment) =&gt; path.resolve(segment)
+</span>261 <span style=''></span><span style='background: #AEF1AE'>            }
+</span>262 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>263 <span style=''></span><span style='background: #AEF1AE'>        }</span><span style=''>
+</span>264 <span style=''>
+</span>265 <span style=''>      val matchingPath: F[Option[Path]] =
+</span>266 <span style=''>        </span><span style='background: #AEF1AE'>for {
+</span>267 <span style=''></span><span style='background: #AEF1AE'>          path &lt;- resolvePath
+</span>268 <span style=''></span><span style='background: #AEF1AE'>          existsPath &lt;- Files[F].exists(path, false)
+</span>269 <span style=''></span><span style='background: #AEF1AE'>        } yield
+</span>270 <span style=''></span><span style='background: #AEF1AE'>          if (existsPath &amp;&amp; path.startsWith(rootPath))
+</span>271 <span style=''></span><span style='background: #AEF1AE'>            Some(path.absolute.normalize)
+</span>272 <span style=''></span><span style='background: #AEF1AE'>          else None</span><span style=''>
+</span>273 <span style=''>
+</span>274 <span style=''>      </span><span style='background: #AEF1AE'>OptionT(matchingPath)
+</span>275 <span style=''></span><span style='background: #AEF1AE'>        .flatMap(path =&gt; config.fs2PathCollector(path, config, request))
+</span>276 <span style=''></span><span style='background: #AEF1AE'>        .semiflatMap(config.cacheStrategy.cache(request.pathInfo, _))
+</span>277 <span style=''></span><span style='background: #AEF1AE'>        .recoverWith { case BadTraversal =&gt; OptionT.some(Response(Status.BadRequest)) }</span><span style=''>
+</span>278 <span style=''>    }
+</span>279 <span style=''>
+</span>280 <span style=''>    val readPath: F[Path] = </span><span style='background: #AEF1AE'>Files[F].realPath(Path(config.systemPath))</span><span style=''>
+</span>281 <span style=''>    val inner: F[HttpRoutes[F]] = </span><span style='background: #AEF1AE'>readPath.attempt.map {
+</span>282 <span style=''></span><span style='background: #AEF1AE'>      case Right(rootPath) =&gt;
+</span>283 <span style=''></span><span style='background: #AEF1AE'>        TranslateUri(config.pathPrefix)(Kleisli(withPath(rootPath)))
+</span>284 <span style=''></span><span style='background: #AEF1AE'>
+</span>285 <span style=''></span><span style='background: #AEF1AE'>      case Left(_: NoSuchFileException) =&gt;
+</span>286 <span style=''></span><span style='background: #AEF1AE'>        logger.error(
+</span>287 <span style=''></span><span style='background: #AEF1AE'>          s&quot;Could not find root path from FileService config: systemPath = ${config.systemPath}, pathPrefix = ${config.pathPrefix}. All requests will return none.&quot;
+</span>288 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>289 <span style=''></span><span style='background: #AEF1AE'>        HttpRoutes.empty
+</span>290 <span style=''></span><span style='background: #AEF1AE'>
+</span>291 <span style=''></span><span style='background: #AEF1AE'>      case Left(e) =&gt;
+</span>292 <span style=''></span><span style='background: #AEF1AE'>        logger.error(e)(
+</span>293 <span style=''></span><span style='background: #AEF1AE'>          s&quot;Could not resolve root path from FileService config: systemPath = ${config.systemPath}, pathPrefix = ${config.pathPrefix}. All requests will fail with a 500.&quot;
+</span>294 <span style=''></span><span style='background: #AEF1AE'>        )
+</span>295 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>HttpRoutes.pure(Response(Status.InternalServerError))</span><span style='background: #AEF1AE'>
+</span>296 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>297 <span style=''>
+</span>298 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli((_: Any) =&gt; OptionT.liftF(inner)).flatten</span><span style=''>
+</span>299 <span style=''>  }
+</span>300 <span style=''>
+</span>301 <span style=''>  private def filesOnly[F[_]](path: Path, config: Config[F], req: Request[F])(implicit
+</span>302 <span style=''>      F: Async[F]
+</span>303 <span style=''>  ): OptionT[F, Response[F]] =
+</span>304 <span style=''>    </span><span style='background: #AEF1AE'>OptionT(Files[F].getBasicFileAttributes(path).flatMap { attr =&gt;
+</span>305 <span style=''></span><span style='background: #AEF1AE'>      if (attr.isDirectory)
+</span>306 <span style=''></span><span style='background: #AEF1AE'>        StaticFile
+</span>307 <span style=''></span><span style='background: #AEF1AE'>          .fromPath(path / &quot;index.html&quot;, Some(req))
+</span>308 <span style=''></span><span style='background: #AEF1AE'>          .value
+</span>309 <span style=''></span><span style='background: #AEF1AE'>      else if (!attr.isRegularFile) </span><span style='background: #F0ADAD'>F.pure(None)</span><span style='background: #AEF1AE'>
+</span>310 <span style=''></span><span style='background: #AEF1AE'>      else
+</span>311 <span style=''></span><span style='background: #AEF1AE'>        OptionT(getPartialContentFile(path, config, req))
+</span>312 <span style=''></span><span style='background: #AEF1AE'>          .orElse(
+</span>313 <span style=''></span><span style='background: #AEF1AE'>            StaticFile
+</span>314 <span style=''></span><span style='background: #AEF1AE'>              .fromPath(path, config.bufferSize, Some(req), StaticFile.calculateETag)
+</span>315 <span style=''></span><span style='background: #AEF1AE'>              .map(_.putHeaders(AcceptRangeHeader))
+</span>316 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>317 <span style=''></span><span style='background: #AEF1AE'>          .value
+</span>318 <span style=''></span><span style='background: #AEF1AE'>    })</span><span style=''>
+</span>319 <span style=''>
+</span>320 <span style=''>  private def validRange(start: Long, end: Option[Long], fileLength: Long): Boolean =
+</span>321 <span style=''>    </span><span style='background: #AEF1AE'>start &lt; fileLength &amp;&amp; (end match {
+</span>322 <span style=''></span><span style='background: #AEF1AE'>      case Some(end) =&gt; start &gt;= 0 &amp;&amp; start &lt;= end
+</span>323 <span style=''></span><span style='background: #AEF1AE'>      case None =&gt; start &gt;= 0 || fileLength + start - 1 &gt;= 0
+</span>324 <span style=''></span><span style='background: #AEF1AE'>    })</span><span style=''>
+</span>325 <span style=''>
+</span>326 <span style=''>  // Attempt to find a Range header and collect only the subrange of content requested
+</span>327 <span style=''>  private def getPartialContentFile[F[_]](file: Path, config: Config[F], req: Request[F])(implicit
+</span>328 <span style=''>      F: Async[F]
+</span>329 <span style=''>  ): F[Option[Response[F]]] =
+</span>330 <span style=''>    </span><span style='background: #AEF1AE'>Files[F].getBasicFileAttributes(file).flatMap { attr =&gt;
+</span>331 <span style=''></span><span style='background: #AEF1AE'>      def nope: F[Option[Response[F]]] =
+</span>332 <span style=''></span><span style='background: #AEF1AE'>        Some(
+</span>333 <span style=''></span><span style='background: #AEF1AE'>          Response[F](
+</span>334 <span style=''></span><span style='background: #AEF1AE'>            status = Status.RangeNotSatisfiable,
+</span>335 <span style=''></span><span style='background: #AEF1AE'>            headers = Headers
+</span>336 <span style=''></span><span style='background: #AEF1AE'>              .apply(
+</span>337 <span style=''></span><span style='background: #AEF1AE'>                AcceptRangeHeader,
+</span>338 <span style=''></span><span style='background: #AEF1AE'>                `Content-Range`(SubRange(0, attr.size - 1), Some(attr.size)),
+</span>339 <span style=''></span><span style='background: #AEF1AE'>              ),
+</span>340 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>341 <span style=''></span><span style='background: #AEF1AE'>        ).pure[F].widen
+</span>342 <span style=''></span><span style='background: #AEF1AE'>
+</span>343 <span style=''></span><span style='background: #AEF1AE'>      req.headers.get[Range] match {
+</span>344 <span style=''></span><span style='background: #AEF1AE'>        case Some(Range(RangeUnit.Bytes, NonEmptyList(SubRange(s, e), Nil))) =&gt;
+</span>345 <span style=''></span><span style='background: #AEF1AE'>          if (validRange(s, e, attr.size)) {
+</span>346 <span style=''></span><span style='background: #AEF1AE'>            val size = attr.size
+</span>347 <span style=''></span><span style='background: #AEF1AE'>            val start = if (s &gt;= 0) s else math.max(0, size + s)
+</span>348 <span style=''></span><span style='background: #AEF1AE'>            val end = math.min(size - 1, e.getOrElse(size - 1)) // end is inclusive
+</span>349 <span style=''></span><span style='background: #AEF1AE'>
+</span>350 <span style=''></span><span style='background: #AEF1AE'>            StaticFile
+</span>351 <span style=''></span><span style='background: #AEF1AE'>              .fromPath(
+</span>352 <span style=''></span><span style='background: #AEF1AE'>                file,
+</span>353 <span style=''></span><span style='background: #AEF1AE'>                start,
+</span>354 <span style=''></span><span style='background: #AEF1AE'>                end + 1,
+</span>355 <span style=''></span><span style='background: #AEF1AE'>                config.bufferSize,
+</span>356 <span style=''></span><span style='background: #AEF1AE'>                Some(req),
+</span>357 <span style=''></span><span style='background: #AEF1AE'>                StaticFile.calculateETag,
+</span>358 <span style=''></span><span style='background: #AEF1AE'>              )
+</span>359 <span style=''></span><span style='background: #AEF1AE'>              .map { resp =&gt;
+</span>360 <span style=''></span><span style='background: #AEF1AE'>                val hs = resp.headers
+</span>361 <span style=''></span><span style='background: #AEF1AE'>                  .put(AcceptRangeHeader, `Content-Range`(SubRange(start, end), Some(size)))
+</span>362 <span style=''></span><span style='background: #AEF1AE'>                resp.copy(status = Status.PartialContent, headers = hs)
+</span>363 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>364 <span style=''></span><span style='background: #AEF1AE'>              .value
+</span>365 <span style=''></span><span style='background: #AEF1AE'>          } else nope
+</span>366 <span style=''></span><span style='background: #AEF1AE'>        case _ =&gt;
+</span>367 <span style=''></span><span style='background: #AEF1AE'>          req.headers.get(ci&quot;Range&quot;) match {
+</span>368 <span style=''></span><span style='background: #AEF1AE'>            case Some(_) =&gt;
+</span>369 <span style=''></span><span style='background: #AEF1AE'>              // It exists, but it didn't parse
+</span>370 <span style=''></span><span style='background: #AEF1AE'>              nope
+</span>371 <span style=''></span><span style='background: #AEF1AE'>            case None =&gt;
+</span>372 <span style=''></span><span style='background: #AEF1AE'>              F.pure(None)
+</span>373 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>374 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>375 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>376 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          8445
+        </td>
+        <td>
+          2987
+          -
+          2987
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          8864
+        </td>
+        <td>
+          2987
+          -
+          3261
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.&lt;init&gt;(systemPath, ((path: fs2.io.file.Path, config: org.http4s.server.staticcontent.FileService.Config[F], request: org.http4s.Request[F]) =&gt; pathCollector.apply(path.toNioPath.toFile(), config, request)), pathPrefix, cacheStrategy, bufferSize)
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          10005
+        </td>
+        <td>
+          3087
+          -
+          3189
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function3.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          pathCollector.apply(path.toNioPath.toFile(), config, request)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          8126
+        </td>
+        <td>
+          3114
+          -
+          3135
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.nio.file.Path.toFile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          path.toNioPath.toFile()
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          8008
+        </td>
+        <td>
+          3521
+          -
+          3620
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function3.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.fs2PathCollector.apply(fs2.io.file.Path.fromNioPath(file.toPath()), config, request)
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          7331
+        </td>
+        <td>
+          3564
+          -
+          3577
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.File.toPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          file.toPath()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          9047
+        </td>
+        <td>
+          3547
+          -
+          3578
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Path.fromNioPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.io.file.Path.fromNioPath(file.toPath())
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          9365
+        </td>
+        <td>
+          4058
+          -
+          4177
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new org.http4s.server.staticcontent.FileService.Config[F](systemPath, Config.this.fs2PathCollector, pathPrefix, cacheStrategy, bufferSize)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          9759
+        </td>
+        <td>
+          4097
+          -
+          4113
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.fs2PathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.fs2PathCollector
+        </td>
+      </tr><tr>
+        <td>
+          126
+        </td>
+        <td>
+          8254
+        </td>
+        <td>
+          4360
+          -
+          4361
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          5
+        </td>
+      </tr><tr>
+        <td>
+          133
+        </td>
+        <td>
+          10013
+        </td>
+        <td>
+          4582
+          -
+          4592
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.systemPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.systemPath
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          8095
+        </td>
+        <td>
+          4648
+          -
+          4664
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.fs2PathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.fs2PathCollector
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          9177
+        </td>
+        <td>
+          4648
+          -
+          4664
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.fs2PathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.fs2PathCollector
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          8453
+        </td>
+        <td>
+          4629
+          -
+          4642
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.pathCollector
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          7283
+        </td>
+        <td>
+          4629
+          -
+          4642
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.pathCollector
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          9002
+        </td>
+        <td>
+          4613
+          -
+          4627
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          9903
+        </td>
+        <td>
+          4681
+          -
+          4691
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathPrefix
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.pathPrefix
+        </td>
+      </tr><tr>
+        <td>
+          136
+        </td>
+        <td>
+          9271
+        </td>
+        <td>
+          4708
+          -
+          4718
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.bufferSize
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.bufferSize
+        </td>
+      </tr><tr>
+        <td>
+          137
+        </td>
+        <td>
+          8214
+        </td>
+        <td>
+          4735
+          -
+          4748
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.cacheStrategy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.cacheStrategy
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          10064
+        </td>
+        <td>
+          4911
+          -
+          4921
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.systemPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.systemPath
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          7909
+        </td>
+        <td>
+          5118
+          -
+          5131
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.pathCollector
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          9179
+        </td>
+        <td>
+          5137
+          -
+          5153
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.fs2PathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.fs2PathCollector
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          7289
+        </td>
+        <td>
+          5118
+          -
+          5131
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.pathCollector
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          9008
+        </td>
+        <td>
+          5102
+          -
+          5116
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          150
+        </td>
+        <td>
+          8000
+        </td>
+        <td>
+          5137
+          -
+          5153
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.fs2PathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.fs2PathCollector
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          9908
+        </td>
+        <td>
+          5309
+          -
+          5319
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathPrefix
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.pathPrefix
+        </td>
+      </tr><tr>
+        <td>
+          160
+        </td>
+        <td>
+          9239
+        </td>
+        <td>
+          5472
+          -
+          5482
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.bufferSize
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.bufferSize
+        </td>
+      </tr><tr>
+        <td>
+          165
+        </td>
+        <td>
+          8224
+        </td>
+        <td>
+          5648
+          -
+          5661
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.cacheStrategy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.cacheStrategy
+        </td>
+      </tr><tr>
+        <td>
+          168
+        </td>
+        <td>
+          10003
+        </td>
+        <td>
+          5751
+          -
+          5755
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          169
+        </td>
+        <td>
+          8894
+        </td>
+        <td>
+          5772
+          -
+          5777
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          174
+        </td>
+        <td>
+          7916
+        </td>
+        <td>
+          5898
+          -
+          5913
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.systemPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          that.systemPath
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          7241
+        </td>
+        <td>
+          5945
+          -
+          5966
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.fs2PathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          that.fs2PathCollector
+        </td>
+      </tr><tr>
+        <td>
+          175
+        </td>
+        <td>
+          9155
+        </td>
+        <td>
+          5925
+          -
+          5966
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.fs2PathCollector.==(that.fs2PathCollector)
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          8004
+        </td>
+        <td>
+          5992
+          -
+          6007
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathPrefix
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          that.pathPrefix
+        </td>
+      </tr><tr>
+        <td>
+          176
+        </td>
+        <td>
+          9777
+        </td>
+        <td>
+          5978
+          -
+          6007
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.pathPrefix.==(that.pathPrefix)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          9241
+        </td>
+        <td>
+          6036
+          -
+          6054
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.cacheStrategy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          that.cacheStrategy
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          8230
+        </td>
+        <td>
+          6019
+          -
+          6054
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.cacheStrategy.==(that.cacheStrategy)
+        </td>
+      </tr><tr>
+        <td>
+          177
+        </td>
+        <td>
+          7901
+        </td>
+        <td>
+          5884
+          -
+          6095
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.systemPath.==(that.systemPath).&amp;&amp;(Config.this.fs2PathCollector.==(that.fs2PathCollector)).&amp;&amp;(Config.this.pathPrefix.==(that.pathPrefix)).&amp;&amp;(Config.this.cacheStrategy.==(that.cacheStrategy)).&amp;&amp;(Config.this.bufferSize.==(that.bufferSize))
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          9955
+        </td>
+        <td>
+          6080
+          -
+          6095
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.bufferSize
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          that.bufferSize
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          8897
+        </td>
+        <td>
+          6066
+          -
+          6095
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.bufferSize.==(that.bufferSize)
+        </td>
+      </tr><tr>
+        <td>
+          179
+        </td>
+        <td>
+          7247
+        </td>
+        <td>
+          6112
+          -
+          6117
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          false
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          8176
+        </td>
+        <td>
+          6243
+          -
+          6256
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.cacheStrategy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.cacheStrategy
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          9049
+        </td>
+        <td>
+          6189
+          -
+          6199
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.systemPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.systemPath
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          8657
+        </td>
+        <td>
+          6231
+          -
+          6241
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.bufferSize
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.bufferSize
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          7963
+        </td>
+        <td>
+          6201
+          -
+          6217
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.fs2PathCollector
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.fs2PathCollector
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          9960
+        </td>
+        <td>
+          6180
+          -
+          6257
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.SeqFactory.Delegate.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.`package`.Seq.apply[Any](Config.this.systemPath, Config.this.fs2PathCollector, Config.this.pathPrefix, Config.this.bufferSize, Config.this.cacheStrategy)
+        </td>
+      </tr><tr>
+        <td>
+          183
+        </td>
+        <td>
+          9779
+        </td>
+        <td>
+          6219
+          -
+          6229
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathPrefix
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Config.this.pathPrefix
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          7906
+        </td>
+        <td>
+          6297
+          -
+          6298
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          8872
+        </td>
+        <td>
+          6274
+          -
+          6286
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Any.hashCode
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x$1.hashCode()
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          7370
+        </td>
+        <td>
+          6310
+          -
+          6320
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          31.*(a).+(b)
+        </td>
+      </tr><tr>
+        <td>
+          184
+        </td>
+        <td>
+          9197
+        </td>
+        <td>
+          6264
+          -
+          6321
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          state.map[Int](((x$1: Any) =&gt; x$1.hashCode())).foldLeft[Int](0)(((a: Int, b: Int) =&gt; 31.*(a).+(b)))
+        </td>
+      </tr><tr>
+        <td>
+          209
+        </td>
+        <td>
+          7973
+        </td>
+        <td>
+          7299
+          -
+          7381
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.staticcontent.FileService.Config[F](systemPath, fs2PathCollector, pathPrefix, cacheStrategy, bufferSize)
+        </td>
+      </tr><tr>
+        <td>
+          230
+        </td>
+        <td>
+          9854
+        </td>
+        <td>
+          8359
+          -
+          8475
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new org.http4s.server.staticcontent.FileService.Config[F](systemPath, pathCollector, pathPrefix, bufferSize, cacheStrategy)
+        </td>
+      </tr><tr>
+        <td>
+          244
+        </td>
+        <td>
+          8825
+        </td>
+        <td>
+          8748
+          -
+          8766
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.filesOnly
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          FileService.this.filesOnly[[_]F[_]](f, c, r)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          245
+        </td>
+        <td>
+          8220
+        </td>
+        <td>
+          8773
+          -
+          8845
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          FileService.this.Config.apply[[_]F[_]](systemPath, pathCollector, pathPrefix, cacheStrategy, bufferSize)
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          10096
+        </td>
+        <td>
+          9218
+          -
+          9242
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          request.pathInfo.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          8877
+        </td>
+        <td>
+          9244
+          -
+          9260
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[fs2.io.file.Path](rootPath)
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          7913
+        </td>
+        <td>
+          9244
+          -
+          9260
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[fs2.io.file.Path](rootPath)
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          9104
+        </td>
+        <td>
+          9274
+          -
+          9589
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val segments: scala.collection.immutable.Vector[String] = request.pathInfo.segments.map[String](((x$2: org.http4s.Uri.Path.Segment) =&gt; {
+    &lt;artifact&gt; val x$1: Boolean(true) = true;
+    &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$2.decoded$default$1;
+    &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$2.decoded$default$3;
+    x$2.decoded(x$2, true, x$3)
+  }));
+  F.catchNonFatal[fs2.io.file.Path](segments.foldLeft[fs2.io.file.Path](rootPath)(((x0$1: fs2.io.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[fs2.io.file.Path, String](x0$1, x1$1) match {
+    case (_1: fs2.io.file.Path, _2: String): (fs2.io.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+    case (_1: fs2.io.file.Path, _2: String): (fs2.io.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+  })))(scala.this.&lt;:&lt;.refl[Throwable])
+}
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          8827
+        </td>
+        <td>
+          9301
+          -
+          9361
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.StrictOptimizedIterableOps.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          request.pathInfo.segments.map[String](((x$2: org.http4s.Uri.Path.Segment) =&gt; {
+  &lt;artifact&gt; val x$1: Boolean(true) = true;
+  &lt;artifact&gt; val x$2: java.nio.charset.Charset = x$2.decoded$default$1;
+  &lt;artifact&gt; val x$3: Char =&gt; Boolean @scala.reflect.internal.annotations.uncheckedBounds = x$2.decoded$default$3;
+  x$2.decoded(x$2, true, x$3)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          8103
+        </td>
+        <td>
+          9333
+          -
+          9333
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.decoded$default$3
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          7343
+        </td>
+        <td>
+          9355
+          -
+          9359
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          true
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          9152
+        </td>
+        <td>
+          9333
+          -
+          9333
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.decoded$default$1
+        </td>
+      </tr><tr>
+        <td>
+          256
+        </td>
+        <td>
+          9860
+        </td>
+        <td>
+          9331
+          -
+          9360
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.Segment.decoded
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$2.decoded(x$2, true, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          9661
+        </td>
+        <td>
+          9372
+          -
+          9579
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.ApplicativeError.catchNonFatal
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.catchNonFatal[fs2.io.file.Path](segments.foldLeft[fs2.io.file.Path](rootPath)(((x0$1: fs2.io.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[fs2.io.file.Path, String](x0$1, x1$1) match {
+  case (_1: fs2.io.file.Path, _2: String): (fs2.io.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: fs2.io.file.Path, _2: String): (fs2.io.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+})))(scala.this.&lt;:&lt;.refl[Throwable])
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          7868
+        </td>
+        <td>
+          9388
+          -
+          9388
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[Throwable]
+        </td>
+      </tr><tr>
+        <td>
+          258
+        </td>
+        <td>
+          8928
+        </td>
+        <td>
+          9402
+          -
+          9567
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foldLeft
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          segments.foldLeft[fs2.io.file.Path](rootPath)(((x0$1: fs2.io.file.Path, x1$1: String) =&gt; scala.Tuple2.apply[fs2.io.file.Path, String](x0$1, x1$1) match {
+  case (_1: fs2.io.file.Path, _2: String): (fs2.io.file.Path, String)(_, (&quot;&quot;| &quot;.&quot;| &quot;..&quot;)) =&gt; throw BadTraversal
+  case (_1: fs2.io.file.Path, _2: String): (fs2.io.file.Path, String)((path @ _), (segment @ _)) =&gt; path.resolve(segment)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          8168
+        </td>
+        <td>
+          9475
+          -
+          9493
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          throw BadTraversal
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          10050
+        </td>
+        <td>
+          9532
+          -
+          9553
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Path.resolve
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          path.resolve(segment)
+        </td>
+      </tr><tr>
+        <td>
+          267
+        </td>
+        <td>
+          7969
+        </td>
+        <td>
+          9641
+          -
+          9862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.Path](resolvePath)(F).flatMap[Option[fs2.io.file.Path]](((path: fs2.io.file.Path) =&gt; cats.syntax.`package`.all.toFunctorOps[F, Boolean](fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).exists(path, false))(F).map[Option[fs2.io.file.Path]](((existsPath: Boolean) =&gt; if (existsPath.&amp;&amp;(path.startsWith(rootPath)))
+  scala.Some.apply[fs2.io.file.Path](path.absolute.normalize)
+else
+  scala.None))))
+        </td>
+      </tr><tr>
+        <td>
+          268
+        </td>
+        <td>
+          8038
+        </td>
+        <td>
+          9701
+          -
+          9729
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).exists(path, false)
+        </td>
+      </tr><tr>
+        <td>
+          268
+        </td>
+        <td>
+          9113
+        </td>
+        <td>
+          9687
+          -
+          9862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Boolean](fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).exists(path, false))(F).map[Option[fs2.io.file.Path]](((existsPath: Boolean) =&gt; if (existsPath.&amp;&amp;(path.startsWith(rootPath)))
+  scala.Some.apply[fs2.io.file.Path](path.absolute.normalize)
+else
+  scala.None))
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          9864
+        </td>
+        <td>
+          9774
+          -
+          9799
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Path.startsWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          path.startsWith(rootPath)
+        </td>
+      </tr><tr>
+        <td>
+          270
+        </td>
+        <td>
+          8796
+        </td>
+        <td>
+          9760
+          -
+          9799
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          existsPath.&amp;&amp;(path.startsWith(rootPath))
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          10012
+        </td>
+        <td>
+          9813
+          -
+          9842
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[fs2.io.file.Path](path.absolute.normalize)
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          8175
+        </td>
+        <td>
+          9818
+          -
+          9841
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.file.Path.normalize
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          path.absolute.normalize
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          8870
+        </td>
+        <td>
+          9813
+          -
+          9842
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[fs2.io.file.Path](path.absolute.normalize)
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          7875
+        </td>
+        <td>
+          9858
+          -
+          9862
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          9618
+        </td>
+        <td>
+          9858
+          -
+          9862
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          276
+        </td>
+        <td>
+          8804
+        </td>
+        <td>
+          9985
+          -
+          9985
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          276
+        </td>
+        <td>
+          9762
+        </td>
+        <td>
+          9870
+          -
+          10034
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.semiflatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, fs2.io.file.Path](matchingPath).flatMap[org.http4s.Response[F]](((path: fs2.io.file.Path) =&gt; config.fs2PathCollector.apply(path, config, request)))(F).semiflatMap[org.http4s.Response[F]](((x$3: org.http4s.Response[F]) =&gt; config.cacheStrategy.cache(request.pathInfo, x$3)(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          277
+        </td>
+        <td>
+          7750
+        </td>
+        <td>
+          9870
+          -
+          10122
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recoverWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[F]](cats.data.OptionT.apply[F, fs2.io.file.Path](matchingPath).flatMap[org.http4s.Response[F]](((path: fs2.io.file.Path) =&gt; config.fs2PathCollector.apply(path, config, request)))(F).semiflatMap[org.http4s.Response[F]](((x$3: org.http4s.Response[F]) =&gt; config.cacheStrategy.cache(request.pathInfo, x$3)(F)))(F))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; cats.data.OptionT[F,org.http4s.Response[F]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: cats.data.OptionT[F,org.http4s.Response[F]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case BadTraversal =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          277
+        </td>
+        <td>
+          8874
+        </td>
+        <td>
+          10056
+          -
+          10056
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          277
+        </td>
+        <td>
+          7636
+        </td>
+        <td>
+          10079
+          -
+          10120
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.PurePartiallyApplied.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.some[[_]F[_]].apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](Status.BadRequest, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(F)
+        </td>
+      </tr><tr>
+        <td>
+          277
+        </td>
+        <td>
+          10022
+        </td>
+        <td>
+          10056
+          -
+          10056
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          9764
+        </td>
+        <td>
+          10158
+          -
+          10200
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.realPath
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).realPath(fs2.io.file.Path.apply(config.systemPath))
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          8101
+        </td>
+        <td>
+          10176
+          -
+          10199
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Path.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Path.apply(config.systemPath)
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          9625
+        </td>
+        <td>
+          10163
+          -
+          10163
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.file.FilesCompanionPlatform.forAsync
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          file.this.Files.forAsync[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          280
+        </td>
+        <td>
+          9056
+        </td>
+        <td>
+          10181
+          -
+          10198
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.systemPath
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          config.systemPath
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          8789
+        </td>
+        <td>
+          10235
+          -
+          10251
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.attempt
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, fs2.io.file.Path](readPath)(F).attempt(F)
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          8582
+        </td>
+        <td>
+          10235
+          -
+          10918
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Either[Throwable,fs2.io.file.Path]](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, fs2.io.file.Path](readPath)(F).attempt(F))(F).map[org.http4s.HttpRoutes[F]](((x0$1: Either[Throwable,fs2.io.file.Path]) =&gt; x0$1 match {
+  case (value: fs2.io.file.Path): scala.util.Right[Throwable,fs2.io.file.Path]((rootPath @ _)) =&gt; org.http4s.server.middleware.TranslateUri.apply[[A]cats.data.OptionT[F,A], [_]F[_], org.http4s.Response[F]](config.pathPrefix)(cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((request: org.http4s.Request[F]) =&gt; withPath(rootPath)(request))))(data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](F))
+  case (value: Throwable): scala.util.Left[Throwable,fs2.io.file.Path]((_: fs2.io.file.NoSuchFileException)) =&gt; {
+    if (FileService.this.logger.logger.isErrorEnabled())
+      FileService.this.logger.logger.error((&quot;Could not find root path from FileService config: systemPath = &quot;.+(config.systemPath).+(&quot;, pathPrefix = &quot;).+(config.pathPrefix).+(&quot;. All requests will return none.&quot;): String))
+    else
+      ();
+    HttpRoutes.empty[[_]F[_]](F)
+  }
+  case (value: Throwable): scala.util.Left[Throwable,fs2.io.file.Path]((e @ _)) =&gt; {
+    if (FileService.this.logger.logger.isErrorEnabled())
+      FileService.this.logger.logger.error((&quot;Could not resolve root path from FileService config: systemPath = &quot;.+(config.systemPath).+(&quot;, pathPrefix = &quot;).+(config.pathPrefix).+(&quot;. All requests will fail with a 500.&quot;): String), e)
+    else
+      ();
+    HttpRoutes.pure[[_]F[_]](Response.apply[[_]F[_]](Status.InternalServerError, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          7754
+        </td>
+        <td>
+          10327
+          -
+          10327
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonoidKForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          7643
+        </td>
+        <td>
+          10309
+          -
+          10326
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.pathPrefix
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          config.pathPrefix
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          9703
+        </td>
+        <td>
+          10296
+          -
+          10356
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.TranslateUri.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.server.middleware.TranslateUri.apply[[A]cats.data.OptionT[F,A], [_]F[_], org.http4s.Response[F]](config.pathPrefix)(cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((request: org.http4s.Request[F]) =&gt; withPath(rootPath)(request))))(data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](F))
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          9015
+        </td>
+        <td>
+          10328
+          -
+          10355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.Request[F], org.http4s.Response[F]](((request: org.http4s.Request[F]) =&gt; withPath(rootPath)(request)))
+        </td>
+      </tr><tr>
+        <td>
+          283
+        </td>
+        <td>
+          9920
+        </td>
+        <td>
+          10336
+          -
+          10354
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.withPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          withPath(rootPath)(request)
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          9065
+        </td>
+        <td>
+          10605
+          -
+          10621
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.HttpRoutes.empty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HttpRoutes.empty[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          8795
+        </td>
+        <td>
+          10875
+          -
+          10875
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          9916
+        </td>
+        <td>
+          10875
+          -
+          10875
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          10071
+        </td>
+        <td>
+          10875
+          -
+          10875
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          8836
+        </td>
+        <td>
+          10875
+          -
+          10911
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[[_]F[_]](Status.InternalServerError, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          7729
+        </td>
+        <td>
+          10875
+          -
+          10875
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          7818
+        </td>
+        <td>
+          10874
+          -
+          10874
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          9708
+        </td>
+        <td>
+          10859
+          -
+          10912
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.HttpRoutes.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          HttpRoutes.pure[[_]F[_]](Response.apply[[_]F[_]](Status.InternalServerError, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          295
+        </td>
+        <td>
+          7925
+        </td>
+        <td>
+          10884
+          -
+          10910
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.InternalServerError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Status.InternalServerError
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          7709
+        </td>
+        <td>
+          10931
+          -
+          10931
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.KleisliInstances0_5.catsDataMonadErrorForKleisli
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Kleisli.catsDataMonadErrorForKleisli[[β$0$]cats.data.OptionT[F,β$0$], org.http4s.Request[F], Throwable](data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          10020
+        </td>
+        <td>
+          10966
+          -
+          10966
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          8067
+        </td>
+        <td>
+          10944
+          -
+          10964
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.liftF
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftF[F, org.http4s.HttpRoutes[F]](inner)(F)
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          8743
+        </td>
+        <td>
+          10931
+          -
+          10931
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          8970
+        </td>
+        <td>
+          10966
+          -
+          10966
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.KleisliInstances0_5.catsDataMonadErrorForKleisli
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.Kleisli.catsDataMonadErrorForKleisli[[β$0$]cats.data.OptionT[F,β$0$], org.http4s.Request[F], Throwable](data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          7824
+        </td>
+        <td>
+          10924
+          -
+          10973
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.FlattenOps.flatten
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxFlatten[[B]cats.data.Kleisli[[β$0$]cats.data.OptionT[F,β$0$],org.http4s.Request[F],B], org.http4s.Response[F]](cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], Any, org.http4s.HttpRoutes[F]](((x$4: Any) =&gt; cats.data.OptionT.liftF[F, org.http4s.HttpRoutes[F]](inner)(F))))(data.this.Kleisli.catsDataMonadErrorForKleisli[[β$0$]cats.data.OptionT[F,β$0$], org.http4s.Request[F], Throwable](data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F))).flatten(data.this.Kleisli.catsDataMonadErrorForKleisli[[β$0$]cats.data.OptionT[F,β$0$], org.http4s.Request[F], Throwable](data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](F)))
+        </td>
+      </tr><tr>
+        <td>
+          298
+        </td>
+        <td>
+          9743
+        </td>
+        <td>
+          10924
+          -
+          10965
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], Any, org.http4s.HttpRoutes[F]](((x$4: Any) =&gt; cats.data.OptionT.liftF[F, org.http4s.HttpRoutes[F]](inner)(F)))
+        </td>
+      </tr><tr>
+        <td>
+          304
+        </td>
+        <td>
+          8964
+        </td>
+        <td>
+          11127
+          -
+          11631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).getBasicFileAttributes(path))(F).flatMap[Option[org.http4s.Response[F]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; if (attr.isDirectory)
+  StaticFile.fromPath[[_]F[_]](path./(&quot;index.html&quot;), scala.Some.apply[org.http4s.Request[F]](req))(file.this.Files.forAsync[[_]F[_]](F), F).value
+else
+  if (attr.isRegularFile.unary_!)
+    F.pure[Option[org.http4s.Response[F]]](scala.None)
+  else
+    cats.data.OptionT.apply[F, org.http4s.Response[[_]F[_]]](FileService.this.getPartialContentFile[[_]F[_]](path, config, req)(F)).orElse(StaticFile.fromPath[F](path, config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((x$5: org.http4s.Response[F]) =&gt; x$5.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance))))(F))(F).value))
+        </td>
+      </tr><tr>
+        <td>
+          304
+        </td>
+        <td>
+          9711
+        </td>
+        <td>
+          11127
+          -
+          11164
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.getBasicFileAttributes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).getBasicFileAttributes(path)
+        </td>
+      </tr><tr>
+        <td>
+          304
+        </td>
+        <td>
+          7919
+        </td>
+        <td>
+          11119
+          -
+          11632
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, org.http4s.Response[F]](cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).getBasicFileAttributes(path))(F).flatMap[Option[org.http4s.Response[F]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; if (attr.isDirectory)
+  StaticFile.fromPath[[_]F[_]](path./(&quot;index.html&quot;), scala.Some.apply[org.http4s.Request[F]](req))(file.this.Files.forAsync[[_]F[_]](F), F).value
+else
+  if (attr.isRegularFile.unary_!)
+    F.pure[Option[org.http4s.Response[F]]](scala.None)
+  else
+    cats.data.OptionT.apply[F, org.http4s.Response[[_]F[_]]](FileService.this.getPartialContentFile[[_]F[_]](path, config, req)(F)).orElse(StaticFile.fromPath[F](path, config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((x$5: org.http4s.Response[F]) =&gt; x$5.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance))))(F))(F).value)))
+        </td>
+      </tr><tr>
+        <td>
+          305
+        </td>
+        <td>
+          8553
+        </td>
+        <td>
+          11193
+          -
+          11209
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.file.BasicFileAttributes.isDirectory
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          attr.isDirectory
+        </td>
+      </tr><tr>
+        <td>
+          307
+        </td>
+        <td>
+          8751
+        </td>
+        <td>
+          11249
+          -
+          11249
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.file.FilesCompanionPlatform.forAsync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          file.this.Files.forAsync[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          307
+        </td>
+        <td>
+          8018
+        </td>
+        <td>
+          11250
+          -
+          11269
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Path./
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          path./(&quot;index.html&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          307
+        </td>
+        <td>
+          9788
+        </td>
+        <td>
+          11271
+          -
+          11280
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.Request[F]](req)
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          7640
+        </td>
+        <td>
+          11219
+          -
+          11298
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.OptionT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.fromPath[[_]F[_]](path./(&quot;index.html&quot;), scala.Some.apply[org.http4s.Request[F]](req))(file.this.Files.forAsync[[_]F[_]](F), F).value
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          9966
+        </td>
+        <td>
+          11219
+          -
+          11298
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.OptionT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.fromPath[[_]F[_]](path./(&quot;index.html&quot;), scala.Some.apply[org.http4s.Request[F]](req))(file.this.Files.forAsync[[_]F[_]](F), F).value
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          9458
+        </td>
+        <td>
+          11310
+          -
+          11625
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          if (attr.isRegularFile.unary_!)
+  F.pure[Option[org.http4s.Response[F]]](scala.None)
+else
+  cats.data.OptionT.apply[F, org.http4s.Response[[_]F[_]]](FileService.this.getPartialContentFile[[_]F[_]](path, config, req)(F)).orElse(StaticFile.fromPath[F](path, config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((x$5: org.http4s.Response[F]) =&gt; x$5.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance))))(F))(F).value
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          8557
+        </td>
+        <td>
+          11335
+          -
+          11347
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[Option[org.http4s.Response[F]]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          9678
+        </td>
+        <td>
+          11335
+          -
+          11347
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[Option[org.http4s.Response[F]]](scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          7779
+        </td>
+        <td>
+          11342
+          -
+          11346
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          8906
+        </td>
+        <td>
+          11314
+          -
+          11333
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Boolean.unary_!
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          attr.isRegularFile.unary_!
+        </td>
+      </tr><tr>
+        <td>
+          311
+        </td>
+        <td>
+          7978
+        </td>
+        <td>
+          11375
+          -
+          11415
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.getPartialContentFile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          FileService.this.getPartialContentFile[[_]F[_]](path, config, req)(F)
+        </td>
+      </tr><tr>
+        <td>
+          315
+        </td>
+        <td>
+          9913
+        </td>
+        <td>
+          11448
+          -
+          11596
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.fromPath[F](path, config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((x$5: org.http4s.Response[F]) =&gt; x$5.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance))))(F)
+        </td>
+      </tr><tr>
+        <td>
+          317
+        </td>
+        <td>
+          8759
+        </td>
+        <td>
+          11367
+          -
+          11625
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.OptionT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, org.http4s.Response[[_]F[_]]](FileService.this.getPartialContentFile[[_]F[_]](path, config, req)(F)).orElse(StaticFile.fromPath[F](path, config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((x$5: org.http4s.Response[F]) =&gt; x$5.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance))))(F))(F).value
+        </td>
+      </tr><tr>
+        <td>
+          317
+        </td>
+        <td>
+          7594
+        </td>
+        <td>
+          11367
+          -
+          11625
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.OptionT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, org.http4s.Response[[_]F[_]]](FileService.this.getPartialContentFile[[_]F[_]](path, config, req)(F)).orElse(StaticFile.fromPath[F](path, config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((x$5: org.http4s.Response[F]) =&gt; x$5.putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance))))(F))(F).value
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          9429
+        </td>
+        <td>
+          11724
+          -
+          11877
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          start.&lt;(fileLength).&amp;&amp;(end match {
+  case (value: Long): Some[Long]((end @ _)) =&gt; start.&gt;=(0).&amp;&amp;(start.&lt;=(end))
+  case scala.None =&gt; start.&gt;=(0).||(fileLength.+(start).-(1).&gt;=(0))
+})
+        </td>
+      </tr><tr>
+        <td>
+          322
+        </td>
+        <td>
+          7986
+        </td>
+        <td>
+          11783
+          -
+          11809
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          start.&gt;=(0).&amp;&amp;(start.&lt;=(end))
+        </td>
+      </tr><tr>
+        <td>
+          322
+        </td>
+        <td>
+          8515
+        </td>
+        <td>
+          11797
+          -
+          11809
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&lt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          start.&lt;=(end)
+        </td>
+      </tr><tr>
+        <td>
+          322
+        </td>
+        <td>
+          9705
+        </td>
+        <td>
+          11792
+          -
+          11793
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          323
+        </td>
+        <td>
+          9740
+        </td>
+        <td>
+          11838
+          -
+          11839
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          323
+        </td>
+        <td>
+          7708
+        </td>
+        <td>
+          11829
+          -
+          11870
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          start.&gt;=(0).||(fileLength.+(start).-(1).&gt;=(0))
+        </td>
+      </tr><tr>
+        <td>
+          323
+        </td>
+        <td>
+          8832
+        </td>
+        <td>
+          11843
+          -
+          11870
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fileLength.+(start).-(1).&gt;=(0)
+        </td>
+      </tr><tr>
+        <td>
+          330
+        </td>
+        <td>
+          8968
+        </td>
+        <td>
+          12117
+          -
+          12154
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.getBasicFileAttributes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).getBasicFileAttributes(file)
+        </td>
+      </tr><tr>
+        <td>
+          330
+        </td>
+        <td>
+          7827
+        </td>
+        <td>
+          12117
+          -
+          13628
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](file.this.Files.forAsync[[_]F[_]](F)).getBasicFileAttributes(file))(F).flatMap[Option[org.http4s.Response[F]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; {
+  def nope: F[Option[org.http4s.Response[F]]] = cats.syntax.`package`.all.toFunctorOps[F, Some[org.http4s.Response[F]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[Some[org.http4s.Response[F]]](scala.Some.apply[org.http4s.Response[F]]({
+  &lt;artifact&gt; val x$1: org.http4s.Status = Status.RangeNotSatisfiable;
+  &lt;artifact&gt; val x$2: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Range](org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(0L, attr.size.-(1)), scala.Some.apply[Long](attr.size)))(headers.this.Content-Range.headerInstance));
+  &lt;artifact&gt; val x$3: org.http4s.HttpVersion = Response.apply$default$2[F];
+  &lt;artifact&gt; val x$4: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[F];
+  &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[F];
+  Response.apply[F](x$1, x$3, x$2, x$4, x$5)
+})).pure[F](F))(F).widen[Option[org.http4s.Response[F]]];
+  req.headers.get[org.http4s.headers.Range](Header.this.Select.singleHeaders[org.http4s.headers.Range](headers.this.Range.headerInstance)) match {
+    case (value: org.http4s.headers.Range): Some[org.http4s.headers.Range]((unit: org.http4s.RangeUnit, ranges: cats.data.NonEmptyList[org.http4s.headers.Range.SubRange]): org.http4s.headers.Range(RangeUnit.Bytes, (head: org.http4s.headers.Range.SubRange, tail: List[org.http4s.headers.Range.SubRange]): cats.data.NonEmptyList[org.http4s.headers.Range.SubRange]((first: Long, second: Option[Long]): org.http4s.headers.Range.SubRange((s @ _), (e @ _)), scala.`package`.Nil))) =&gt; if (FileService.this.validRange(s, e, attr.size))
+      {
+        val size: Long = attr.size;
+        val start: Long = if (s.&gt;=(0))
+          s
+        else
+          scala.math.`package`.max(0L, size.+(s));
+        val end: Long = scala.math.`package`.min(size.-(1), e.getOrElse[Long](size.-(1)));
+        StaticFile.fromPath[F](file, start, end.+(1), config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; {
+  val hs: org.http4s.Headers = resp.headers.put(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Range](org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(start, end), scala.Some.apply[Long](size)))(headers.this.Content-Range.headerInstance));
+  {
+    &lt;artifact&gt; val x$1: org.http4s.Status = Status.PartialContent;
+    &lt;artifact&gt; val x$2: org.http4s.Headers = hs;
+    &lt;artifact&gt; val x$3: org.http4s.HttpVersion = resp.copy$default$2;
+    &lt;artifact&gt; val x$4: org.http4s.EntityBody[F] @scala.reflect.internal.annotations.uncheckedBounds = resp.copy$default$4;
+    &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = resp.copy$default$5;
+    resp.copy(x$1, x$3, x$2, x$4, x$5)
+  }
+}))(F).value
+      }
+    else
+      nope
+    case _ =&gt; req.headers.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Range&quot;)).ci()) match {
+      case (value: cats.data.NonEmptyList[org.http4s.Header.Raw]): Some[cats.data.NonEmptyList[org.http4s.Header.Raw]](_) =&gt; nope
+      case scala.None =&gt; F.pure[Option[org.http4s.Response[F]]](scala.None)
+    }
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          341
+        </td>
+        <td>
+          7739
+        </td>
+        <td>
+          12222
+          -
+          12511
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[Some[org.http4s.Response[F]]](scala.Some.apply[org.http4s.Response[F]]({
+  &lt;artifact&gt; val x$1: org.http4s.Status = Status.RangeNotSatisfiable;
+  &lt;artifact&gt; val x$2: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Range](org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(0L, attr.size.-(1)), scala.Some.apply[Long](attr.size)))(headers.this.Content-Range.headerInstance));
+  &lt;artifact&gt; val x$3: org.http4s.HttpVersion = Response.apply$default$2[F];
+  &lt;artifact&gt; val x$4: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[F];
+  &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[F];
+  Response.apply[F](x$1, x$3, x$2, x$4, x$5)
+})).pure[F](F)
+        </td>
+      </tr><tr>
+        <td>
+          341
+        </td>
+        <td>
+          9669
+        </td>
+        <td>
+          12222
+          -
+          12517
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.Functor.Ops.widen
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Some[org.http4s.Response[F]]](cats.syntax.`package`.all.catsSyntaxApplicativeId[Some[org.http4s.Response[F]]](scala.Some.apply[org.http4s.Response[F]]({
+  &lt;artifact&gt; val x$1: org.http4s.Status = Status.RangeNotSatisfiable;
+  &lt;artifact&gt; val x$2: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Range](org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(0L, attr.size.-(1)), scala.Some.apply[Long](attr.size)))(headers.this.Content-Range.headerInstance));
+  &lt;artifact&gt; val x$3: org.http4s.HttpVersion = Response.apply$default$2[F];
+  &lt;artifact&gt; val x$4: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[F];
+  &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[F];
+  Response.apply[F](x$1, x$3, x$2, x$4, x$5)
+})).pure[F](F))(F).widen[Option[org.http4s.Response[F]]]
+        </td>
+      </tr><tr>
+        <td>
+          343
+        </td>
+        <td>
+          7496
+        </td>
+        <td>
+          12540
+          -
+          12540
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.Range](headers.this.Range.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          343
+        </td>
+        <td>
+          8605
+        </td>
+        <td>
+          12540
+          -
+          12540
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Range.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Range.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          343
+        </td>
+        <td>
+          9872
+        </td>
+        <td>
+          12525
+          -
+          12547
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get[org.http4s.headers.Range](Header.this.Select.singleHeaders[org.http4s.headers.Range](headers.this.Range.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          345
+        </td>
+        <td>
+          7422
+        </td>
+        <td>
+          12679
+          -
+          13382
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val size: Long = attr.size;
+  val start: Long = if (s.&gt;=(0))
+    s
+  else
+    scala.math.`package`.max(0L, size.+(s));
+  val end: Long = scala.math.`package`.min(size.-(1), e.getOrElse[Long](size.-(1)));
+  StaticFile.fromPath[F](file, start, end.+(1), config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; {
+  val hs: org.http4s.Headers = resp.headers.put(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Range](org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(start, end), scala.Some.apply[Long](size)))(headers.this.Content-Range.headerInstance));
+  {
+    &lt;artifact&gt; val x$1: org.http4s.Status = Status.PartialContent;
+    &lt;artifact&gt; val x$2: org.http4s.Headers = hs;
+    &lt;artifact&gt; val x$3: org.http4s.HttpVersion = resp.copy$default$2;
+    &lt;artifact&gt; val x$4: org.http4s.EntityBody[F] @scala.reflect.internal.annotations.uncheckedBounds = resp.copy$default$4;
+    &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = resp.copy$default$5;
+    resp.copy(x$1, x$3, x$2, x$4, x$5)
+  }
+}))(F).value
+}
+        </td>
+      </tr><tr>
+        <td>
+          345
+        </td>
+        <td>
+          8650
+        </td>
+        <td>
+          12667
+          -
+          12676
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.file.BasicFileAttributes.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          attr.size
+        </td>
+      </tr><tr>
+        <td>
+          345
+        </td>
+        <td>
+          7684
+        </td>
+        <td>
+          12650
+          -
+          12677
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.validRange
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          FileService.this.validRange(s, e, attr.size)
+        </td>
+      </tr><tr>
+        <td>
+          346
+        </td>
+        <td>
+          9498
+        </td>
+        <td>
+          12704
+          -
+          12713
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.file.BasicFileAttributes.size
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          attr.size
+        </td>
+      </tr><tr>
+        <td>
+          347
+        </td>
+        <td>
+          9674
+        </td>
+        <td>
+          12766
+          -
+          12767
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0L
+        </td>
+      </tr><tr>
+        <td>
+          347
+        </td>
+        <td>
+          8977
+        </td>
+        <td>
+          12742
+          -
+          12748
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          s.&gt;=(0)
+        </td>
+      </tr><tr>
+        <td>
+          347
+        </td>
+        <td>
+          7439
+        </td>
+        <td>
+          12757
+          -
+          12778
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.math.max
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.math.`package`.max(0L, size.+(s))
+        </td>
+      </tr><tr>
+        <td>
+          347
+        </td>
+        <td>
+          9879
+        </td>
+        <td>
+          12757
+          -
+          12778
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.math.max
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.math.`package`.max(0L, size.+(s))
+        </td>
+      </tr><tr>
+        <td>
+          347
+        </td>
+        <td>
+          7881
+        </td>
+        <td>
+          12750
+          -
+          12751
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.s
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          s
+        </td>
+      </tr><tr>
+        <td>
+          347
+        </td>
+        <td>
+          8586
+        </td>
+        <td>
+          12769
+          -
+          12777
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          size.+(s)
+        </td>
+      </tr><tr>
+        <td>
+          348
+        </td>
+        <td>
+          9422
+        </td>
+        <td>
+          12820
+          -
+          12841
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          e.getOrElse[Long](size.-(1))
+        </td>
+      </tr><tr>
+        <td>
+          348
+        </td>
+        <td>
+          8698
+        </td>
+        <td>
+          12810
+          -
+          12818
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          size.-(1)
+        </td>
+      </tr><tr>
+        <td>
+          348
+        </td>
+        <td>
+          7687
+        </td>
+        <td>
+          12832
+          -
+          12840
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.-
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          size.-(1)
+        </td>
+      </tr><tr>
+        <td>
+          348
+        </td>
+        <td>
+          8880
+        </td>
+        <td>
+          12801
+          -
+          12842
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.math.min
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.math.`package`.min(size.-(1), e.getOrElse[Long](size.-(1)))
+        </td>
+      </tr><tr>
+        <td>
+          351
+        </td>
+        <td>
+          8703
+        </td>
+        <td>
+          12910
+          -
+          12910
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.file.FilesCompanionPlatform.forAsync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          file.this.Files.forAsync[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          354
+        </td>
+        <td>
+          7891
+        </td>
+        <td>
+          12973
+          -
+          12980
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          end.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          355
+        </td>
+        <td>
+          9630
+        </td>
+        <td>
+          12998
+          -
+          13015
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.Config.bufferSize
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          config.bufferSize
+        </td>
+      </tr><tr>
+        <td>
+          356
+        </td>
+        <td>
+          8588
+        </td>
+        <td>
+          13033
+          -
+          13042
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.Request[F]](req)
+        </td>
+      </tr><tr>
+        <td>
+          357
+        </td>
+        <td>
+          7442
+        </td>
+        <td>
+          13071
+          -
+          13071
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.io.file.FilesCompanionPlatform.forAsync
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          file.this.Files.forAsync[[_]F[_]](F)
+        </td>
+      </tr><tr>
+        <td>
+          357
+        </td>
+        <td>
+          9768
+        </td>
+        <td>
+          13060
+          -
+          13084
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.StaticFile.calculateETag
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F)
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          7419
+        </td>
+        <td>
+          13226
+          -
+          13226
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Range.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          7873
+        </td>
+        <td>
+          13227
+          -
+          13247
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Range.SubRange.apply(start, end)
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          7649
+        </td>
+        <td>
+          13192
+          -
+          13209
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.server.staticcontent.AcceptRangeHeader
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          staticcontent.this.`package`.AcceptRangeHeader
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          8800
+        </td>
+        <td>
+          13156
+          -
+          13261
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.put
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.headers.put(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Range](org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(start, end), scala.Some.apply[Long](size)))(headers.this.Content-Range.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          8330
+        </td>
+        <td>
+          13192
+          -
+          13209
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          9771
+        </td>
+        <td>
+          13211
+          -
+          13260
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Range](org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(start, end), scala.Some.apply[Long](size)))(headers.this.Content-Range.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          8521
+        </td>
+        <td>
+          13211
+          -
+          13260
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Range.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(start, end), scala.Some.apply[Long](size))
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          9427
+        </td>
+        <td>
+          13192
+          -
+          13192
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Accept-Ranges.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Accept-Ranges.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          361
+        </td>
+        <td>
+          9636
+        </td>
+        <td>
+          13249
+          -
+          13259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](size)
+        </td>
+      </tr><tr>
+        <td>
+          362
+        </td>
+        <td>
+          9432
+        </td>
+        <td>
+          13283
+          -
+          13283
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.copy$default$2
+        </td>
+      </tr><tr>
+        <td>
+          362
+        </td>
+        <td>
+          7880
+        </td>
+        <td>
+          13283
+          -
+          13283
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          362
+        </td>
+        <td>
+          9710
+        </td>
+        <td>
+          13278
+          -
+          13333
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.copy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.copy(x$1, x$3, x$2, x$4, x$5)
+        </td>
+      </tr><tr>
+        <td>
+          362
+        </td>
+        <td>
+          8315
+        </td>
+        <td>
+          13283
+          -
+          13283
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Response.copy$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          resp.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          362
+        </td>
+        <td>
+          7654
+        </td>
+        <td>
+          13297
+          -
+          13318
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.PartialContent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Status.PartialContent
+        </td>
+      </tr><tr>
+        <td>
+          364
+        </td>
+        <td>
+          8470
+        </td>
+        <td>
+          12876
+          -
+          13370
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.OptionT.value
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.fromPath[F](file, start, end.+(1), config.bufferSize, scala.Some.apply[org.http4s.Request[F]](req), StaticFile.calculateETag[[_]F[_]](file.this.Files.forAsync[[_]F[_]](F), F))(file.this.Files.forAsync[[_]F[_]](F), F).map[org.http4s.Response[F]](((resp: org.http4s.Response[F]) =&gt; {
+  val hs: org.http4s.Headers = resp.headers.put(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Accept-Ranges](staticcontent.this.`package`.AcceptRangeHeader)(headers.this.Accept-Ranges.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Range](org.http4s.headers.Content-Range.apply(org.http4s.headers.Range.SubRange.apply(start, end), scala.Some.apply[Long](size)))(headers.this.Content-Range.headerInstance));
+  {
+    &lt;artifact&gt; val x$1: org.http4s.Status = Status.PartialContent;
+    &lt;artifact&gt; val x$2: org.http4s.Headers = hs;
+    &lt;artifact&gt; val x$3: org.http4s.HttpVersion = resp.copy$default$2;
+    &lt;artifact&gt; val x$4: org.http4s.EntityBody[F] @scala.reflect.internal.annotations.uncheckedBounds = resp.copy$default$4;
+    &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = resp.copy$default$5;
+    resp.copy(x$1, x$3, x$2, x$4, x$5)
+  }
+}))(F).value
+        </td>
+      </tr><tr>
+        <td>
+          365
+        </td>
+        <td>
+          9821
+        </td>
+        <td>
+          13388
+          -
+          13392
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.server.staticcontent.FileService.nope
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          nope
+        </td>
+      </tr><tr>
+        <td>
+          367
+        </td>
+        <td>
+          8807
+        </td>
+        <td>
+          13437
+          -
+          13446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Range&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          367
+        </td>
+        <td>
+          7686
+        </td>
+        <td>
+          13421
+          -
+          13447
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.headers.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Range&quot;)).ci())
+        </td>
+      </tr><tr>
+        <td>
+          372
+        </td>
+        <td>
+          9386
+        </td>
+        <td>
+          13597
+          -
+          13601
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          372
+        </td>
+        <td>
+          8317
+        </td>
+        <td>
+          13590
+          -
+          13602
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Option[org.http4s.Response[F]]](scala.None)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

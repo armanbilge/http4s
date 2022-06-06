@@ -1,0 +1,1181 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/ContextRouter.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.server
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Contravariant
+</span>20 <span style=''>import cats.Functor
+</span>21 <span style=''>import cats.Monad
+</span>22 <span style=''>import cats.data.Kleisli
+</span>23 <span style=''>import cats.data.OptionT
+</span>24 <span style=''>import cats.effect.Sync
+</span>25 <span style=''>import cats.syntax.all._
+</span>26 <span style=''>import org.http4s.ContextRequest
+</span>27 <span style=''>import org.http4s.ContextRoutes
+</span>28 <span style=''>import org.http4s.Request
+</span>29 <span style=''>import org.http4s.Uri
+</span>30 <span style=''>
+</span>31 <span style=''>object ContextRouter {
+</span>32 <span style=''>
+</span>33 <span style=''>  object Segment {
+</span>34 <span style=''>    implicit def functor[F[_]: Functor, X]: Functor[Segment[F, X, *]] =
+</span>35 <span style=''>      </span><span style='background: #F0ADAD'>new</span><span style=''> Functor[Segment[F, X, *]] {
+</span>36 <span style=''>        override def map[A, B](fa: Segment[F, X, A])(f: A =&gt; B): Segment[F, X, B] =
+</span>37 <span style=''>          </span><span style='background: #F0ADAD'>new Segment(fa.run(_, _).map(f))</span><span style=''>
+</span>38 <span style=''>      }
+</span>39 <span style=''>
+</span>40 <span style=''>    implicit def contravariant[F[_], X]: Contravariant[Segment[F, *, X]] =
+</span>41 <span style=''>      </span><span style='background: #F0ADAD'>new</span><span style=''> Contravariant[Segment[F, *, X]] {
+</span>42 <span style=''>        override def contramap[A, B](fa: Segment[F, A, X])(f: B =&gt; A): Segment[F, B, X] =
+</span>43 <span style=''>          </span><span style='background: #F0ADAD'>new Segment((b, segment) =&gt; fa.run(f(b), segment))</span><span style=''>
+</span>44 <span style=''>      }
+</span>45 <span style=''>
+</span>46 <span style=''>    class Partial[A] {
+</span>47 <span style=''>      def apply[F[_], B](run: (A, Uri.Path.Segment) =&gt; OptionT[F, B]): Segment[F, A, B] =
+</span>48 <span style=''>        </span><span style='background: #AEF1AE'>new Segment(run)</span><span style=''>
+</span>49 <span style=''>    }
+</span>50 <span style=''>    // partially apply for inference
+</span>51 <span style=''>    def apply[A] = </span><span style='background: #AEF1AE'>new Partial[A]</span><span style=''>
+</span>52 <span style=''>  }
+</span>53 <span style=''>
+</span>54 <span style=''>  final class Segment[F[_], A, B](val run: (A, Uri.Path.Segment) =&gt; OptionT[F, B]) {
+</span>55 <span style=''>    def apply(routes: ContextRoutes[B, F])(implicit F: Monad[F]): ContextRoutes[A, F] =
+</span>56 <span style=''>      </span><span style='background: #AEF1AE'>Kleisli { case ContextRequest(a, req) =&gt;
+</span>57 <span style=''></span><span style='background: #AEF1AE'>        for {
+</span>58 <span style=''></span><span style='background: #AEF1AE'>          head &lt;- OptionT.fromOption[F](req.pathInfo.segments.headOption)
+</span>59 <span style=''></span><span style='background: #AEF1AE'>          b &lt;- run(a, head)
+</span>60 <span style=''></span><span style='background: #AEF1AE'>          caret = req.attributes.lookup(Request.Keys.PathInfoCaret).getOrElse(0)
+</span>61 <span style=''></span><span style='background: #AEF1AE'>          response &lt;- routes(
+</span>62 <span style=''></span><span style='background: #AEF1AE'>            ContextRequest(b, req.withAttribute(Request.Keys.PathInfoCaret, caret + 1))
+</span>63 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>64 <span style=''></span><span style='background: #AEF1AE'>        } yield response
+</span>65 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>66 <span style=''>
+</span>67 <span style=''>    def -&gt;(routes: ContextRoutes[B, F]): Routable[F, A] =
+</span>68 <span style=''>      </span><span style='background: #AEF1AE'>Routable.Dynamic(this, routes)</span><span style=''>
+</span>69 <span style=''>  }
+</span>70 <span style=''>
+</span>71 <span style=''>  object Routable {
+</span>72 <span style=''>    final case class Static[F[_], A](tupled: (String, ContextRoutes[A, F])) extends Routable[F, A]
+</span>73 <span style=''>    final case class Dynamic[F[_], A, B](segment: Segment[F, A, B], routes: ContextRoutes[B, F])
+</span>74 <span style=''>        extends Routable[F, A]
+</span>75 <span style=''>
+</span>76 <span style=''>    implicit def tuple[F[_], A](tupled: (String, ContextRoutes[A, F])): Routable[F, A] =
+</span>77 <span style=''>      </span><span style='background: #AEF1AE'>Static(tupled)</span><span style=''>
+</span>78 <span style=''>  }
+</span>79 <span style=''>  sealed trait Routable[F[_], A]
+</span>80 <span style=''>
+</span>81 <span style=''>  /** Defines an [[ContextRoutes]] based on list of mappings.
+</span>82 <span style=''>    * @see define
+</span>83 <span style=''>    */
+</span>84 <span style=''>  def apply[F[_]: Monad, A](mappings: (String, ContextRoutes[A, F])*): ContextRoutes[A, F] =
+</span>85 <span style=''>    </span><span style='background: #AEF1AE'>define(mappings: _*)(ContextRoutes.empty[A, F])</span><span style=''>
+</span>86 <span style=''>
+</span>87 <span style=''>  @deprecated(&quot;Kept for binary compatiblity.  Use the apply with the Monad constraint.&quot;, &quot;0.23.12&quot;)
+</span>88 <span style=''>  def apply[F[_], A](
+</span>89 <span style=''>      mappings: Seq[(String, ContextRoutes[A, F])],
+</span>90 <span style=''>      sync: Sync[F],
+</span>91 <span style=''>  ): ContextRoutes[A, F] =
+</span>92 <span style=''>    </span><span style='background: #F0ADAD'>defineHelper(mappings, ContextRoutes.empty[A, F](sync))(sync)</span><span style=''>
+</span>93 <span style=''>
+</span>94 <span style=''>  /** Defines an [[ContextRoutes]] based on list of mappings and
+</span>95 <span style=''>    * a default Service to be used when none in the list match incoming requests.
+</span>96 <span style=''>    *
+</span>97 <span style=''>    * The mappings are processed in descending order (longest first) of prefix length.
+</span>98 <span style=''>    */
+</span>99 <span style=''>  def define[F[_]: Monad, A](
+</span>100 <span style=''>      mappings: (String, ContextRoutes[A, F])*
+</span>101 <span style=''>  )(default: ContextRoutes[A, F]): ContextRoutes[A, F] =
+</span>102 <span style=''>    </span><span style='background: #AEF1AE'>defineHelper(mappings, default)</span><span style=''>
+</span>103 <span style=''>
+</span>104 <span style=''>  @deprecated(&quot;Kept for binary compatiblity.  Use the define with the Monad constraint.&quot;, &quot;0.23.12&quot;)
+</span>105 <span style=''>  def define[F[_], A](
+</span>106 <span style=''>      mappings: Seq[(String, ContextRoutes[A, F])]
+</span>107 <span style=''>  )(default: ContextRoutes[A, F], sync: Sync[F]): ContextRoutes[A, F] =
+</span>108 <span style=''>    </span><span style='background: #F0ADAD'>defineHelper(mappings, default)(sync)</span><span style=''>
+</span>109 <span style=''>
+</span>110 <span style=''>  // Supports the deprecated methods.  We can't call the Sync
+</span>111 <span style=''>  // version of define after defining the new Monad version.
+</span>112 <span style=''>  private def defineHelper[F[_]: Monad, A](
+</span>113 <span style=''>      mappings: Seq[(String, ContextRoutes[A, F])],
+</span>114 <span style=''>      default: ContextRoutes[A, F],
+</span>115 <span style=''>  ): ContextRoutes[A, F] =
+</span>116 <span style=''>    </span><span style='background: #AEF1AE'>mappings.sortBy(_._1.length).foldLeft(default) { case (acc, (prefix, routes)) =&gt;
+</span>117 <span style=''></span><span style='background: #AEF1AE'>      val prefixSegments = Uri.Path.unsafeFromString(prefix)
+</span>118 <span style=''></span><span style='background: #AEF1AE'>      if (prefixSegments.isEmpty) routes &lt;+&gt; acc
+</span>119 <span style=''></span><span style='background: #AEF1AE'>      else
+</span>120 <span style=''></span><span style='background: #AEF1AE'>        Kleisli { case creq @ ContextRequest(_, req) =&gt;
+</span>121 <span style=''></span><span style='background: #AEF1AE'>          if (req.pathInfo.startsWith(prefixSegments)) {
+</span>122 <span style=''></span><span style='background: #AEF1AE'>            val treq = Router.translate(prefixSegments)(creq.req)
+</span>123 <span style=''></span><span style='background: #AEF1AE'>            routes(creq.copy(req = treq)).orElse(acc(creq))
+</span>124 <span style=''></span><span style='background: #AEF1AE'>          } else acc(creq)
+</span>125 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>126 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>127 <span style=''>
+</span>128 <span style=''>  def of[F[_]: Sync, A](mappings: Routable[F, A]*): ContextRoutes[A, F] =
+</span>129 <span style=''>    </span><span style='background: #AEF1AE'>dynamic(mappings: _*)(ContextRoutes.empty[A, F])</span><span style=''>
+</span>130 <span style=''>
+</span>131 <span style=''>  def dynamic[F[_]: Sync, A](mappings: Routable[F, A]*)(
+</span>132 <span style=''>      default: ContextRoutes[A, F]
+</span>133 <span style=''>  ): ContextRoutes[A, F] = {
+</span>134 <span style=''>    val (statics, dynamic) = mappings.toList.partitionEither {
+</span>135 <span style=''>      case Routable.Static(tuple) =&gt; Left(tuple)
+</span>136 <span style=''>      case Routable.Dynamic(segment, route) =&gt; Right(segment(route))
+</span>137 <span style=''>    }
+</span>138 <span style=''>    </span><span style='background: #AEF1AE'>dynamic.foldLeft(define(statics: _*)(default))(_ &lt;+&gt; _)</span><span style=''>
+</span>139 <span style=''>  }
+</span>140 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          9595
+        </td>
+        <td>
+          1020
+          -
+          1023
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.Segment.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          8343
+        </td>
+        <td>
+          1158
+          -
+          1177
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fa.run.apply(x$1, x$2).map[B](f)(evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          7217
+        </td>
+        <td>
+          1146
+          -
+          1178
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.Segment.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new org.http4s.server.ContextRouter.Segment[[_]F[_],X,B](((x$1: X, x$2: org.http4s.Uri.Path.Segment) =&gt; fa.run.apply(x$1, x$2).map[B](f)(evidence$1)))
+        </td>
+      </tr><tr>
+        <td>
+          41
+        </td>
+        <td>
+          8141
+        </td>
+        <td>
+          1269
+          -
+          1272
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.Segment.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          7380
+        </td>
+        <td>
+          1435
+          -
+          1456
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function2.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fa.run.apply(f.apply(b), segment)
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          9225
+        </td>
+        <td>
+          1407
+          -
+          1457
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.Segment.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new org.http4s.server.ContextRouter.Segment[[_]F[_],B,X](((b: B, segment: org.http4s.Uri.Path.Segment) =&gt; fa.run.apply(f.apply(b), segment)))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          8615
+        </td>
+        <td>
+          1442
+          -
+          1446
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.apply(b)
+        </td>
+      </tr><tr>
+        <td>
+          48
+        </td>
+        <td>
+          7718
+        </td>
+        <td>
+          1588
+          -
+          1604
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.Segment.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.ContextRouter.Segment[[_]F[_],A,B](run)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9513
+        </td>
+        <td>
+          1667
+          -
+          1681
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.Segment.Partial.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.server.ContextRouter.Segment.Partial[A]()
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          7223
+        </td>
+        <td>
+          1866
+          -
+          2266
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.ContextRequest[F,A], org.http4s.Response[F]](((x0$1: org.http4s.ContextRequest[F,A]) =&gt; x0$1 match {
+  case (context: A, req: org.http4s.Request[[_]F[_]]): org.http4s.ContextRequest[[_]F[_],A]((a @ _), (req @ _)) =&gt; cats.data.OptionT.fromOption[F].apply[org.http4s.Uri.Path.Segment](req.pathInfo.segments.headOption)(F).flatMap[org.http4s.Response[F]](((head: org.http4s.Uri.Path.Segment) =&gt; Segment.this.run.apply(a, head).flatMap[org.http4s.Response[F]](((b: B) =&gt; {
+    val caret: Int = req.attributes.lookup[Int](org.http4s.Request.Keys.PathInfoCaret).getOrElse[Int](0);
+    routes.apply(org.http4s.ContextRequest.apply[[_]F[_], B](b, req.withAttribute[Int](org.http4s.Request.Keys.PathInfoCaret, caret.+(1))))
+  }))(F)))(F)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          8288
+        </td>
+        <td>
+          1915
+          -
+          2258
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.flatMap
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.fromOption[F].apply[org.http4s.Uri.Path.Segment](req.pathInfo.segments.headOption)(F).flatMap[org.http4s.Response[F]](((head: org.http4s.Uri.Path.Segment) =&gt; Segment.this.run.apply(a, head).flatMap[org.http4s.Response[F]](((b: B) =&gt; {
+  val caret: Int = req.attributes.lookup[Int](org.http4s.Request.Keys.PathInfoCaret).getOrElse[Int](0);
+  routes.apply(org.http4s.ContextRequest.apply[[_]F[_], B](b, req.withAttribute[Int](org.http4s.Request.Keys.PathInfoCaret, caret.+(1))))
+}))(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          9075
+        </td>
+        <td>
+          2332
+          -
+          2362
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.Routable.Dynamic.apply
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContextRouter.this.Routable.Dynamic.apply[[_]F[_], A, B](this, routes)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          8621
+        </td>
+        <td>
+          2711
+          -
+          2725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.Routable.Static.apply
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Routable.this.Static.apply[[_]F[_], A](tupled)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          7386
+        </td>
+        <td>
+          2948
+          -
+          2995
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.define
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContextRouter.this.define[[_]F[_], A]((mappings: _*))(org.http4s.ContextRoutes.empty[A, F](evidence$2))(evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          9292
+        </td>
+        <td>
+          3223
+          -
+          3284
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.defineHelper
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ContextRouter.this.defineHelper[[_]F[_], A](mappings, org.http4s.ContextRoutes.empty[A, F](sync))(sync)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          8151
+        </td>
+        <td>
+          3671
+          -
+          3702
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.defineHelper
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContextRouter.this.defineHelper[[_]F[_], A](mappings, default)(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          7700
+        </td>
+        <td>
+          3955
+          -
+          3992
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.defineHelper
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ContextRouter.this.defineHelper[[_]F[_], A](mappings, default)(sync)
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          9258
+        </td>
+        <td>
+          4280
+          -
+          4763
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.foldLeft
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          mappings.sortBy[Int](((x$4: (String, org.http4s.ContextRoutes[A,F])) =&gt; x$4._1.length()))(math.this.Ordering.Int).foldLeft[org.http4s.ContextRoutes[A,F]](default)(((x0$1: org.http4s.ContextRoutes[A,F], x1$1: (String, org.http4s.ContextRoutes[A,F])) =&gt; scala.Tuple2.apply[org.http4s.ContextRoutes[A,F], (String, org.http4s.ContextRoutes[A,F])](x0$1, x1$1) match {
+  case (_1: org.http4s.ContextRoutes[A,F], _2: (String, org.http4s.ContextRoutes[A,F])): (org.http4s.ContextRoutes[A,F], (String, org.http4s.ContextRoutes[A,F]))((acc @ _), (_1: String, _2: org.http4s.ContextRoutes[A,F]): (String, org.http4s.ContextRoutes[A,F])((prefix @ _), (routes @ _))) =&gt; {
+    val prefixSegments: org.http4s.Uri.Path = org.http4s.Uri.Path.unsafeFromString(prefix);
+    if (prefixSegments.isEmpty)
+      cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$2$]cats.data.OptionT[F,β$2$],org.http4s.ContextRequest[F,A],B], org.http4s.Response[F]](routes)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$2$]cats.data.OptionT[F,β$2$], org.http4s.ContextRequest[F,A]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$4))).&lt;+&gt;(acc)
+    else
+      cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.ContextRequest[F,A], org.http4s.Response[F]](((x0$2: org.http4s.ContextRequest[F,A]) =&gt; x0$2 match {
+        case (creq @ (context: A, req: org.http4s.Request[[_]F[_]]): org.http4s.ContextRequest[[_]F[_],A](_, (req @ _))) =&gt; if (req.pathInfo.startsWith(prefixSegments))
+          {
+            val treq: org.http4s.Request[[_]F[_]] = Router.translate[[_]F[_]](prefixSegments)(creq.req);
+            routes.apply({
+  &lt;artifact&gt; val x$1: org.http4s.Request[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = treq;
+  &lt;artifact&gt; val x$2: A = creq.copy$default$1[Nothing, Nothing];
+  creq.copy[[_]F[_], A](x$2, x$1)
+}).orElse(acc.apply(creq))(evidence$4)
+          }
+        else
+          acc.apply(creq)
+      }))
+  }
+}))
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          8372
+        </td>
+        <td>
+          4295
+          -
+          4295
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.math.Ordering.Int
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          math.this.Ordering.Int
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          9519
+        </td>
+        <td>
+          4296
+          -
+          4307
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.length
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$4._1.length()
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          7310
+        </td>
+        <td>
+          4388
+          -
+          4421
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.unsafeFromString
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Path.unsafeFromString(prefix)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          8597
+        </td>
+        <td>
+          4456
+          -
+          4470
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.SemigroupK.Ops.&lt;+&gt;
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$2$]cats.data.OptionT[F,β$2$],org.http4s.ContextRequest[F,A],B], org.http4s.Response[F]](routes)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$2$]cats.data.OptionT[F,β$2$], org.http4s.ContextRequest[F,A]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$4))).&lt;+&gt;(acc)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          9084
+        </td>
+        <td>
+          4432
+          -
+          4454
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Path.isEmpty
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          prefixSegments.isEmpty
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          7519
+        </td>
+        <td>
+          4456
+          -
+          4470
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.SemigroupK.Ops.&lt;+&gt;
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$2$]cats.data.OptionT[F,β$2$],org.http4s.ContextRequest[F,A],B], org.http4s.Response[F]](routes)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$2$]cats.data.OptionT[F,β$2$], org.http4s.ContextRequest[F,A]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$4))).&lt;+&gt;(acc)
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          8600
+        </td>
+        <td>
+          4490
+          -
+          4757
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.ContextRequest[F,A], org.http4s.Response[F]](((x0$2: org.http4s.ContextRequest[F,A]) =&gt; x0$2 match {
+  case (creq @ (context: A, req: org.http4s.Request[[_]F[_]]): org.http4s.ContextRequest[[_]F[_],A](_, (req @ _))) =&gt; if (req.pathInfo.startsWith(prefixSegments))
+    {
+      val treq: org.http4s.Request[[_]F[_]] = Router.translate[[_]F[_]](prefixSegments)(creq.req);
+      routes.apply({
+  &lt;artifact&gt; val x$1: org.http4s.Request[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = treq;
+  &lt;artifact&gt; val x$2: A = creq.copy$default$1[Nothing, Nothing];
+  creq.copy[[_]F[_], A](x$2, x$1)
+}).orElse(acc.apply(creq))(evidence$4)
+    }
+  else
+    acc.apply(creq)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          7450
+        </td>
+        <td>
+          4490
+          -
+          4757
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[[A]cats.data.OptionT[F,A], org.http4s.ContextRequest[F,A], org.http4s.Response[F]](((x0$2: org.http4s.ContextRequest[F,A]) =&gt; x0$2 match {
+  case (creq @ (context: A, req: org.http4s.Request[[_]F[_]]): org.http4s.ContextRequest[[_]F[_],A](_, (req @ _))) =&gt; if (req.pathInfo.startsWith(prefixSegments))
+    {
+      val treq: org.http4s.Request[[_]F[_]] = Router.translate[[_]F[_]](prefixSegments)(creq.req);
+      routes.apply({
+  &lt;artifact&gt; val x$1: org.http4s.Request[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = treq;
+  &lt;artifact&gt; val x$2: A = creq.copy$default$1[Nothing, Nothing];
+  creq.copy[[_]F[_], A](x$2, x$1)
+}).orElse(acc.apply(creq))(evidence$4)
+    }
+  else
+    acc.apply(creq)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          9296
+        </td>
+        <td>
+          4552
+          -
+          4591
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Path.startsWith
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.pathInfo.startsWith(prefixSegments)
+        </td>
+      </tr><tr>
+        <td>
+          121
+        </td>
+        <td>
+          8341
+        </td>
+        <td>
+          4593
+          -
+          4732
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val treq: org.http4s.Request[[_]F[_]] = Router.translate[[_]F[_]](prefixSegments)(creq.req);
+  routes.apply({
+  &lt;artifact&gt; val x$1: org.http4s.Request[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = treq;
+  &lt;artifact&gt; val x$2: A = creq.copy$default$1[Nothing, Nothing];
+  creq.copy[[_]F[_], A](x$2, x$1)
+}).orElse(acc.apply(creq))(evidence$4)
+}
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          8240
+        </td>
+        <td>
+          4651
+          -
+          4659
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContextRequest.req
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          creq.req
+        </td>
+      </tr><tr>
+        <td>
+          122
+        </td>
+        <td>
+          7701
+        </td>
+        <td>
+          4618
+          -
+          4660
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.server.Router.translate
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Router.translate[[_]F[_]](prefixSegments)(creq.req)
+        </td>
+      </tr><tr>
+        <td>
+          123
+        </td>
+        <td>
+          9526
+        </td>
+        <td>
+          4673
+          -
+          4720
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.orElse
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          routes.apply({
+  &lt;artifact&gt; val x$1: org.http4s.Request[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = treq;
+  &lt;artifact&gt; val x$2: A = creq.copy$default$1[Nothing, Nothing];
+  creq.copy[[_]F[_], A](x$2, x$1)
+}).orElse(acc.apply(creq))(evidence$4)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          7317
+        </td>
+        <td>
+          4738
+          -
+          4747
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          acc.apply(creq)
+        </td>
+      </tr><tr>
+        <td>
+          124
+        </td>
+        <td>
+          9061
+        </td>
+        <td>
+          4738
+          -
+          4747
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          acc.apply(creq)
+        </td>
+      </tr><tr>
+        <td>
+          129
+        </td>
+        <td>
+          8243
+        </td>
+        <td>
+          4843
+          -
+          4891
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.dynamic
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContextRouter.this.dynamic[[_]F[_], A]((mappings: _*))(org.http4s.ContextRoutes.empty[A, F](evidence$5))(evidence$5)
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          9491
+        </td>
+        <td>
+          5032
+          -
+          5032
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$5._2
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          10030
+        </td>
+        <td>
+          5023
+          -
+          5023
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          x$5._1
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          9072
+        </td>
+        <td>
+          5205
+          -
+          5260
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.LinearSeqOps.foldLeft
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          dynamic.foldLeft[org.http4s.ContextRoutes[A,[_]F[_]]](ContextRouter.this.define[[_]F[_], A]((statics: _*))(default)(evidence$6))(((x$6: org.http4s.ContextRoutes[A,[_]F[_]], x$7: org.http4s.ContextRoutes[A,[_]F[_]]) =&gt; cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$2$]cats.data.OptionT[[_]F[_],β$2$],org.http4s.ContextRequest[[_]F[_],A],B], org.http4s.Response[[_]F[_]]](x$6)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$2$]cats.data.OptionT[[_]F[_],β$2$], org.http4s.ContextRequest[[_]F[_],A]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$6))).&lt;+&gt;(x$7)))
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          8344
+        </td>
+        <td>
+          5222
+          -
+          5250
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.ContextRouter.define
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ContextRouter.this.define[[_]F[_], A]((statics: _*))(default)(evidence$6)
+        </td>
+      </tr><tr>
+        <td>
+          138
+        </td>
+        <td>
+          7270
+        </td>
+        <td>
+          5252
+          -
+          5259
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.SemigroupK.Ops.&lt;+&gt;
+        </td>
+        <td>
+          org.http4s.server.contextroutersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toSemigroupKOps[[B]cats.data.Kleisli[[β$2$]cats.data.OptionT[[_]F[_],β$2$],org.http4s.ContextRequest[[_]F[_],A],B], org.http4s.Response[[_]F[_]]](x$6)(data.this.Kleisli.catsDataMonoidKForKleisli[[β$2$]cats.data.OptionT[[_]F[_],β$2$], org.http4s.ContextRequest[[_]F[_],A]](data.this.OptionT.catsDataMonoidKForOptionT[[_]F[_]](evidence$6))).&lt;+&gt;(x$7)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

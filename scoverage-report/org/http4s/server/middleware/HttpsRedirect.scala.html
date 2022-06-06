@@ -1,0 +1,950 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/server/middleware/HttpsRedirect.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package server
+</span>19 <span style=''>package middleware
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.Applicative
+</span>22 <span style=''>import cats.Monad
+</span>23 <span style=''>import cats.data.Kleisli
+</span>24 <span style=''>import cats.data.NonEmptyList
+</span>25 <span style=''>import org.http4s.Status.MovedPermanently
+</span>26 <span style=''>import org.http4s.Uri.Authority
+</span>27 <span style=''>import org.http4s.Uri.RegName
+</span>28 <span style=''>import org.http4s.Uri.Scheme
+</span>29 <span style=''>import org.http4s.headers.Host
+</span>30 <span style=''>import org.http4s.headers.Location
+</span>31 <span style=''>import org.http4s.headers.`Content-Type`
+</span>32 <span style=''>import org.http4s.syntax.header._
+</span>33 <span style=''>import org.log4s.getLogger
+</span>34 <span style=''>import org.typelevel.ci._
+</span>35 <span style=''>
+</span>36 <span style=''>/** [[Middleware]] to redirect http traffic to https.
+</span>37 <span style=''>  * Inspects `X-Forwarded-Proto` header and if it is set to `http`,
+</span>38 <span style=''>  * redirects to `Host` with same URL with https schema; otherwise does nothing.
+</span>39 <span style=''>  * This middleware is useful when a service is deployed behind a load balancer
+</span>40 <span style=''>  * which does not support such redirect feature, e.g. Heroku.
+</span>41 <span style=''>  */
+</span>42 <span style=''>object HttpsRedirect {
+</span>43 <span style=''>  private[HttpsRedirect] val logger = getLogger
+</span>44 <span style=''>
+</span>45 <span style=''>  def apply[F[_], G[_]](http: Http[F, G])(implicit F: Applicative[F]): Http[F, G] =
+</span>46 <span style=''>    </span><span style='background: #AEF1AE'>Kleisli { req =&gt;
+</span>47 <span style=''></span><span style='background: #AEF1AE'>      (req.headers.get(ci&quot;X-Forwarded-Proto&quot;), req.headers.get[Host]) match {
+</span>48 <span style=''></span><span style='background: #AEF1AE'>        case (Some(NonEmptyList(proto, _)), Some(host))
+</span>49 <span style=''></span><span style='background: #AEF1AE'>            if Scheme.fromString(proto.value).contains(Scheme.http) =&gt;
+</span>50 <span style=''></span><span style='background: #AEF1AE'>          logger.debug(s&quot;Redirecting ${req.method} ${req.uri} to https on $host&quot;)
+</span>51 <span style=''></span><span style='background: #AEF1AE'>          val authority = Authority(host = RegName(host.value))
+</span>52 <span style=''></span><span style='background: #AEF1AE'>          val location = req.uri.copy(scheme = Some(Scheme.https), authority = Some(authority))
+</span>53 <span style=''></span><span style='background: #AEF1AE'>          val headers = Headers(Location(location), `Content-Type`(MediaType.text.xml))
+</span>54 <span style=''></span><span style='background: #AEF1AE'>          val response = Response[G](status = MovedPermanently, headers = headers)
+</span>55 <span style=''></span><span style='background: #AEF1AE'>          F.pure(response)
+</span>56 <span style=''></span><span style='background: #AEF1AE'>
+</span>57 <span style=''></span><span style='background: #AEF1AE'>        case _ =&gt;
+</span>58 <span style=''></span><span style='background: #AEF1AE'>          http(req)
+</span>59 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>60 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>61 <span style=''>
+</span>62 <span style=''>  def httpRoutes[F[_]: Monad](httpRoutes: HttpRoutes[F]): HttpRoutes[F] =
+</span>63 <span style=''>    </span><span style='background: #AEF1AE'>apply(httpRoutes)</span><span style=''>
+</span>64 <span style=''>
+</span>65 <span style=''>  def httpApp[F[_]: Applicative](httpApp: HttpApp[F]): HttpApp[F] =
+</span>66 <span style=''>    </span><span style='background: #AEF1AE'>apply(httpApp)</span><span style=''>
+</span>67 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          7930
+        </td>
+        <td>
+          1585
+          -
+          2299
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.Kleisli.apply[F, org.http4s.Request[G], org.http4s.Response[G]](((req: org.http4s.Request[G]) =&gt; scala.Tuple2.apply[Option[cats.data.NonEmptyList[org.http4s.Header.Raw]], Option[org.http4s.headers.Host]](req.headers.get(org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;X-Forwarded-Proto&quot;)).ci()), req.headers.get[org.http4s.headers.Host](Header.this.Select.singleHeaders[org.http4s.headers.Host](headers.this.Host.headerInstance))) match {
+  case (_1: Option[cats.data.NonEmptyList[org.http4s.Header.Raw]], _2: Option[org.http4s.headers.Host]): (Option[cats.data.NonEmptyList[org.http4s.Header.Raw]], Option[org.http4s.headers.Host])((value: cats.data.NonEmptyList[org.http4s.Header.Raw]): Some[cats.data.NonEmptyList[org.http4s.Header.Raw]]((head: org.http4s.Header.Raw, tail: List[org.http4s.Header.Raw]): cats.data.NonEmptyList[org.http4s.Header.Raw]((proto @ _), _)), (value: org.http4s.headers.Host): Some[org.http4s.headers.Host]((host @ _))) if org.http4s.Uri.Scheme.fromString(proto.value).contains[org.http4s.Uri.Scheme](org.http4s.Uri.Scheme.http) =&gt; {
+    if (HttpsRedirect.this.logger.logger.isDebugEnabled())
+      HttpsRedirect.this.logger.logger.debug((&quot;Redirecting &quot;.+(req.method).+(&quot; &quot;).+(req.uri).+(&quot; to https on &quot;).+(host): String))
+    else
+      ();
+    val authority: org.http4s.Uri.Authority = {
+      &lt;artifact&gt; val x$1: org.http4s.Uri.RegName = org.http4s.Uri.RegName.apply(org.http4s.syntax.`package`.header.http4sHeaderSyntax[org.http4s.headers.Host](host)(headers.this.Host.headerInstance).value);
+      &lt;artifact&gt; val x$2: Option[org.http4s.Uri.UserInfo] @scala.reflect.internal.annotations.uncheckedBounds = org.http4s.Uri.Authority.apply$default$1;
+      &lt;artifact&gt; val x$3: Option[Int] @scala.reflect.internal.annotations.uncheckedBounds = org.http4s.Uri.Authority.apply$default$3;
+      org.http4s.Uri.Authority.apply(x$2, x$1, x$3)
+    };
+    val location: org.http4s.Uri = req.uri.copy(scala.Some.apply[org.http4s.Uri.Scheme](org.http4s.Uri.Scheme.https), scala.Some.apply[org.http4s.Uri.Authority](authority), req.uri.copy$default$3, req.uri.copy$default$4, req.uri.copy$default$5);
+    val headers: org.http4s.Headers = Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](org.http4s.headers.Location.apply(location))(headers.this.Location.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](org.http4s.headers.Content-Type.apply(MediaType.text.xml))(headers.this.Content-Type.headerInstance));
+    val response: org.http4s.Response[G] = {
+      &lt;artifact&gt; val x$4: org.http4s.Status = org.http4s.Status.MovedPermanently;
+      &lt;artifact&gt; val x$5: org.http4s.Headers = headers;
+      &lt;artifact&gt; val x$6: org.http4s.HttpVersion = Response.apply$default$2[G];
+      &lt;artifact&gt; val x$7: org.http4s.EntityBody[Nothing] @scala.reflect.internal.annotations.uncheckedBounds = Response.apply$default$4[G];
+      &lt;artifact&gt; val x$8: org.typelevel.vault.Vault = Response.apply$default$5[G];
+      Response.apply[G](x$4, x$6, x$5, x$7, x$8)
+    };
+    F.pure[org.http4s.Response[G]](response)
+  }
+  case _ =&gt; http.apply(req)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          7251
+        </td>
+        <td>
+          1791
+          -
+          1802
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme.http
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Scheme.http
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          9162
+        </td>
+        <td>
+          1751
+          -
+          1803
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.util.Either.contains
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Scheme.fromString(proto.value).contains[org.http4s.Uri.Scheme](org.http4s.Uri.Scheme.http)
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          8422
+        </td>
+        <td>
+          1769
+          -
+          1780
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Header.Raw.value
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          proto.value
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8071
+        </td>
+        <td>
+          1940
+          -
+          1940
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Host.headerInstance
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Host.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8238
+        </td>
+        <td>
+          1915
+          -
+          1915
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Authority.apply$default$1
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Authority.apply$default$1
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9248
+        </td>
+        <td>
+          1932
+          -
+          1951
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.RegName.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.RegName.apply(org.http4s.syntax.`package`.header.http4sHeaderSyntax[org.http4s.headers.Host](host)(headers.this.Host.headerInstance).value)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9962
+        </td>
+        <td>
+          1915
+          -
+          1915
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Authority.apply$default$3
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Authority.apply$default$3
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          8975
+        </td>
+        <td>
+          1915
+          -
+          1952
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.Authority.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Authority.apply(x$2, x$1, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          9869
+        </td>
+        <td>
+          1940
+          -
+          1950
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.syntax.HeaderOps.value
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.syntax.`package`.header.http4sHeaderSyntax[org.http4s.headers.Host](host)(headers.this.Host.headerInstance).value
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          8376
+        </td>
+        <td>
+          2005
+          -
+          2017
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.Scheme.https
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Uri.Scheme.https
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          9877
+        </td>
+        <td>
+          1986
+          -
+          1986
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$4
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy$default$4
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          8193
+        </td>
+        <td>
+          1978
+          -
+          2048
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Uri.copy
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy(scala.Some.apply[org.http4s.Uri.Scheme](org.http4s.Uri.Scheme.https), scala.Some.apply[org.http4s.Uri.Authority](authority), req.uri.copy$default$3, req.uri.copy$default$4, req.uri.copy$default$5)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          9255
+        </td>
+        <td>
+          1986
+          -
+          1986
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$5
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy$default$5
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          7257
+        </td>
+        <td>
+          2000
+          -
+          2018
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.Uri.Scheme](org.http4s.Uri.Scheme.https)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          7977
+        </td>
+        <td>
+          1986
+          -
+          1986
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Uri.copy$default$3
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.uri.copy$default$3
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          9164
+        </td>
+        <td>
+          2032
+          -
+          2047
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.Uri.Authority](authority)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7981
+        </td>
+        <td>
+          2101
+          -
+          2135
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](org.http4s.headers.Content-Type.apply(MediaType.text.xml))(headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9969
+        </td>
+        <td>
+          2081
+          -
+          2099
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Location.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Location.apply(location)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9021
+        </td>
+        <td>
+          2115
+          -
+          2115
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          7265
+        </td>
+        <td>
+          2101
+          -
+          2135
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Type.apply(MediaType.text.xml)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8320
+        </td>
+        <td>
+          2081
+          -
+          2099
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](org.http4s.headers.Location.apply(location))(headers.this.Location.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          8879
+        </td>
+        <td>
+          2089
+          -
+          2089
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Location.headerInstance
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Location.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          9767
+        </td>
+        <td>
+          2073
+          -
+          2136
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Location](org.http4s.headers.Location.apply(location))(headers.this.Location.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](org.http4s.headers.Content-Type.apply(MediaType.text.xml))(headers.this.Content-Type.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          7921
+        </td>
+        <td>
+          2162
+          -
+          2219
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[G](x$4, x$6, x$5, x$7, x$8)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          9924
+        </td>
+        <td>
+          2170
+          -
+          2170
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[G]
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          9227
+        </td>
+        <td>
+          2183
+          -
+          2199
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.MovedPermanently
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Status.MovedPermanently
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          8197
+        </td>
+        <td>
+          2170
+          -
+          2170
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[G]
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          8882
+        </td>
+        <td>
+          2170
+          -
+          2170
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[G]
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          7222
+        </td>
+        <td>
+          2230
+          -
+          2246
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[org.http4s.Response[G]](response)
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          9024
+        </td>
+        <td>
+          2276
+          -
+          2285
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.Kleisli.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          http.apply(req)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          9344
+        </td>
+        <td>
+          2379
+          -
+          2396
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpsRedirect.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpsRedirect.this.apply[[β$0$]cats.data.OptionT[F,β$0$], [_]F[_]](httpRoutes)(data.this.OptionT.catsDataMonadErrorMonadForOptionT[[_]F[_]](evidence$1))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          9866
+        </td>
+        <td>
+          2384
+          -
+          2384
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances1.catsDataMonadErrorMonadForOptionT
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorMonadForOptionT[[_]F[_]](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          8150
+        </td>
+        <td>
+          2470
+          -
+          2484
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.server.middleware.HttpsRedirect.apply
+        </td>
+        <td>
+          org.http4s.server.middleware.httpsredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          HttpsRedirect.this.apply[[_]F[_], [_]F[_]](httpApp)(evidence$2)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

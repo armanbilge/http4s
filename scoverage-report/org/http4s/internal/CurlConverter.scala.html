@@ -1,0 +1,488 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/internal/CurlConverter.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import org.http4s.Headers
+</span>20 <span style=''>import org.http4s.Method
+</span>21 <span style=''>import org.http4s.Request
+</span>22 <span style=''>import org.http4s.Uri
+</span>23 <span style=''>import org.typelevel.ci.CIString
+</span>24 <span style=''>
+</span>25 <span style=''>private[http4s] object CurlConverter {
+</span>26 <span style=''>
+</span>27 <span style=''>  // escapes characters that are used in the curl-command, such as '
+</span>28 <span style=''>  private def escapeQuotationMarks(s: String) = </span><span style='background: #AEF1AE'>s.replaceAll(&quot;'&quot;, &quot;&quot;&quot;'\\''&quot;&quot;&quot;)</span><span style=''>
+</span>29 <span style=''>
+</span>30 <span style=''>  private def newline: String = </span><span style='background: #AEF1AE'>&quot; \\\n  &quot;</span><span style=''>
+</span>31 <span style=''>
+</span>32 <span style=''>  private def prepareMethodName(method: Method): String =
+</span>33 <span style=''>    s&quot;$newline--request ${method.name}&quot;
+</span>34 <span style=''>
+</span>35 <span style=''>  private def prepareUri(uri: Uri): String =
+</span>36 <span style=''>    s&quot;$newline--url '${escapeQuotationMarks(uri.renderString)}'&quot;
+</span>37 <span style=''>
+</span>38 <span style=''>  private def prepareHeaders(headers: Headers, redactHeadersWhen: CIString =&gt; Boolean): String = {
+</span>39 <span style=''>    val preparedHeaders = </span><span style='background: #AEF1AE'>headers
+</span>40 <span style=''></span><span style='background: #AEF1AE'>      .redactSensitive(redactHeadersWhen)
+</span>41 <span style=''></span><span style='background: #AEF1AE'>      .headers
+</span>42 <span style=''></span><span style='background: #AEF1AE'>      .map { header =&gt;
+</span>43 <span style=''></span><span style='background: #AEF1AE'>        s&quot;&quot;&quot;--header '${escapeQuotationMarks(s&quot;${header.name}: ${header.value}&quot;)}'&quot;&quot;&quot;
+</span>44 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>45 <span style=''></span><span style='background: #AEF1AE'>      .mkString(newline)</span><span style=''>
+</span>46 <span style=''>
+</span>47 <span style=''>    if (</span><span style='background: #AEF1AE'>preparedHeaders.isEmpty</span><span style=''>) </span><span style='background: #AEF1AE'>&quot;&quot;</span><span style=''> else </span><span style='background: #AEF1AE'>newline + preparedHeaders</span><span style=''>
+</span>48 <span style=''>  }
+</span>49 <span style=''>
+</span>50 <span style=''>  def requestToCurlWithoutBody[F[_]](
+</span>51 <span style=''>      request: Request[F],
+</span>52 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean,
+</span>53 <span style=''>  ): String = {
+</span>54 <span style=''>    val params = </span><span style='background: #AEF1AE'>List(
+</span>55 <span style=''></span><span style='background: #AEF1AE'>      prepareMethodName(request.method),
+</span>56 <span style=''></span><span style='background: #AEF1AE'>      prepareUri(request.uri),
+</span>57 <span style=''></span><span style='background: #AEF1AE'>      prepareHeaders(request.headers, redactHeadersWhen),
+</span>58 <span style=''></span><span style='background: #AEF1AE'>    ).mkString</span><span style=''>
+</span>59 <span style=''>
+</span>60 <span style=''>    s&quot;curl$params&quot;
+</span>61 <span style=''>  }
+</span>62 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          28
+        </td>
+        <td>
+          16961
+        </td>
+        <td>
+          914
+          -
+          944
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.replaceAll
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          s.replaceAll(&quot;\'&quot;, &quot;\'\\\\\'\'&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          30
+        </td>
+        <td>
+          13051
+        </td>
+        <td>
+          978
+          -
+          987
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot; \\\n  &quot;
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          15685
+        </td>
+        <td>
+          1324
+          -
+          1530
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          headers.redactSensitive(redactHeadersWhen).headers.map[String](((header: org.http4s.Header.Raw) =&gt; (&quot;--header \'&quot;.+(CurlConverter.this.escapeQuotationMarks((&quot;&quot;.+(header.name).+(&quot;: &quot;).+(header.value): String))).+(&quot;\'&quot;): String))).mkString(CurlConverter.this.newline)
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          19404
+        </td>
+        <td>
+          1522
+          -
+          1529
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.internal.CurlConverter.newline
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CurlConverter.this.newline
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          20168
+        </td>
+        <td>
+          1565
+          -
+          1567
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          16190
+        </td>
+        <td>
+          1565
+          -
+          1567
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          18902
+        </td>
+        <td>
+          1573
+          -
+          1598
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          java.lang.String.+
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CurlConverter.this.newline.+(preparedHeaders)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          22607
+        </td>
+        <td>
+          1573
+          -
+          1598
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.+
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CurlConverter.this.newline.+(preparedHeaders)
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          22430
+        </td>
+        <td>
+          1540
+          -
+          1563
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          preparedHeaders.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          15365
+        </td>
+        <td>
+          1778
+          -
+          1792
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.method
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          request.method
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          13069
+        </td>
+        <td>
+          1760
+          -
+          1793
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.CurlConverter.prepareMethodName
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CurlConverter.this.prepareMethodName(request.method)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          15547
+        </td>
+        <td>
+          1801
+          -
+          1824
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.CurlConverter.prepareUri
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CurlConverter.this.prepareUri(request.uri)
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          19419
+        </td>
+        <td>
+          1812
+          -
+          1823
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.uri
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          request.uri
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          20553
+        </td>
+        <td>
+          1832
+          -
+          1882
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.CurlConverter.prepareHeaders
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          CurlConverter.this.prepareHeaders(request.headers, redactHeadersWhen)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          22451
+        </td>
+        <td>
+          1847
+          -
+          1862
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.headers
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          request.headers
+        </td>
+      </tr><tr>
+        <td>
+          58
+        </td>
+        <td>
+          16723
+        </td>
+        <td>
+          1748
+          -
+          1898
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          org.http4s.messagesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[String](CurlConverter.this.prepareMethodName(request.method), CurlConverter.this.prepareUri(request.uri), CurlConverter.this.prepareHeaders(request.headers, redactHeadersWhen)).mkString
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

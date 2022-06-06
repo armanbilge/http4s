@@ -1,0 +1,1634 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/headers/Range.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package headers
+</span>19 <span style=''>
+</span>20 <span style=''>import cats.data.NonEmptyList
+</span>21 <span style=''>import cats.parse.Numbers
+</span>22 <span style=''>import cats.parse.{Parser =&gt; P}
+</span>23 <span style=''>import cats.parse.{Parser0 =&gt; P0}
+</span>24 <span style=''>import org.http4s.internal.parsing.Rfc7230
+</span>25 <span style=''>import org.http4s.util.Renderable
+</span>26 <span style=''>import org.http4s.util.Writer
+</span>27 <span style=''>import org.typelevel.ci._
+</span>28 <span style=''>
+</span>29 <span style=''>// See https://datatracker.ietf.org/doc/html/rfc7233
+</span>30 <span style=''>
+</span>31 <span style=''>object Range {
+</span>32 <span style=''>  def apply(unit: RangeUnit, r1: SubRange, rs: SubRange*): Range =
+</span>33 <span style=''>    </span><span style='background: #AEF1AE'>Range(unit, NonEmptyList.of(r1, rs: _*))</span><span style=''>
+</span>34 <span style=''>
+</span>35 <span style=''>  def apply(r1: SubRange, rs: SubRange*): Range = </span><span style='background: #AEF1AE'>apply(RangeUnit.Bytes, r1, rs: _*)</span><span style=''>
+</span>36 <span style=''>
+</span>37 <span style=''>  def apply(begin: Long, end: Long): Range = </span><span style='background: #AEF1AE'>apply(SubRange(begin, Some(end)))</span><span style=''>
+</span>38 <span style=''>
+</span>39 <span style=''>  def apply(begin: Long): Range = </span><span style='background: #AEF1AE'>apply(SubRange(begin, None))</span><span style=''>
+</span>40 <span style=''>
+</span>41 <span style=''>  object SubRange {
+</span>42 <span style=''>    def apply(first: Long): SubRange = </span><span style='background: #AEF1AE'>SubRange(first, None)</span><span style=''>
+</span>43 <span style=''>    def apply(first: Long, second: Long): SubRange = </span><span style='background: #AEF1AE'>SubRange(first, Some(second))</span><span style=''>
+</span>44 <span style=''>  }
+</span>45 <span style=''>
+</span>46 <span style=''>  final case class SubRange(first: Long, second: Option[Long]) extends Renderable {
+</span>47 <span style=''>
+</span>48 <span style=''>    /** Base method for rendering this object efficiently */
+</span>49 <span style=''>    override def render(writer: Writer): writer.type = {
+</span>50 <span style=''>      </span><span style='background: #AEF1AE'>writer &lt;&lt; first</span><span style=''>
+</span>51 <span style=''>      // the trailing '-' is necessary unless this is a suffix range
+</span>52 <span style=''>      if (</span><span style='background: #AEF1AE'>first &gt;= 0</span><span style=''>)
+</span>53 <span style=''>        </span><span style='background: #AEF1AE'>writer &lt;&lt; '-'</span><span style=''>
+</span>54 <span style=''>      </span><span style='background: #AEF1AE'>second.foreach(writer &lt;&lt; _)</span><span style=''>
+</span>55 <span style=''>      writer
+</span>56 <span style=''>    }
+</span>57 <span style=''>  }
+</span>58 <span style=''>
+</span>59 <span style=''>  val parser: P0[Range] = {
+</span>60 <span style=''>    // https://datatracker.ietf.org/doc/html/rfc7233#section-3.1
+</span>61 <span style=''>
+</span>62 <span style=''>    def toLong(s: String): Option[Long] =
+</span>63 <span style=''>      try </span><span style='background: #AEF1AE'>Some(s.toLong)</span><span style=''>
+</span>64 <span style=''>      catch { case _: NumberFormatException =&gt; </span><span style='background: #F0ADAD'>None</span><span style=''> }
+</span>65 <span style=''>
+</span>66 <span style=''>    val nonNegativeLong = </span><span style='background: #AEF1AE'>Numbers.digits
+</span>67 <span style=''></span><span style='background: #AEF1AE'>      .mapFilter(toLong)</span><span style=''>
+</span>68 <span style=''>
+</span>69 <span style=''>    val negativeLong = </span><span style='background: #AEF1AE'>(P.char('-') ~ Numbers.digits).string
+</span>70 <span style=''></span><span style='background: #AEF1AE'>      .mapFilter(toLong)</span><span style=''>
+</span>71 <span style=''>
+</span>72 <span style=''>    // byte-range-spec = first-byte-pos &quot;-&quot; [ last-byte-pos ]
+</span>73 <span style=''>    val byteRangeSpec = </span><span style='background: #AEF1AE'>((nonNegativeLong &lt;* P.char('-')) ~ nonNegativeLong.?)
+</span>74 <span style=''></span><span style='background: #AEF1AE'>      .map { case (first, last) =&gt; SubRange(first, last) }</span><span style=''>
+</span>75 <span style=''>
+</span>76 <span style=''>    // suffix-byte-range-spec = &quot;-&quot; suffix-length
+</span>77 <span style=''>    val suffixByteRangeSpec = </span><span style='background: #AEF1AE'>negativeLong.map(SubRange(_))</span><span style=''>
+</span>78 <span style=''>
+</span>79 <span style=''>    // byte-range-set  = 1#( byte-range-spec / suffix-byte-range-spec )
+</span>80 <span style=''>    val byteRangeSet = </span><span style='background: #AEF1AE'>Rfc7230.headerRep1(byteRangeSpec.orElse(suffixByteRangeSpec))</span><span style=''>
+</span>81 <span style=''>
+</span>82 <span style=''>    // byte-ranges-specifier = bytes-unit &quot;=&quot; byte-range-set
+</span>83 <span style=''>    val byteRangesSpecifier =
+</span>84 <span style=''>      </span><span style='background: #AEF1AE'>((Rfc7230.token.map(RangeUnit(_)) &lt;* P.char('=')) ~ byteRangeSet)
+</span>85 <span style=''></span><span style='background: #AEF1AE'>        .map { case (unit, ranges) =&gt; Range(unit, ranges) }</span><span style=''>
+</span>86 <span style=''>
+</span>87 <span style=''>    // Range = byte-ranges-specifier / other-ranges-specifier
+</span>88 <span style=''>    // other types of ranges are not supported, `other-ranges-specifier` is ignored
+</span>89 <span style=''>    byteRangesSpecifier
+</span>90 <span style=''>  }
+</span>91 <span style=''>
+</span>92 <span style=''>  def parse(s: String): ParseResult[Range] =
+</span>93 <span style=''>    </span><span style='background: #AEF1AE'>ParseResult.fromParser(parser, &quot;Invalid Range header&quot;)(s)</span><span style=''>
+</span>94 <span style=''>
+</span>95 <span style=''>  implicit val headerInstance: Header[Range, Header.Single] =
+</span>96 <span style=''>    </span><span style='background: #AEF1AE'>Header.createRendered(
+</span>97 <span style=''></span><span style='background: #AEF1AE'>      ci&quot;Range&quot;,
+</span>98 <span style=''></span><span style='background: #AEF1AE'>      h =&gt;
+</span>99 <span style=''></span><span style='background: #AEF1AE'>        new Renderable {
+</span>100 <span style=''></span><span style='background: #AEF1AE'>          def render(writer: Writer): writer.type = {
+</span>101 <span style=''></span><span style='background: #AEF1AE'>            writer &lt;&lt; h.unit &lt;&lt; '=' &lt;&lt; h.ranges.head
+</span>102 <span style=''></span><span style='background: #AEF1AE'>            h.ranges.tail.foreach(writer &lt;&lt; ',' &lt;&lt; _)
+</span>103 <span style=''></span><span style='background: #AEF1AE'>            writer
+</span>104 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>105 <span style=''></span><span style='background: #AEF1AE'>        },
+</span>106 <span style=''></span><span style='background: #AEF1AE'>      parse,
+</span>107 <span style=''></span><span style='background: #AEF1AE'>    )</span><span style=''>
+</span>108 <span style=''>
+</span>109 <span style=''>}
+</span>110 <span style=''>
+</span>111 <span style=''>final case class Range(unit: RangeUnit, ranges: NonEmptyList[Range.SubRange])
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          16656
+        </td>
+        <td>
+          1027
+          -
+          1067
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.apply(unit, cats.data.NonEmptyList.of[org.http4s.headers.Range.SubRange](r1, (rs: _*)))
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          20465
+        </td>
+        <td>
+          1039
+          -
+          1066
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.of
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.NonEmptyList.of[org.http4s.headers.Range.SubRange](r1, (rs: _*))
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          23184
+        </td>
+        <td>
+          1125
+          -
+          1140
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.RangeUnit.Bytes
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          RangeUnit.Bytes
+        </td>
+      </tr><tr>
+        <td>
+          35
+        </td>
+        <td>
+          19066
+        </td>
+        <td>
+          1119
+          -
+          1153
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.apply(RangeUnit.Bytes, r1, (rs: _*))
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          15295
+        </td>
+        <td>
+          1222
+          -
+          1231
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](end)
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          13087
+        </td>
+        <td>
+          1206
+          -
+          1232
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.SubRange.apply(begin, scala.Some.apply[Long](end))
+        </td>
+      </tr><tr>
+        <td>
+          37
+        </td>
+        <td>
+          19585
+        </td>
+        <td>
+          1200
+          -
+          1233
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.apply(Range.this.SubRange.apply(begin, scala.Some.apply[Long](end)))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          20081
+        </td>
+        <td>
+          1269
+          -
+          1297
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.apply(Range.this.SubRange.apply(begin, scala.None))
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          22380
+        </td>
+        <td>
+          1275
+          -
+          1296
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.SubRange.apply(begin, scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          15874
+        </td>
+        <td>
+          1291
+          -
+          1295
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          22793
+        </td>
+        <td>
+          1358
+          -
+          1379
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.SubRange.apply(first, scala.None)
+        </td>
+      </tr><tr>
+        <td>
+          42
+        </td>
+        <td>
+          16351
+        </td>
+        <td>
+          1374
+          -
+          1378
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          15314
+        </td>
+        <td>
+          1433
+          -
+          1462
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.SubRange.apply(first, scala.Some.apply[Long](second))
+        </td>
+      </tr><tr>
+        <td>
+          43
+        </td>
+        <td>
+          19080
+        </td>
+        <td>
+          1449
+          -
+          1461
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](second)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          12975
+        </td>
+        <td>
+          1687
+          -
+          1692
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.first
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          SubRange.this.first
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          19603
+        </td>
+        <td>
+          1677
+          -
+          1692
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(SubRange.this.first)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          16226
+        </td>
+        <td>
+          1768
+          -
+          1768
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          15588
+        </td>
+        <td>
+          1772
+          -
+          1782
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          SubRange.this.first.&gt;=(0)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          23162
+        </td>
+        <td>
+          1768
+          -
+          1768
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          20093
+        </td>
+        <td>
+          1792
+          -
+          1805
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;('-')
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          22252
+        </td>
+        <td>
+          1792
+          -
+          1805
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;('-')
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          18818
+        </td>
+        <td>
+          1827
+          -
+          1838
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(x$1)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          15177
+        </td>
+        <td>
+          1812
+          -
+          1839
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.foreach
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          SubRange.this.second.foreach[org.http4s.util.Writer](((x$1: Long) =&gt; writer.&lt;&lt;(x$1)))
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          16094
+        </td>
+        <td>
+          2010
+          -
+          2024
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](scala.Predef.augmentString(s).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          12989
+        </td>
+        <td>
+          2015
+          -
+          2023
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.toLong
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.augmentString(s).toLong
+        </td>
+      </tr><tr>
+        <td>
+          63
+        </td>
+        <td>
+          19470
+        </td>
+        <td>
+          2010
+          -
+          2024
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[Long](scala.Predef.augmentString(s).toLong)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          22002
+        </td>
+        <td>
+          2072
+          -
+          2076
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          18167
+        </td>
+        <td>
+          2138
+          -
+          2144
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.toLong
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          toLong(s)
+        </td>
+      </tr><tr>
+        <td>
+          67
+        </td>
+        <td>
+          16243
+        </td>
+        <td>
+          2106
+          -
+          2145
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Numbers.digits.mapFilter[Long](((s: String) =&gt; toLong(s)))
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          23179
+        </td>
+        <td>
+          2178
+          -
+          2181
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          '-'
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          19321
+        </td>
+        <td>
+          2185
+          -
+          2199
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Numbers.digits
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Numbers.digits
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          15287
+        </td>
+        <td>
+          2225
+          -
+          2231
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.toLong
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          toLong(s)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          12892
+        </td>
+        <td>
+          2170
+          -
+          2232
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.mapFilter
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('-').~[String](cats.parse.Numbers.digits).string.mapFilter[Long](((s: String) =&gt; toLong(s)))
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          16112
+        </td>
+        <td>
+          2356
+          -
+          2373
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.parse.Parser0.?
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          nonNegativeLong.?
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          19879
+        </td>
+        <td>
+          2341
+          -
+          2352
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('-')
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          18538
+        </td>
+        <td>
+          2320
+          -
+          2433
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          nonNegativeLong.&lt;*[Unit](cats.parse.Parser.char('-')).~[Option[Long]](nonNegativeLong.?).map[org.http4s.headers.Range.SubRange](((x0$1: (Long, Option[Long])) =&gt; x0$1 match {
+  case (_1: Long, _2: Option[Long]): (Long, Option[Long])((first @ _), (last @ _)) =&gt; Range.this.SubRange.apply(first, last)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          22520
+        </td>
+        <td>
+          2410
+          -
+          2431
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.SubRange.apply(first, last)
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          23071
+        </td>
+        <td>
+          2515
+          -
+          2544
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          negativeLong.map[org.http4s.headers.Range.SubRange](((x$2: Long) =&gt; Range.this.SubRange.apply(x$2)))
+        </td>
+      </tr><tr>
+        <td>
+          77
+        </td>
+        <td>
+          16260
+        </td>
+        <td>
+          2532
+          -
+          2543
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.SubRange.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.SubRange.apply(x$2)
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          15148
+        </td>
+        <td>
+          2641
+          -
+          2702
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.parsing.Rfc7230.headerRep1
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.headerRep1[org.http4s.headers.Range.SubRange](byteRangeSpec.orElse[org.http4s.headers.Range.SubRange](suffixByteRangeSpec))
+        </td>
+      </tr><tr>
+        <td>
+          80
+        </td>
+        <td>
+          19338
+        </td>
+        <td>
+          2660
+          -
+          2701
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.orElse
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          byteRangeSpec.orElse[org.http4s.headers.Range.SubRange](suffixByteRangeSpec)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          13245
+        </td>
+        <td>
+          2821
+          -
+          2833
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.RangeUnit.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          RangeUnit.apply(x$3)
+        </td>
+      </tr><tr>
+        <td>
+          84
+        </td>
+        <td>
+          19891
+        </td>
+        <td>
+          2838
+          -
+          2849
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.char
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.parse.Parser.char('=')
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          15993
+        </td>
+        <td>
+          2905
+          -
+          2924
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.apply
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.apply(unit, ranges)
+        </td>
+      </tr><tr>
+        <td>
+          85
+        </td>
+        <td>
+          22244
+        </td>
+        <td>
+          2801
+          -
+          2926
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.parse.Parser.map
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.internal.parsing.Rfc7230.token.map[org.http4s.RangeUnit](((x$3: String) =&gt; RangeUnit.apply(x$3))).&lt;*[Unit](cats.parse.Parser.char('=')).~[cats.data.NonEmptyList[org.http4s.headers.Range.SubRange]](byteRangeSet).map[org.http4s.headers.Range](((x0$2: (org.http4s.RangeUnit, cats.data.NonEmptyList[org.http4s.headers.Range.SubRange])) =&gt; x0$2 match {
+  case (_1: org.http4s.RangeUnit, _2: cats.data.NonEmptyList[org.http4s.headers.Range.SubRange]): (org.http4s.RangeUnit, cats.data.NonEmptyList[org.http4s.headers.Range.SubRange])((unit @ _), (ranges @ _)) =&gt; Range.apply(unit, ranges)
+}))
+        </td>
+      </tr><tr>
+        <td>
+          93
+        </td>
+        <td>
+          18400
+        </td>
+        <td>
+          3152
+          -
+          3209
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.ParseResult.fromParser
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ParseResult.fromParser[org.http4s.headers.Range](Range.this.parser, &quot;Invalid Range header&quot;)(s)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          21361
+        </td>
+        <td>
+          3298
+          -
+          3298
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.util.Renderable]
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          19484
+        </td>
+        <td>
+          3277
+          -
+          3574
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.createRendered
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Header.createRendered[org.http4s.headers.Range, org.http4s.Header.Single, org.http4s.util.Renderable](org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Range&quot;)).ci(), ((h: org.http4s.headers.Range) =&gt; {
+  final class $anon extends AnyRef with org.http4s.util.Renderable {
+    def &lt;init&gt;(): &lt;$anon: org.http4s.util.Renderable&gt; = {
+      $anon.super.&lt;init&gt;();
+      ()
+    };
+    def render(writer: org.http4s.util.Writer): writer.type = {
+      writer.&lt;&lt;[org.http4s.RangeUnit](h.unit)(util.this.Renderable.renderableInst[org.http4s.RangeUnit]).&lt;&lt;('=').&lt;&lt;[org.http4s.headers.Range.SubRange](h.ranges.head)(util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange]);
+      h.ranges.tail.foreach[org.http4s.util.Writer](((x$4: org.http4s.headers.Range.SubRange) =&gt; writer.&lt;&lt;(',').&lt;&lt;[org.http4s.headers.Range.SubRange](x$4)(util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange])));
+      writer
+    }
+  };
+  new $anon()
+}), ((s: String) =&gt; Range.this.parse(s)))(util.this.Renderable.renderableInst[org.http4s.util.Renderable])
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          16220
+        </td>
+        <td>
+          3306
+          -
+          3315
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.ci.CIStringSyntax.ci
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.ci.`package`.CIStringSyntax(scala.StringContext.apply(&quot;Range&quot;)).ci()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          18987
+        </td>
+        <td>
+          3336
+          -
+          3339
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.$anon.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          16008
+        </td>
+        <td>
+          3419
+          -
+          3459
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;[org.http4s.RangeUnit](h.unit)(util.this.Renderable.renderableInst[org.http4s.RangeUnit]).&lt;&lt;('=').&lt;&lt;[org.http4s.headers.Range.SubRange](h.ranges.head)(util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange])
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          23083
+        </td>
+        <td>
+          3429
+          -
+          3435
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Range.unit
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.unit
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          21770
+        </td>
+        <td>
+          3446
+          -
+          3459
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyList.head
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.ranges.head
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          19213
+        </td>
+        <td>
+          3426
+          -
+          3426
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.RangeUnit]
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          15169
+        </td>
+        <td>
+          3439
+          -
+          3442
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          '='
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          19463
+        </td>
+        <td>
+          3443
+          -
+          3443
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange]
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          22674
+        </td>
+        <td>
+          3472
+          -
+          3513
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.immutable.List.foreach
+        </td>
+        <td>
+          org.http4s.server.staticcontent.fileservicesuite,org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          h.ranges.tail.foreach[org.http4s.util.Writer](((x$4: org.http4s.headers.Range.SubRange) =&gt; writer.&lt;&lt;(',').&lt;&lt;[org.http4s.headers.Range.SubRange](x$4)(util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange])))
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          22141
+        </td>
+        <td>
+          3504
+          -
+          3507
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          ','
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          16240
+        </td>
+        <td>
+          3494
+          -
+          3512
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.util.Writer.&lt;&lt;
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          writer.&lt;&lt;(',').&lt;&lt;[org.http4s.headers.Range.SubRange](x$4)(util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange])
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          18422
+        </td>
+        <td>
+          3508
+          -
+          3508
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.util.Renderable.renderableInst
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          util.this.Renderable.renderableInst[org.http4s.headers.Range.SubRange]
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          15049
+        </td>
+        <td>
+          3562
+          -
+          3567
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Range.parse
+        </td>
+        <td>
+          org.http4s.parser.rangeparsersuite
+        </td>
+        <td style="background: #AEF1AE">
+          Range.this.parse(s)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

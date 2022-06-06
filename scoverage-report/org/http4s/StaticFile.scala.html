@@ -1,0 +1,5644 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/StaticFile.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.ApplicativeThrow
+</span>20 <span style=''>import cats.Functor
+</span>21 <span style=''>import cats.MonadError
+</span>22 <span style=''>import cats.MonadThrow
+</span>23 <span style=''>import cats.Semigroup
+</span>24 <span style=''>import cats.data.NonEmptyList
+</span>25 <span style=''>import cats.data.OptionT
+</span>26 <span style=''>import cats.effect.Sync
+</span>27 <span style=''>import cats.effect.SyncIO
+</span>28 <span style=''>import cats.syntax.all._
+</span>29 <span style=''>import fs2.Stream
+</span>30 <span style=''>import fs2.io._
+</span>31 <span style=''>import fs2.io.file.Files
+</span>32 <span style=''>import fs2.io.file.Path
+</span>33 <span style=''>import org.http4s.Status.NotModified
+</span>34 <span style=''>import org.http4s.headers._
+</span>35 <span style=''>import org.http4s.syntax.header._
+</span>36 <span style=''>import org.log4s.getLogger
+</span>37 <span style=''>import org.typelevel.vault._
+</span>38 <span style=''>
+</span>39 <span style=''>import java.io._
+</span>40 <span style=''>import java.net.URL
+</span>41 <span style=''>
+</span>42 <span style=''>object StaticFile {
+</span>43 <span style=''>  private[this] val logger = getLogger
+</span>44 <span style=''>
+</span>45 <span style=''>  val DefaultBufferSize = </span><span style='background: #AEF1AE'>10240</span><span style=''>
+</span>46 <span style=''>
+</span>47 <span style=''>  def fromString[F[_]: Files: MonadThrow](
+</span>48 <span style=''>      url: String,
+</span>49 <span style=''>      req: Option[Request[F]] = None,
+</span>50 <span style=''>  ): OptionT[F, Response[F]] =
+</span>51 <span style=''>    </span><span style='background: #F0ADAD'>fromPath(Path(url), req)</span><span style=''>
+</span>52 <span style=''>
+</span>53 <span style=''>  def fromResource[F[_]: Sync](
+</span>54 <span style=''>      name: String,
+</span>55 <span style=''>      req: Option[Request[F]] = None,
+</span>56 <span style=''>      preferGzipped: Boolean = false,
+</span>57 <span style=''>      classloader: Option[ClassLoader] = None,
+</span>58 <span style=''>  ): OptionT[F, Response[F]] = {
+</span>59 <span style=''>    val loader = </span><span style='background: #AEF1AE'>classloader.getOrElse(getClass.getClassLoader)</span><span style=''>
+</span>60 <span style=''>
+</span>61 <span style=''>    val acceptEncodingHeader: Option[`Accept-Encoding`] =
+</span>62 <span style=''>      </span><span style='background: #AEF1AE'>req.flatMap(_.headers.get[`Accept-Encoding`])</span><span style=''>
+</span>63 <span style=''>    val tryGzipped =
+</span>64 <span style=''>      </span><span style='background: #AEF1AE'>preferGzipped &amp;&amp; acceptEncodingHeader.exists { acceptEncoding =&gt;
+</span>65 <span style=''></span><span style='background: #AEF1AE'>        acceptEncoding.satisfiedBy(ContentCoding.gzip) || </span><span style='background: #F0ADAD'>acceptEncoding.satisfiedBy(
+</span>66 <span style=''></span><span style='background: #F0ADAD'>          ContentCoding.`x-gzip`
+</span>67 <span style=''></span><span style='background: #F0ADAD'>        )</span><span style='background: #AEF1AE'>
+</span>68 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>69 <span style=''>    val normalizedName = </span><span style='background: #AEF1AE'>name.split(&quot;/&quot;).filter(_.nonEmpty).mkString(&quot;/&quot;)</span><span style=''>
+</span>70 <span style=''>
+</span>71 <span style=''>    def getResource(name: String) =
+</span>72 <span style=''>      </span><span style='background: #AEF1AE'>OptionT(Sync[F].blocking(Option(loader.getResource(name))))</span><span style=''>
+</span>73 <span style=''>
+</span>74 <span style=''>    val gzUrl: OptionT[F, URL] =
+</span>75 <span style=''>      if (tryGzipped) </span><span style='background: #AEF1AE'>getResource(normalizedName + &quot;.gz&quot;)</span><span style=''> else </span><span style='background: #AEF1AE'>OptionT.none</span><span style=''>
+</span>76 <span style=''>
+</span>77 <span style=''>    </span><span style='background: #AEF1AE'>gzUrl
+</span>78 <span style=''></span><span style='background: #AEF1AE'>      .flatMap { url =&gt;
+</span>79 <span style=''></span><span style='background: #AEF1AE'>        fromURL(url, req).map {
+</span>80 <span style=''></span><span style='background: #AEF1AE'>          _.removeHeader[`Content-Type`]
+</span>81 <span style=''></span><span style='background: #AEF1AE'>            .putHeaders(
+</span>82 <span style=''></span><span style='background: #AEF1AE'>              `Content-Encoding`(ContentCoding.gzip),
+</span>83 <span style=''></span><span style='background: #AEF1AE'>              nameToContentType(normalizedName), // Guess content type from the name without &quot;.gz&quot;
+</span>84 <span style=''></span><span style='background: #AEF1AE'>            )
+</span>85 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>86 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>87 <span style=''></span><span style='background: #AEF1AE'>      .orElse(
+</span>88 <span style=''></span><span style='background: #AEF1AE'>        getResource(normalizedName)
+</span>89 <span style=''></span><span style='background: #AEF1AE'>          .flatMap(fromURL(_, req))
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      )</span><span style=''>
+</span>91 <span style=''>  }
+</span>92 <span style=''>
+</span>93 <span style=''>  def fromURL[F[_]](url: URL, req: Option[Request[F]] = None)(implicit
+</span>94 <span style=''>      F: Sync[F]
+</span>95 <span style=''>  ): OptionT[F, Response[F]] = {
+</span>96 <span style=''>    val fileUrl = </span><span style='background: #AEF1AE'>url.getFile()</span><span style=''>
+</span>97 <span style=''>    val file = </span><span style='background: #AEF1AE'>new File(fileUrl)</span><span style=''>
+</span>98 <span style=''>    </span><span style='background: #AEF1AE'>OptionT.apply(F.defer {
+</span>99 <span style=''></span><span style='background: #AEF1AE'>      if (url.getProtocol === &quot;file&quot; &amp;&amp; file.isDirectory())
+</span>100 <span style=''></span><span style='background: #AEF1AE'>        F.pure(none[Response[F]])
+</span>101 <span style=''></span><span style='background: #AEF1AE'>      else {
+</span>102 <span style=''></span><span style='background: #AEF1AE'>        val urlConn = url.openConnection
+</span>103 <span style=''></span><span style='background: #AEF1AE'>        val lastmod = HttpDate.fromEpochSecond(urlConn.getLastModified / 1000).toOption
+</span>104 <span style=''></span><span style='background: #AEF1AE'>        val ifModifiedSince: Option[`If-Modified-Since`] =
+</span>105 <span style=''></span><span style='background: #AEF1AE'>          req.flatMap(_.headers.get[`If-Modified-Since`])
+</span>106 <span style=''></span><span style='background: #AEF1AE'>        val expired = (ifModifiedSince, lastmod).mapN(_.date &lt; _).getOrElse(true)
+</span>107 <span style=''></span><span style='background: #AEF1AE'>
+</span>108 <span style=''></span><span style='background: #AEF1AE'>        if (expired) {
+</span>109 <span style=''></span><span style='background: #AEF1AE'>          val len = urlConn.getContentLengthLong
+</span>110 <span style=''></span><span style='background: #AEF1AE'>          val headers = Headers(
+</span>111 <span style=''></span><span style='background: #AEF1AE'>            lastmod.map(`Last-Modified`(_)),
+</span>112 <span style=''></span><span style='background: #AEF1AE'>            nameToContentType(url.getPath),
+</span>113 <span style=''></span><span style='background: #AEF1AE'>            if (len &gt;= 0) `Content-Length`.unsafeFromLong(len)
+</span>114 <span style=''></span><span style='background: #AEF1AE'>            else `Transfer-Encoding`(TransferCoding.chunked.pure[NonEmptyList]),
+</span>115 <span style=''></span><span style='background: #AEF1AE'>          )
+</span>116 <span style=''></span><span style='background: #AEF1AE'>
+</span>117 <span style=''></span><span style='background: #AEF1AE'>          F.blocking(urlConn.getInputStream)
+</span>118 <span style=''></span><span style='background: #AEF1AE'>            .redeem(
+</span>119 <span style=''></span><span style='background: #AEF1AE'>              recover = {
+</span>120 <span style=''></span><span style='background: #AEF1AE'>                case _: FileNotFoundException =&gt; None
+</span>121 <span style=''></span><span style='background: #AEF1AE'>                case other =&gt; throw other
+</span>122 <span style=''></span><span style='background: #AEF1AE'>              },
+</span>123 <span style=''></span><span style='background: #AEF1AE'>              f = { inputStream =&gt;
+</span>124 <span style=''></span><span style='background: #AEF1AE'>                Some(
+</span>125 <span style=''></span><span style='background: #AEF1AE'>                  Response(
+</span>126 <span style=''></span><span style='background: #AEF1AE'>                    headers = headers,
+</span>127 <span style=''></span><span style='background: #AEF1AE'>                    body = readInputStream[F](F.pure(inputStream), DefaultBufferSize),
+</span>128 <span style=''></span><span style='background: #AEF1AE'>                  )
+</span>129 <span style=''></span><span style='background: #AEF1AE'>                )
+</span>130 <span style=''></span><span style='background: #AEF1AE'>              },
+</span>131 <span style=''></span><span style='background: #AEF1AE'>            )
+</span>132 <span style=''></span><span style='background: #AEF1AE'>        } else
+</span>133 <span style=''></span><span style='background: #AEF1AE'>          F.blocking(urlConn.getInputStream.close())
+</span>134 <span style=''></span><span style='background: #AEF1AE'>            .handleError(_ =&gt; ())
+</span>135 <span style=''></span><span style='background: #AEF1AE'>            .as(Some(Response(NotModified)))
+</span>136 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>137 <span style=''></span><span style='background: #AEF1AE'>    })</span><span style=''>
+</span>138 <span style=''>  }
+</span>139 <span style=''>
+</span>140 <span style=''>  @deprecated(&quot;Use calculateETag&quot;, &quot;0.23.5&quot;)
+</span>141 <span style=''>  def calcETag[F[_]: Files: Functor]: File =&gt; F[String] =
+</span>142 <span style=''>    f =&gt;
+</span>143 <span style=''>      </span><span style='background: #F0ADAD'>Files[F]
+</span>144 <span style=''></span><span style='background: #F0ADAD'>        .isRegularFile(Path.fromNioPath(f.toPath()))
+</span>145 <span style=''></span><span style='background: #F0ADAD'>        .map(isFile =&gt;
+</span>146 <span style=''></span><span style='background: #F0ADAD'>          if (isFile) s&quot;${f.lastModified().toHexString}-${f.length().toHexString}&quot; else &quot;&quot;
+</span>147 <span style=''></span><span style='background: #F0ADAD'>        )</span><span style=''>
+</span>148 <span style=''>
+</span>149 <span style=''>  def calculateETag[F[_]: Files: ApplicativeThrow]: Path =&gt; F[String] =
+</span>150 <span style=''>    f =&gt;
+</span>151 <span style=''>      </span><span style='background: #AEF1AE'>Files[F]
+</span>152 <span style=''></span><span style='background: #AEF1AE'>        .getBasicFileAttributes(f, followLinks = true)
+</span>153 <span style=''></span><span style='background: #AEF1AE'>        .map(attr =&gt;
+</span>154 <span style=''></span><span style='background: #AEF1AE'>          if (attr.isRegularFile)
+</span>155 <span style=''></span><span style='background: #AEF1AE'>            s&quot;${attr.lastModifiedTime.toMillis.toHexString}-${attr.size.toHexString}&quot;
+</span>156 <span style=''></span><span style='background: #AEF1AE'>          else </span><span style='background: #F0ADAD'>&quot;&quot;</span><span style='background: #AEF1AE'>
+</span>157 <span style=''></span><span style='background: #AEF1AE'>        )</span><span style=''>
+</span>158 <span style=''>
+</span>159 <span style=''>  @deprecated(&quot;Use fromPath&quot;, &quot;0.23.5&quot;)
+</span>160 <span style=''>  def fromFile[F[_]: Files: MonadThrow](
+</span>161 <span style=''>      f: File,
+</span>162 <span style=''>      req: Option[Request[F]] = None,
+</span>163 <span style=''>  ): OptionT[F, Response[F]] =
+</span>164 <span style=''>    </span><span style='background: #F0ADAD'>fromPath(Path.fromNioPath(f.toPath()), DefaultBufferSize, req, calculateETag[F])</span><span style=''>
+</span>165 <span style=''>
+</span>166 <span style=''>  def fromPath[F[_]: Files: MonadThrow](
+</span>167 <span style=''>      f: Path,
+</span>168 <span style=''>      req: Option[Request[F]] = None,
+</span>169 <span style=''>  ): OptionT[F, Response[F]] =
+</span>170 <span style=''>    </span><span style='background: #AEF1AE'>fromPath(f, DefaultBufferSize, req, calculateETag[F])</span><span style=''>
+</span>171 <span style=''>
+</span>172 <span style=''>  @deprecated(&quot;Use fromPath&quot;, &quot;0.23.5&quot;)
+</span>173 <span style=''>  def fromFile[F[_]: Files: MonadThrow](
+</span>174 <span style=''>      f: File,
+</span>175 <span style=''>      req: Option[Request[F]],
+</span>176 <span style=''>      etagCalculator: File =&gt; F[String],
+</span>177 <span style=''>  ): OptionT[F, Response[F]] =
+</span>178 <span style=''>    </span><span style='background: #F0ADAD'>fromPath(
+</span>179 <span style=''></span><span style='background: #F0ADAD'>      Path.fromNioPath(f.toPath()),
+</span>180 <span style=''></span><span style='background: #F0ADAD'>      DefaultBufferSize,
+</span>181 <span style=''></span><span style='background: #F0ADAD'>      req,
+</span>182 <span style=''></span><span style='background: #F0ADAD'>      etagCalculator.compose(_.toNioPath.toFile()),
+</span>183 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>184 <span style=''>
+</span>185 <span style=''>  def fromPath[F[_]: Files: MonadThrow](
+</span>186 <span style=''>      f: Path,
+</span>187 <span style=''>      req: Option[Request[F]],
+</span>188 <span style=''>      etagCalculator: Path =&gt; F[String],
+</span>189 <span style=''>  ): OptionT[F, Response[F]] =
+</span>190 <span style=''>    </span><span style='background: #F0ADAD'>fromPath(f, DefaultBufferSize, req, etagCalculator)</span><span style=''>
+</span>191 <span style=''>
+</span>192 <span style=''>  @deprecated(&quot;Use fromPath&quot;, &quot;0.23.5&quot;)
+</span>193 <span style=''>  def fromFile[F[_]: Files: MonadThrow](
+</span>194 <span style=''>      f: File,
+</span>195 <span style=''>      buffsize: Int,
+</span>196 <span style=''>      req: Option[Request[F]],
+</span>197 <span style=''>      etagCalculator: File =&gt; F[String],
+</span>198 <span style=''>  ): OptionT[F, Response[F]] =
+</span>199 <span style=''>    </span><span style='background: #F0ADAD'>fromPath(
+</span>200 <span style=''></span><span style='background: #F0ADAD'>      Path.fromNioPath(f.toPath()),
+</span>201 <span style=''></span><span style='background: #F0ADAD'>      0,
+</span>202 <span style=''></span><span style='background: #F0ADAD'>      f.length(),
+</span>203 <span style=''></span><span style='background: #F0ADAD'>      buffsize,
+</span>204 <span style=''></span><span style='background: #F0ADAD'>      req,
+</span>205 <span style=''></span><span style='background: #F0ADAD'>      etagCalculator.compose(_.toNioPath.toFile()),
+</span>206 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>207 <span style=''>
+</span>208 <span style=''>  def fromPath[F[_]: Files: MonadThrow](
+</span>209 <span style=''>      f: Path,
+</span>210 <span style=''>      buffsize: Int,
+</span>211 <span style=''>      req: Option[Request[F]],
+</span>212 <span style=''>      etagCalculator: Path =&gt; F[String],
+</span>213 <span style=''>  ): OptionT[F, Response[F]] =
+</span>214 <span style=''>    </span><span style='background: #AEF1AE'>OptionT
+</span>215 <span style=''></span><span style='background: #AEF1AE'>      .liftF(Files[F].getBasicFileAttributes(f, followLinks = true).map(_.size))
+</span>216 <span style=''></span><span style='background: #AEF1AE'>      .flatMap { size =&gt;
+</span>217 <span style=''></span><span style='background: #AEF1AE'>        fromPath(f, 0, size, buffsize, req, etagCalculator)
+</span>218 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>219 <span style=''></span><span style='background: #AEF1AE'>      .recoverWith { case _: fs2.io.file.NoSuchFileException =&gt;
+</span>220 <span style=''></span><span style='background: #AEF1AE'>        OptionT.none
+</span>221 <span style=''></span><span style='background: #AEF1AE'>      }</span><span style=''>
+</span>222 <span style=''>
+</span>223 <span style=''>  @deprecated(&quot;Use fromPath&quot;, &quot;0.23.5&quot;)
+</span>224 <span style=''>  def fromFile[F[_]: Files](
+</span>225 <span style=''>      f: File,
+</span>226 <span style=''>      start: Long,
+</span>227 <span style=''>      end: Long,
+</span>228 <span style=''>      buffsize: Int,
+</span>229 <span style=''>      req: Option[Request[F]],
+</span>230 <span style=''>      etagCalculator: File =&gt; F[String],
+</span>231 <span style=''>  )(implicit
+</span>232 <span style=''>      F: MonadError[F, Throwable]
+</span>233 <span style=''>  ): OptionT[F, Response[F]] =
+</span>234 <span style=''>    </span><span style='background: #F0ADAD'>fromPath(
+</span>235 <span style=''></span><span style='background: #F0ADAD'>      Path.fromNioPath(f.toPath()),
+</span>236 <span style=''></span><span style='background: #F0ADAD'>      start,
+</span>237 <span style=''></span><span style='background: #F0ADAD'>      end,
+</span>238 <span style=''></span><span style='background: #F0ADAD'>      buffsize,
+</span>239 <span style=''></span><span style='background: #F0ADAD'>      req,
+</span>240 <span style=''></span><span style='background: #F0ADAD'>      etagCalculator.compose(_.toNioPath.toFile()),
+</span>241 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>242 <span style=''>
+</span>243 <span style=''>  def fromPath[F[_]: Files](
+</span>244 <span style=''>      f: Path,
+</span>245 <span style=''>      start: Long,
+</span>246 <span style=''>      end: Long,
+</span>247 <span style=''>      buffsize: Int,
+</span>248 <span style=''>      req: Option[Request[F]],
+</span>249 <span style=''>      etagCalculator: Path =&gt; F[String],
+</span>250 <span style=''>  )(implicit
+</span>251 <span style=''>      F: MonadError[F, Throwable]
+</span>252 <span style=''>  ): OptionT[F, Response[F]] =
+</span>253 <span style=''>    </span><span style='background: #AEF1AE'>OptionT(for {
+</span>254 <span style=''></span><span style='background: #AEF1AE'>      etagCalc &lt;- etagCalculator(f).map(et =&gt; ETag(et))
+</span>255 <span style=''></span><span style='background: #AEF1AE'>      res &lt;- Files[F].isRegularFile(f).flatMap[Option[Response[F]]] { isFile =&gt;
+</span>256 <span style=''></span><span style='background: #AEF1AE'>        if (isFile) {
+</span>257 <span style=''></span><span style='background: #AEF1AE'>          if (start &gt;= 0 &amp;&amp; end &gt;= start &amp;&amp; buffsize &gt; 0) {
+</span>258 <span style=''></span><span style='background: #AEF1AE'>            Files[F]
+</span>259 <span style=''></span><span style='background: #AEF1AE'>              .getBasicFileAttributes(f, followLinks = true)
+</span>260 <span style=''></span><span style='background: #AEF1AE'>              .flatMap { attr =&gt;
+</span>261 <span style=''></span><span style='background: #AEF1AE'>                val lastModified =
+</span>262 <span style=''></span><span style='background: #AEF1AE'>                  HttpDate.fromEpochSecond(attr.lastModifiedTime.toSeconds).toOption
+</span>263 <span style=''></span><span style='background: #AEF1AE'>
+</span>264 <span style=''></span><span style='background: #AEF1AE'>                F.pure(notModified(req, etagCalc, lastModified).orElse {
+</span>265 <span style=''></span><span style='background: #AEF1AE'>                  val (body, contentLength) =
+</span>266 <span style=''></span><span style='background: #AEF1AE'>                    if (attr.size &lt; end) (Stream.empty, 0L)
+</span>267 <span style=''></span><span style='background: #AEF1AE'>                    else (fileToBody[F](f, start, end), end - start)
+</span>268 <span style=''></span><span style='background: #AEF1AE'>
+</span>269 <span style=''></span><span style='background: #AEF1AE'>                  val contentType = nameToContentType(f.fileName.toString)
+</span>270 <span style=''></span><span style='background: #AEF1AE'>                  val hs =
+</span>271 <span style=''></span><span style='background: #AEF1AE'>                    Headers(
+</span>272 <span style=''></span><span style='background: #AEF1AE'>                      lastModified.map(`Last-Modified`(_)),
+</span>273 <span style=''></span><span style='background: #AEF1AE'>                      `Content-Length`.fromLong(contentLength).toOption,
+</span>274 <span style=''></span><span style='background: #AEF1AE'>                      contentType,
+</span>275 <span style=''></span><span style='background: #AEF1AE'>                      etagCalc,
+</span>276 <span style=''></span><span style='background: #AEF1AE'>                    )
+</span>277 <span style=''></span><span style='background: #AEF1AE'>
+</span>278 <span style=''></span><span style='background: #AEF1AE'>                  val r = Response(
+</span>279 <span style=''></span><span style='background: #AEF1AE'>                    headers = hs,
+</span>280 <span style=''></span><span style='background: #AEF1AE'>                    body = body,
+</span>281 <span style=''></span><span style='background: #AEF1AE'>                    attributes = Vault.empty.insert(staticPathKey, f),
+</span>282 <span style=''></span><span style='background: #AEF1AE'>                  )
+</span>283 <span style=''></span><span style='background: #AEF1AE'>
+</span>284 <span style=''></span><span style='background: #AEF1AE'>                  logger.trace(s&quot;Static file generated response: $r&quot;)
+</span>285 <span style=''></span><span style='background: #AEF1AE'>                  r.some
+</span>286 <span style=''></span><span style='background: #AEF1AE'>                })
+</span>287 <span style=''></span><span style='background: #AEF1AE'>              }
+</span>288 <span style=''></span><span style='background: #AEF1AE'>          } else {
+</span>289 <span style=''></span><span style='background: #AEF1AE'>            </span><span style='background: #F0ADAD'>F.raiseError[Option[Response[F]]](
+</span>290 <span style=''></span><span style='background: #F0ADAD'>              new IllegalArgumentException(
+</span>291 <span style=''></span><span style='background: #F0ADAD'>                s&quot;requirement failed: start: $start, end: $end, buffsize: $buffsize&quot;
+</span>292 <span style=''></span><span style='background: #F0ADAD'>              )
+</span>293 <span style=''></span><span style='background: #F0ADAD'>            )</span><span style='background: #AEF1AE'>
+</span>294 <span style=''></span><span style='background: #AEF1AE'>          }
+</span>295 <span style=''></span><span style='background: #AEF1AE'>
+</span>296 <span style=''></span><span style='background: #AEF1AE'>        } else {
+</span>297 <span style=''></span><span style='background: #AEF1AE'>          </span><span style='background: #F0ADAD'>F.pure(none[Response[F]])</span><span style='background: #AEF1AE'>
+</span>298 <span style=''></span><span style='background: #AEF1AE'>        }
+</span>299 <span style=''></span><span style='background: #AEF1AE'>
+</span>300 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>301 <span style=''></span><span style='background: #AEF1AE'>    } yield res)</span><span style=''>
+</span>302 <span style=''>
+</span>303 <span style=''>  private def notModified[F[_]](
+</span>304 <span style=''>      req: Option[Request[F]],
+</span>305 <span style=''>      etagCalc: ETag,
+</span>306 <span style=''>      lastModified: Option[HttpDate],
+</span>307 <span style=''>  ): Option[Response[F]] = {
+</span>308 <span style=''>    implicit val conjunction: Semigroup[Boolean] = </span><span style='background: #AEF1AE'>new</span><span style=''> Semigroup[Boolean] {
+</span>309 <span style=''>      def combine(x: Boolean, y: Boolean): Boolean = </span><span style='background: #AEF1AE'>x &amp;&amp; y</span><span style=''>
+</span>310 <span style=''>    }
+</span>311 <span style=''>
+</span>312 <span style=''>    </span><span style='background: #AEF1AE'>List(etagMatch(req, etagCalc), notModifiedSince(req, lastModified)).combineAll
+</span>313 <span style=''></span><span style='background: #AEF1AE'>      .filter(identity)
+</span>314 <span style=''></span><span style='background: #AEF1AE'>      .map(_ =&gt; Response[F](NotModified))</span><span style=''>
+</span>315 <span style=''>  }
+</span>316 <span style=''>
+</span>317 <span style=''>  private def etagMatch[F[_]](req: Option[Request[F]], etagCalc: ETag) =
+</span>318 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>319 <span style=''></span><span style='background: #AEF1AE'>      r &lt;- req
+</span>320 <span style=''></span><span style='background: #AEF1AE'>      etagHeader &lt;- r.headers.get[`If-None-Match`]
+</span>321 <span style=''></span><span style='background: #AEF1AE'>      etagMatch = etagHeader.tags.exists(_.exists(_ == etagCalc.tag))
+</span>322 <span style=''></span><span style='background: #AEF1AE'>      _ = logger.trace(
+</span>323 <span style=''></span><span style='background: #AEF1AE'>        s&quot;Matches `If-None-Match`: $etagMatch Previous ETag: ${etagHeader.value}, New ETag: $etagCalc&quot;
+</span>324 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>325 <span style=''></span><span style='background: #AEF1AE'>    } yield etagMatch</span><span style=''>
+</span>326 <span style=''>
+</span>327 <span style=''>  private def notModifiedSince[F[_]](req: Option[Request[F]], lastModified: Option[HttpDate]) =
+</span>328 <span style=''>    </span><span style='background: #AEF1AE'>for {
+</span>329 <span style=''></span><span style='background: #AEF1AE'>      r &lt;- req
+</span>330 <span style=''></span><span style='background: #AEF1AE'>      h &lt;- r.headers.get[`If-Modified-Since`]
+</span>331 <span style=''></span><span style='background: #AEF1AE'>      lm &lt;- lastModified
+</span>332 <span style=''></span><span style='background: #AEF1AE'>      notModified = h.date &gt;= lm
+</span>333 <span style=''></span><span style='background: #AEF1AE'>      _ = logger.trace(
+</span>334 <span style=''></span><span style='background: #AEF1AE'>        s&quot;Matches `If-Modified-Since`: $notModified. Request age: ${h.date}, Modified: $lm&quot;
+</span>335 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>336 <span style=''></span><span style='background: #AEF1AE'>    } yield notModified</span><span style=''>
+</span>337 <span style=''>
+</span>338 <span style=''>  private def fileToBody[F[_]: Files](f: Path, start: Long, end: Long): EntityBody[F] =
+</span>339 <span style=''>    </span><span style='background: #AEF1AE'>Files[F].readRange(f, DefaultBufferSize, start, end)</span><span style=''>
+</span>340 <span style=''>
+</span>341 <span style=''>  private def nameToContentType(name: String): Option[`Content-Type`] =
+</span>342 <span style=''>    </span><span style='background: #AEF1AE'>name.lastIndexOf('.')</span><span style=''> match {
+</span>343 <span style=''>      case -1 =&gt; </span><span style='background: #AEF1AE'>None</span><span style=''>
+</span>344 <span style=''>      case i =&gt; </span><span style='background: #AEF1AE'>MediaType.forExtension(name.substring(i + 1)).map(`Content-Type`(_))</span><span style=''>
+</span>345 <span style=''>    }
+</span>346 <span style=''>
+</span>347 <span style=''>  private[http4s] val staticPathKey = </span><span style='background: #AEF1AE'>Key.newKey[SyncIO, Path].unsafeRunSync()</span><span style=''>
+</span>348 <span style=''>
+</span>349 <span style=''>  @deprecated(&quot;Use staticPathKey&quot;, since = &quot;0.23.5&quot;)
+</span>350 <span style=''>  private[http4s] lazy val staticFileKey: Key[File] =
+</span>351 <span style=''>    staticPathKey.imap(_.toNioPath.toFile)(f =&gt; Path.fromNioPath(f.toPath))
+</span>352 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          17436
+        </td>
+        <td>
+          1225
+          -
+          1230
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          10240
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          13541
+        </td>
+        <td>
+          1367
+          -
+          1391
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.StaticFile.fromPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StaticFile.this.fromPath[[_]F[_]](fs2.io.file.Path.apply(url), req)(evidence$1, evidence$2)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          16641
+        </td>
+        <td>
+          1618
+          -
+          1664
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          classloader.getOrElse[ClassLoader](StaticFile.this.getClass().getClassLoader())
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          20104
+        </td>
+        <td>
+          1640
+          -
+          1663
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Class.getClassLoader
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.getClass().getClassLoader()
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          20646
+        </td>
+        <td>
+          1755
+          -
+          1755
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Accept-Encoding.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Accept-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          13411
+        </td>
+        <td>
+          1742
+          -
+          1774
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.headers.get[org.http4s.headers.Accept-Encoding](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Accept-Encoding](headers.this.Accept-Encoding.headerSemigroupInstance, headers.this.Accept-Encoding.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          14720
+        </td>
+        <td>
+          1755
+          -
+          1755
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Accept-Encoding.headerSemigroupInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Accept-Encoding.headerSemigroupInstance
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          16775
+        </td>
+        <td>
+          1755
+          -
+          1755
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.recurringHeadersWithMerge
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Accept-Encoding](headers.this.Accept-Encoding.headerSemigroupInstance, headers.this.Accept-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          21811
+        </td>
+        <td>
+          1730
+          -
+          1775
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          req.flatMap[org.http4s.headers.Accept-Encoding](((x$1: org.http4s.Request[F]) =&gt; x$1.headers.get[org.http4s.headers.Accept-Encoding](Header.this.Select.recurringHeadersWithMerge[org.http4s.headers.Accept-Encoding](headers.this.Accept-Encoding.headerSemigroupInstance, headers.this.Accept-Encoding.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          20890
+        </td>
+        <td>
+          1803
+          -
+          2004
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          preferGzipped.&amp;&amp;(acceptEncodingHeader.exists(((acceptEncoding: org.http4s.headers.Accept-Encoding) =&gt; acceptEncoding.satisfiedBy(ContentCoding.gzip).||(acceptEncoding.satisfiedBy(ContentCoding.x-gzip)))))
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          14735
+        </td>
+        <td>
+          1820
+          -
+          2004
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          acceptEncodingHeader.exists(((acceptEncoding: org.http4s.headers.Accept-Encoding) =&gt; acceptEncoding.satisfiedBy(ContentCoding.gzip).||(acceptEncoding.satisfiedBy(ContentCoding.x-gzip))))
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          17682
+        </td>
+        <td>
+          1903
+          -
+          1921
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.gzip
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          ContentCoding.gzip
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          20346
+        </td>
+        <td>
+          1926
+          -
+          1996
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Accept-Encoding.satisfiedBy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          acceptEncoding.satisfiedBy(ContentCoding.x-gzip)
+        </td>
+      </tr><tr>
+        <td>
+          65
+        </td>
+        <td>
+          16659
+        </td>
+        <td>
+          1876
+          -
+          1996
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          acceptEncoding.satisfiedBy(ContentCoding.gzip).||(acceptEncoding.satisfiedBy(ContentCoding.x-gzip))
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          13559
+        </td>
+        <td>
+          1964
+          -
+          1986
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.ContentCoding.x-gzip
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ContentCoding.x-gzip
+        </td>
+      </tr><tr>
+        <td>
+          69
+        </td>
+        <td>
+          16794
+        </td>
+        <td>
+          2030
+          -
+          2078
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.wrapRefArray[String](scala.Predef.refArrayOps[String](name.split(&quot;/&quot;)).filter(((x$2: String) =&gt; scala.Predef.augmentString(x$2).nonEmpty))).mkString(&quot;/&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          17704
+        </td>
+        <td>
+          2130
+          -
+          2180
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.blocking
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.effect.`package`.Sync.apply[F](evidence$3).blocking[Option[java.net.URL]](scala.Option.apply[java.net.URL](loader.getResource(name)))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          19887
+        </td>
+        <td>
+          2147
+          -
+          2179
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Option.apply[java.net.URL](loader.getResource(name))
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          13271
+        </td>
+        <td>
+          2154
+          -
+          2178
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.ClassLoader.getResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          loader.getResource(name)
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          13794
+        </td>
+        <td>
+          2122
+          -
+          2181
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, java.net.URL](cats.effect.`package`.Sync.apply[F](evidence$3).blocking[Option[java.net.URL]](scala.Option.apply[java.net.URL](loader.getResource(name))))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          20370
+        </td>
+        <td>
+          2250
+          -
+          2272
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          normalizedName.+(&quot;.gz&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          14326
+        </td>
+        <td>
+          2238
+          -
+          2273
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.StaticFile.getResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          getResource(normalizedName.+(&quot;.gz&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          20911
+        </td>
+        <td>
+          2279
+          -
+          2291
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.none
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.none[[_]F[_], java.net.URL](evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          16679
+        </td>
+        <td>
+          2238
+          -
+          2273
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.StaticFile.getResource
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          getResource(normalizedName.+(&quot;.gz&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          17396
+        </td>
+        <td>
+          2279
+          -
+          2291
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.data.OptionT.none
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.none[[_]F[_], java.net.URL](evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          87
+        </td>
+        <td>
+          13294
+        </td>
+        <td>
+          2297
+          -
+          2704
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.orElse
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          gzUrl.flatMap[org.http4s.Response[[_]F[_]]](((url: java.net.URL) =&gt; StaticFile.this.fromURL[[_]F[_]](url, req)(evidence$3).map[org.http4s.Response[[_]F[_]]](((x$3: org.http4s.Response[[_]F[_]]) =&gt; x$3.removeHeader[org.http4s.headers.Content-Type](headers.this.Content-Type.headerInstance).putHeaders(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Encoding](org.http4s.headers.Content-Encoding.apply(ContentCoding.gzip))(headers.this.Content-Encoding.headerInstance), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](StaticFile.this.nameToContentType(normalizedName))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))))))(evidence$3)))(evidence$3).orElse(getResource(normalizedName).flatMap[org.http4s.Response[[_]F[_]]](((x$4: java.net.URL) =&gt; StaticFile.this.fromURL[[_]F[_]](x$4, req)(evidence$3)))(evidence$3))(evidence$3)
+        </td>
+      </tr><tr>
+        <td>
+          96
+        </td>
+        <td>
+          19900
+        </td>
+        <td>
+          2849
+          -
+          2862
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URL.getFile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          url.getFile()
+        </td>
+      </tr><tr>
+        <td>
+          97
+        </td>
+        <td>
+          17577
+        </td>
+        <td>
+          2878
+          -
+          2895
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.File.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new java.io.File(fileUrl)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          20521
+        </td>
+        <td>
+          2914
+          -
+          4356
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.kernel.Sync.defer
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.defer[Option[org.http4s.Response[F]]](if (cats.syntax.`package`.all.catsSyntaxEq[String](url.getProtocol())(kernel.this.Eq.catsKernelInstancesForString).===(&quot;file&quot;).&amp;&amp;(file.isDirectory()))
+  F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]])
+else
+  {
+    val urlConn: java.net.URLConnection = url.openConnection();
+    val lastmod: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(urlConn.getLastModified()./(1000)).toOption;
+    val ifModifiedSince: Option[org.http4s.headers.If-Modified-Since] = req.flatMap[org.http4s.headers.If-Modified-Since](((x$5: org.http4s.Request[F]) =&gt; x$5.headers.get[org.http4s.headers.If-Modified-Since](Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance))));
+    val expired: Boolean = cats.syntax.`package`.all.catsSyntaxTuple2Semigroupal[Option, org.http4s.headers.If-Modified-Since, org.http4s.HttpDate](scala.Tuple2.apply[Option[org.http4s.headers.If-Modified-Since], Option[org.http4s.HttpDate]](ifModifiedSince, lastmod)).mapN[Boolean](((x$6: org.http4s.headers.If-Modified-Since, x$7: org.http4s.HttpDate) =&gt; x$6.date.&lt;(x$7)))(cats.this.Invariant.catsInstancesForOption, cats.this.Semigroupal.catsSemigroupalForOption).getOrElse[Boolean](true);
+    if (expired)
+      {
+        val len: Long = urlConn.getContentLengthLong();
+        val headers: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastmod.map[org.http4s.headers.Last-Modified](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$8))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](StaticFile.this.nameToContentType(url.getPath()))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), if (len.&gt;=(0))
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance)
+        else
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance));
+        cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, java.io.InputStream](F.blocking[java.io.InputStream](urlConn.getInputStream()))(F).redeem[Option[org.http4s.Response[F]]](((x0$1: Throwable) =&gt; x0$1 match {
+          case (_: java.io.FileNotFoundException) =&gt; scala.None
+          case (other @ _) =&gt; throw other
+        }), ((inputStream: java.io.InputStream) =&gt; scala.Some.apply[org.http4s.Response[[_]F[_]]]({
+          &lt;artifact&gt; val x$1: org.http4s.Headers = headers;
+          &lt;artifact&gt; val x$2: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = fs2.io.`package`.readInputStream[F](F.pure[java.io.InputStream](inputStream), StaticFile.this.DefaultBufferSize, fs2.io.`package`.readInputStream$default$3[F])(F);
+          &lt;artifact&gt; val x$3: org.http4s.Status = Response.apply$default$1[Nothing];
+          &lt;artifact&gt; val x$4: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+          &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+          Response.apply[[_]F[_]](x$3, x$4, x$1, x$2, x$5)
+        })))(F)
+      }
+    else
+      cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](F.blocking[Unit](urlConn.getInputStream().close()))(F).handleError(((x$9: Throwable) =&gt; ()))(F))(F).as[Option[org.http4s.Response[F]]](scala.Some.apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](org.http4s.Status.NotModified, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])))
+  })
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          16147
+        </td>
+        <td>
+          2900
+          -
+          4357
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, org.http4s.Response[F]](F.defer[Option[org.http4s.Response[F]]](if (cats.syntax.`package`.all.catsSyntaxEq[String](url.getProtocol())(kernel.this.Eq.catsKernelInstancesForString).===(&quot;file&quot;).&amp;&amp;(file.isDirectory()))
+  F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]])
+else
+  {
+    val urlConn: java.net.URLConnection = url.openConnection();
+    val lastmod: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(urlConn.getLastModified()./(1000)).toOption;
+    val ifModifiedSince: Option[org.http4s.headers.If-Modified-Since] = req.flatMap[org.http4s.headers.If-Modified-Since](((x$5: org.http4s.Request[F]) =&gt; x$5.headers.get[org.http4s.headers.If-Modified-Since](Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance))));
+    val expired: Boolean = cats.syntax.`package`.all.catsSyntaxTuple2Semigroupal[Option, org.http4s.headers.If-Modified-Since, org.http4s.HttpDate](scala.Tuple2.apply[Option[org.http4s.headers.If-Modified-Since], Option[org.http4s.HttpDate]](ifModifiedSince, lastmod)).mapN[Boolean](((x$6: org.http4s.headers.If-Modified-Since, x$7: org.http4s.HttpDate) =&gt; x$6.date.&lt;(x$7)))(cats.this.Invariant.catsInstancesForOption, cats.this.Semigroupal.catsSemigroupalForOption).getOrElse[Boolean](true);
+    if (expired)
+      {
+        val len: Long = urlConn.getContentLengthLong();
+        val headers: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastmod.map[org.http4s.headers.Last-Modified](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$8))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](StaticFile.this.nameToContentType(url.getPath()))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), if (len.&gt;=(0))
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance)
+        else
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance));
+        cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, java.io.InputStream](F.blocking[java.io.InputStream](urlConn.getInputStream()))(F).redeem[Option[org.http4s.Response[F]]](((x0$1: Throwable) =&gt; x0$1 match {
+          case (_: java.io.FileNotFoundException) =&gt; scala.None
+          case (other @ _) =&gt; throw other
+        }), ((inputStream: java.io.InputStream) =&gt; scala.Some.apply[org.http4s.Response[[_]F[_]]]({
+          &lt;artifact&gt; val x$1: org.http4s.Headers = headers;
+          &lt;artifact&gt; val x$2: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = fs2.io.`package`.readInputStream[F](F.pure[java.io.InputStream](inputStream), StaticFile.this.DefaultBufferSize, fs2.io.`package`.readInputStream$default$3[F])(F);
+          &lt;artifact&gt; val x$3: org.http4s.Status = Response.apply$default$1[Nothing];
+          &lt;artifact&gt; val x$4: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+          &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+          Response.apply[[_]F[_]](x$3, x$4, x$1, x$2, x$5)
+        })))(F)
+      }
+    else
+      cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](F.blocking[Unit](urlConn.getInputStream().close()))(F).handleError(((x$9: Throwable) =&gt; ()))(F))(F).as[Option[org.http4s.Response[F]]](scala.Some.apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](org.http4s.Status.NotModified, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])))
+  }))
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          13804
+        </td>
+        <td>
+          2934
+          -
+          2949
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URL.getProtocol
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          url.getProtocol()
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          20096
+        </td>
+        <td>
+          2938
+          -
+          2938
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.kernel.Eq.catsKernelInstancesForString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Eq.catsKernelInstancesForString
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          16552
+        </td>
+        <td>
+          2954
+          -
+          2960
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          &quot;file&quot;
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          20787
+        </td>
+        <td>
+          2934
+          -
+          2982
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxEq[String](url.getProtocol())(kernel.this.Eq.catsKernelInstancesForString).===(&quot;file&quot;).&amp;&amp;(file.isDirectory())
+        </td>
+      </tr><tr>
+        <td>
+          99
+        </td>
+        <td>
+          14341
+        </td>
+        <td>
+          2964
+          -
+          2982
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.File.isDirectory
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          file.isDirectory()
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          12993
+        </td>
+        <td>
+          2992
+          -
+          3017
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]])
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          19507
+        </td>
+        <td>
+          2992
+          -
+          3017
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]])
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          17418
+        </td>
+        <td>
+          2999
+          -
+          3016
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.OptionSyntax.none
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.none[org.http4s.Response[F]]
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          13581
+        </td>
+        <td>
+          3029
+          -
+          4350
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val urlConn: java.net.URLConnection = url.openConnection();
+  val lastmod: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(urlConn.getLastModified()./(1000)).toOption;
+  val ifModifiedSince: Option[org.http4s.headers.If-Modified-Since] = req.flatMap[org.http4s.headers.If-Modified-Since](((x$5: org.http4s.Request[F]) =&gt; x$5.headers.get[org.http4s.headers.If-Modified-Since](Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance))));
+  val expired: Boolean = cats.syntax.`package`.all.catsSyntaxTuple2Semigroupal[Option, org.http4s.headers.If-Modified-Since, org.http4s.HttpDate](scala.Tuple2.apply[Option[org.http4s.headers.If-Modified-Since], Option[org.http4s.HttpDate]](ifModifiedSince, lastmod)).mapN[Boolean](((x$6: org.http4s.headers.If-Modified-Since, x$7: org.http4s.HttpDate) =&gt; x$6.date.&lt;(x$7)))(cats.this.Invariant.catsInstancesForOption, cats.this.Semigroupal.catsSemigroupalForOption).getOrElse[Boolean](true);
+  if (expired)
+    {
+      val len: Long = urlConn.getContentLengthLong();
+      val headers: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastmod.map[org.http4s.headers.Last-Modified](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$8))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](StaticFile.this.nameToContentType(url.getPath()))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), if (len.&gt;=(0))
+        Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance)
+      else
+        Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance));
+      cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, java.io.InputStream](F.blocking[java.io.InputStream](urlConn.getInputStream()))(F).redeem[Option[org.http4s.Response[F]]](((x0$1: Throwable) =&gt; x0$1 match {
+        case (_: java.io.FileNotFoundException) =&gt; scala.None
+        case (other @ _) =&gt; throw other
+      }), ((inputStream: java.io.InputStream) =&gt; scala.Some.apply[org.http4s.Response[[_]F[_]]]({
+        &lt;artifact&gt; val x$1: org.http4s.Headers = headers;
+        &lt;artifact&gt; val x$2: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = fs2.io.`package`.readInputStream[F](F.pure[java.io.InputStream](inputStream), StaticFile.this.DefaultBufferSize, fs2.io.`package`.readInputStream$default$3[F])(F);
+        &lt;artifact&gt; val x$3: org.http4s.Status = Response.apply$default$1[Nothing];
+        &lt;artifact&gt; val x$4: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+        &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+        Response.apply[[_]F[_]](x$3, x$4, x$1, x$2, x$5)
+      })))(F)
+    }
+  else
+    cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](F.blocking[Unit](urlConn.getInputStream().close()))(F).handleError(((x$9: Throwable) =&gt; ()))(F))(F).as[Option[org.http4s.Response[F]]](scala.Some.apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](org.http4s.Status.NotModified, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])))
+}
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          17592
+        </td>
+        <td>
+          3053
+          -
+          3071
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URL.openConnection
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          url.openConnection()
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          19992
+        </td>
+        <td>
+          3094
+          -
+          3159
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.toOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.fromEpochSecond(urlConn.getLastModified()./(1000)).toOption
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          14049
+        </td>
+        <td>
+          3119
+          -
+          3149
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long./
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          urlConn.getLastModified()./(1000)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          16247
+        </td>
+        <td>
+          3254
+          -
+          3254
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.If-Modified-Since.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.If-Modified-Since.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          23065
+        </td>
+        <td>
+          3254
+          -
+          3254
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          20807
+        </td>
+        <td>
+          3241
+          -
+          3275
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Headers.get
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$5.headers.get[org.http4s.headers.If-Modified-Since](Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          105
+        </td>
+        <td>
+          16784
+        </td>
+        <td>
+          3229
+          -
+          3276
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.flatMap[org.http4s.headers.If-Modified-Since](((x$5: org.http4s.Request[F]) =&gt; x$5.headers.get[org.http4s.headers.If-Modified-Since](Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance))))
+        </td>
+      </tr><tr>
+        <td>
+          106
+        </td>
+        <td>
+          12895
+        </td>
+        <td>
+          3299
+          -
+          3358
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxTuple2Semigroupal[Option, org.http4s.headers.If-Modified-Since, org.http4s.HttpDate](scala.Tuple2.apply[Option[org.http4s.headers.If-Modified-Since], Option[org.http4s.HttpDate]](ifModifiedSince, lastmod)).mapN[Boolean](((x$6: org.http4s.headers.If-Modified-Since, x$7: org.http4s.HttpDate) =&gt; x$6.date.&lt;(x$7)))(cats.this.Invariant.catsInstancesForOption, cats.this.Semigroupal.catsSemigroupalForOption).getOrElse[Boolean](true)
+        </td>
+      </tr><tr>
+        <td>
+          108
+        </td>
+        <td>
+          19669
+        </td>
+        <td>
+          3381
+          -
+          4205
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val len: Long = urlConn.getContentLengthLong();
+  val headers: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastmod.map[org.http4s.headers.Last-Modified](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$8))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](StaticFile.this.nameToContentType(url.getPath()))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), if (len.&gt;=(0))
+    Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance)
+  else
+    Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance));
+  cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, java.io.InputStream](F.blocking[java.io.InputStream](urlConn.getInputStream()))(F).redeem[Option[org.http4s.Response[F]]](((x0$1: Throwable) =&gt; x0$1 match {
+    case (_: java.io.FileNotFoundException) =&gt; scala.None
+    case (other @ _) =&gt; throw other
+  }), ((inputStream: java.io.InputStream) =&gt; scala.Some.apply[org.http4s.Response[[_]F[_]]]({
+    &lt;artifact&gt; val x$1: org.http4s.Headers = headers;
+    &lt;artifact&gt; val x$2: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = fs2.io.`package`.readInputStream[F](F.pure[java.io.InputStream](inputStream), StaticFile.this.DefaultBufferSize, fs2.io.`package`.readInputStream$default$3[F])(F);
+    &lt;artifact&gt; val x$3: org.http4s.Status = Response.apply$default$1[Nothing];
+    &lt;artifact&gt; val x$4: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+    &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+    Response.apply[[_]F[_]](x$3, x$4, x$1, x$2, x$5)
+  })))(F)
+}
+        </td>
+      </tr><tr>
+        <td>
+          109
+        </td>
+        <td>
+          19883
+        </td>
+        <td>
+          3403
+          -
+          3431
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URLConnection.getContentLengthLong
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          urlConn.getContentLengthLong()
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          16908
+        </td>
+        <td>
+          3456
+          -
+          3709
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastmod.map[org.http4s.headers.Last-Modified](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$8))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](StaticFile.this.nameToContentType(url.getPath()))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), if (len.&gt;=(0))
+  Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance)
+else
+  Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          20006
+        </td>
+        <td>
+          3488
+          -
+          3488
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForOption
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          17831
+        </td>
+        <td>
+          3489
+          -
+          3507
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Last-Modified.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Last-Modified.apply(x$8)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          20759
+        </td>
+        <td>
+          3477
+          -
+          3508
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.foldablesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastmod.map[org.http4s.headers.Last-Modified](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$8))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          23076
+        </td>
+        <td>
+          3488
+          -
+          3488
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          14071
+        </td>
+        <td>
+          3477
+          -
+          3508
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          lastmod.map[org.http4s.headers.Last-Modified](((x$8: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$8)))
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          16532
+        </td>
+        <td>
+          3488
+          -
+          3488
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Last-Modified.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Last-Modified.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          20530
+        </td>
+        <td>
+          3522
+          -
+          3552
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.foldablesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](StaticFile.this.nameToContentType(url.getPath()))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          12907
+        </td>
+        <td>
+          3522
+          -
+          3552
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.StaticFile.nameToContentType
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.nameToContentType(url.getPath())
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          17303
+        </td>
+        <td>
+          3540
+          -
+          3551
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.net.URL.getPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          url.getPath()
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          19776
+        </td>
+        <td>
+          3539
+          -
+          3539
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForOption
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          17849
+        </td>
+        <td>
+          3539
+          -
+          3539
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          13799
+        </td>
+        <td>
+          3539
+          -
+          3539
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          22973
+        </td>
+        <td>
+          3580
+          -
+          3616
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.unsafeFromLong
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Length.unsafeFromLong(len)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          13152
+        </td>
+        <td>
+          3580
+          -
+          3616
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          16549
+        </td>
+        <td>
+          3570
+          -
+          3578
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          len.&gt;=(0)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          17012
+        </td>
+        <td>
+          3580
+          -
+          3616
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.unsafeFromLong(len))(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          20777
+        </td>
+        <td>
+          3611
+          -
+          3611
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          16415
+        </td>
+        <td>
+          3653
+          -
+          3653
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Transfer-Encoding.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          22988
+        </td>
+        <td>
+          3634
+          -
+          3696
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          13687
+        </td>
+        <td>
+          3654
+          -
+          3695
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          20798
+        </td>
+        <td>
+          3634
+          -
+          3696
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Transfer-Encoding](org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList)))(headers.this.Transfer-Encoding.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          20224
+        </td>
+        <td>
+          3634
+          -
+          3696
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Transfer-Encoding.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Transfer-Encoding.apply(cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.TransferCoding](TransferCoding.chunked).pure[cats.data.NonEmptyList](data.this.NonEmptyList.catsDataInstancesForNonEmptyList))
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          19790
+        </td>
+        <td>
+          3654
+          -
+          3676
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.TransferCoding.chunked
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          TransferCoding.chunked
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          16012
+        </td>
+        <td>
+          3681
+          -
+          3681
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.data.NonEmptyListInstances.catsDataInstancesForNonEmptyList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.NonEmptyList.catsDataInstancesForNonEmptyList
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          13534
+        </td>
+        <td>
+          3721
+          -
+          4195
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.redeem
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, java.io.InputStream](F.blocking[java.io.InputStream](urlConn.getInputStream()))(F).redeem[Option[org.http4s.Response[F]]](((x0$1: Throwable) =&gt; x0$1 match {
+  case (_: java.io.FileNotFoundException) =&gt; scala.None
+  case (other @ _) =&gt; throw other
+}), ((inputStream: java.io.InputStream) =&gt; scala.Some.apply[org.http4s.Response[[_]F[_]]]({
+  &lt;artifact&gt; val x$1: org.http4s.Headers = headers;
+  &lt;artifact&gt; val x$2: fs2.Stream[F,Byte] @scala.reflect.internal.annotations.uncheckedBounds = fs2.io.`package`.readInputStream[F](F.pure[java.io.InputStream](inputStream), StaticFile.this.DefaultBufferSize, fs2.io.`package`.readInputStream$default$3[F])(F);
+  &lt;artifact&gt; val x$3: org.http4s.Status = Response.apply$default$1[Nothing];
+  &lt;artifact&gt; val x$4: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+  &lt;artifact&gt; val x$5: org.typelevel.vault.Vault = Response.apply$default$5[Nothing];
+  Response.apply[[_]F[_]](x$3, x$4, x$1, x$2, x$5)
+})))(F)
+        </td>
+      </tr><tr>
+        <td>
+          134
+        </td>
+        <td>
+          15656
+        </td>
+        <td>
+          4221
+          -
+          4297
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.handleError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](F.blocking[Unit](urlConn.getInputStream().close()))(F).handleError(((x$9: Throwable) =&gt; ()))(F)
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          16134
+        </td>
+        <td>
+          4319
+          -
+          4319
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          16926
+        </td>
+        <td>
+          4319
+          -
+          4340
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[[_]F[_]](org.http4s.Status.NotModified, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          18876
+        </td>
+        <td>
+          4319
+          -
+          4319
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          13708
+        </td>
+        <td>
+          4328
+          -
+          4339
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.NotModified
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Status.NotModified
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          23006
+        </td>
+        <td>
+          4319
+          -
+          4319
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          19366
+        </td>
+        <td>
+          4221
+          -
+          4342
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](F.blocking[Unit](urlConn.getInputStream().close()))(F).handleError(((x$9: Throwable) =&gt; ()))(F))(F).as[Option[org.http4s.Response[F]]](scala.Some.apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](org.http4s.Status.NotModified, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          20498
+        </td>
+        <td>
+          4319
+          -
+          4319
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          15680
+        </td>
+        <td>
+          4221
+          -
+          4342
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Functor.Ops.as
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, Unit](cats.syntax.`package`.all.catsSyntaxApplicativeError[F, Throwable, Unit](F.blocking[Unit](urlConn.getInputStream().close()))(F).handleError(((x$9: Throwable) =&gt; ()))(F))(F).as[Option[org.http4s.Response[F]]](scala.Some.apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](org.http4s.Status.NotModified, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])))
+        </td>
+      </tr><tr>
+        <td>
+          135
+        </td>
+        <td>
+          13431
+        </td>
+        <td>
+          4314
+          -
+          4341
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[org.http4s.Response[[_]F[_]]](Response.apply[[_]F[_]](org.http4s.Status.NotModified, Response.apply$default$2[Nothing], Response.apply$default$3[Nothing], Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          18896
+        </td>
+        <td>
+          4513
+          -
+          4541
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Path.fromNioPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.io.file.Path.fromNioPath(f.toPath())
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          22969
+        </td>
+        <td>
+          4530
+          -
+          4540
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.File.toPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          f.toPath()
+        </td>
+      </tr><tr>
+        <td>
+          144
+        </td>
+        <td>
+          17163
+        </td>
+        <td>
+          4481
+          -
+          4542
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.isRegularFile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fs2.io.file.Files.apply[F](evidence$4).isRegularFile(fs2.io.file.Path.fromNioPath(f.toPath()))
+        </td>
+      </tr><tr>
+        <td>
+          145
+        </td>
+        <td>
+          13600
+        </td>
+        <td>
+          4481
+          -
+          4666
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.toFunctorOps[F, Boolean](fs2.io.file.Files.apply[F](evidence$4).isRegularFile(fs2.io.file.Path.fromNioPath(f.toPath())))(evidence$5).map[String](((isFile: Boolean) =&gt; if (isFile)
+  (&quot;&quot;.+(scala.Predef.longWrapper(f.lastModified()).toHexString).+(&quot;-&quot;).+(scala.Predef.longWrapper(f.length()).toHexString): String)
+else
+  &quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          15894
+        </td>
+        <td>
+          4654
+          -
+          4656
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          13447
+        </td>
+        <td>
+          4588
+          -
+          4648
+        </td>
+        <td>
+          Typed
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          (&quot;&quot;.+(scala.Predef.longWrapper(f.lastModified()).toHexString).+(&quot;-&quot;).+(scala.Predef.longWrapper(f.length()).toHexString): String)
+        </td>
+      </tr><tr>
+        <td>
+          146
+        </td>
+        <td>
+          19379
+        </td>
+        <td>
+          4654
+          -
+          4656
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          152
+        </td>
+        <td>
+          20391
+        </td>
+        <td>
+          4755
+          -
+          4818
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.getBasicFileAttributes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](evidence$6).getBasicFileAttributes(f, true)
+        </td>
+      </tr><tr>
+        <td>
+          153
+        </td>
+        <td>
+          13461
+        </td>
+        <td>
+          4755
+          -
+          4987
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$6).getBasicFileAttributes(f, true))(evidence$7).map[String](((attr: fs2.io.file.BasicFileAttributes) =&gt; if (attr.isRegularFile)
+  (&quot;&quot;.+(scala.Predef.longWrapper(attr.lastModifiedTime.toMillis).toHexString).+(&quot;-&quot;).+(scala.Predef.longWrapper(attr.size).toHexString): String)
+else
+  &quot;&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          154
+        </td>
+        <td>
+          16692
+        </td>
+        <td>
+          4854
+          -
+          4872
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.file.BasicFileAttributes.isRegularFile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          attr.isRegularFile
+        </td>
+      </tr><tr>
+        <td>
+          155
+        </td>
+        <td>
+          22982
+        </td>
+        <td>
+          4886
+          -
+          4959
+        </td>
+        <td>
+          Typed
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          (&quot;&quot;.+(scala.Predef.longWrapper(attr.lastModifiedTime.toMillis).toHexString).+(&quot;-&quot;).+(scala.Predef.longWrapper(attr.size).toHexString): String)
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          19102
+        </td>
+        <td>
+          4975
+          -
+          4977
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          156
+        </td>
+        <td>
+          17178
+        </td>
+        <td>
+          4975
+          -
+          4977
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          164
+        </td>
+        <td>
+          19665
+        </td>
+        <td>
+          5158
+          -
+          5238
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.StaticFile.fromPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StaticFile.this.fromPath[F](fs2.io.file.Path.fromNioPath(f.toPath()), StaticFile.this.DefaultBufferSize, req, StaticFile.this.calculateETag[F](evidence$8, evidence$9))(evidence$8, evidence$9)
+        </td>
+      </tr><tr>
+        <td>
+          170
+        </td>
+        <td>
+          15906
+        </td>
+        <td>
+          5369
+          -
+          5422
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.StaticFile.fromPath
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.fromPath[F](f, StaticFile.this.DefaultBufferSize, req, StaticFile.this.calculateETag[F](evidence$10, evidence$11))(evidence$10, evidence$11)
+        </td>
+      </tr><tr>
+        <td>
+          178
+        </td>
+        <td>
+          22036
+        </td>
+        <td>
+          5627
+          -
+          5766
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.StaticFile.fromPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StaticFile.this.fromPath[F](fs2.io.file.Path.fromNioPath(f.toPath()), StaticFile.this.DefaultBufferSize, req, etagCalculator.compose[fs2.io.file.Path](((x$10: fs2.io.file.Path) =&gt; x$10.toNioPath.toFile())))(evidence$12, evidence$13)
+        </td>
+      </tr><tr>
+        <td>
+          190
+        </td>
+        <td>
+          20411
+        </td>
+        <td>
+          5931
+          -
+          5982
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.StaticFile.fromPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StaticFile.this.fromPath[F](f, StaticFile.this.DefaultBufferSize, req, etagCalculator)(evidence$14, evidence$15)
+        </td>
+      </tr><tr>
+        <td>
+          199
+        </td>
+        <td>
+          16702
+        </td>
+        <td>
+          6208
+          -
+          6365
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.StaticFile.fromPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StaticFile.this.fromPath[F](fs2.io.file.Path.fromNioPath(f.toPath()), 0L, f.length(), buffsize, req, etagCalculator.compose[fs2.io.file.Path](((x$11: fs2.io.file.Path) =&gt; x$11.toNioPath.toFile())))(evidence$16, evidence$17)
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          19116
+        </td>
+        <td>
+          6655
+          -
+          6655
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$19)
+        </td>
+      </tr><tr>
+        <td>
+          216
+        </td>
+        <td>
+          22875
+        </td>
+        <td>
+          6551
+          -
+          6732
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.flatMap
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.liftF[F, Long](cats.syntax.`package`.all.toFunctorOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$18).getBasicFileAttributes(f, true))(evidence$19).map[Long](((x$12: fs2.io.file.BasicFileAttributes) =&gt; x$12.size)))(evidence$19).flatMap[org.http4s.Response[F]](((size: Long) =&gt; StaticFile.this.fromPath[F](f, 0L, size, buffsize, req, etagCalculator)(evidence$18, evidence$19)))(evidence$19)
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          13337
+        </td>
+        <td>
+          6752
+          -
+          6752
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.StaticFile.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          19682
+        </td>
+        <td>
+          6752
+          -
+          6752
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionTInstances0.catsDataMonadErrorForOptionT
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$19)
+        </td>
+      </tr><tr>
+        <td>
+          219
+        </td>
+        <td>
+          15806
+        </td>
+        <td>
+          6551
+          -
+          6825
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeErrorOps.recoverWith
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxApplicativeError[[A]cats.data.OptionT[F,A], Throwable, org.http4s.Response[F]](cats.data.OptionT.liftF[F, Long](cats.syntax.`package`.all.toFunctorOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$18).getBasicFileAttributes(f, true))(evidence$19).map[Long](((x$12: fs2.io.file.BasicFileAttributes) =&gt; x$12.size)))(evidence$19).flatMap[org.http4s.Response[F]](((size: Long) =&gt; StaticFile.this.fromPath[F](f, 0L, size, buffsize, req, etagCalculator)(evidence$18, evidence$19)))(evidence$19))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$19)).recoverWith(({
+  @SerialVersionUID(value = 0) final &lt;synthetic&gt; class $anonfun extends scala.runtime.AbstractPartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]] with java.io.Serializable {
+    def &lt;init&gt;(): &lt;$anon: Throwable =&gt; cats.data.OptionT[F,org.http4s.Response[F]]&gt; = {
+      $anonfun.super.&lt;init&gt;();
+      ()
+    };
+    final override def applyOrElse[A1 &lt;: Throwable, B1 &gt;: cats.data.OptionT[F,org.http4s.Response[F]]](x1: A1, default: A1 =&gt; B1): B1 = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: fs2.io.file.NoSuchFileException) =&gt; cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](evidence$19)
+      case (defaultCase$ @ _) =&gt; default.apply(x1)
+    };
+    final def isDefinedAt(x1: Throwable): Boolean = ((x1.asInstanceOf[Throwable]: Throwable): Throwable @unchecked) match {
+      case (_: fs2.io.file.NoSuchFileException) =&gt; true
+      case (defaultCase$ @ _) =&gt; false
+    }
+  };
+  new $anonfun()
+}: PartialFunction[Throwable,cats.data.OptionT[F,org.http4s.Response[F]]]))(data.this.OptionT.catsDataMonadErrorForOptionT[[_]F[_], Throwable](evidence$19))
+        </td>
+      </tr><tr>
+        <td>
+          220
+        </td>
+        <td>
+          16785
+        </td>
+        <td>
+          6805
+          -
+          6817
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.data.OptionT.none
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.none[[_]F[_], org.http4s.Response[F]](evidence$19)
+        </td>
+      </tr><tr>
+        <td>
+          234
+        </td>
+        <td>
+          22055
+        </td>
+        <td>
+          7122
+          -
+          7276
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.StaticFile.fromPath
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          StaticFile.this.fromPath[F](fs2.io.file.Path.fromNioPath(f.toPath()), start, end, buffsize, req, etagCalculator.compose[fs2.io.file.Path](((x$13: fs2.io.file.Path) =&gt; x$13.toNioPath.toFile())))(evidence$20, F)
+        </td>
+      </tr><tr>
+        <td>
+          253
+        </td>
+        <td>
+          22462
+        </td>
+        <td>
+          7533
+          -
+          9255
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.OptionT.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.data.OptionT.apply[F, org.http4s.Response[F]](cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.headers.ETag](cats.syntax.`package`.all.toFunctorOps[F, String](etagCalculator.apply(f))(F).map[org.http4s.headers.ETag](((et: String) =&gt; org.http4s.headers.ETag.apply(et, org.http4s.headers.ETag.apply$default$2))))(F).flatMap[Option[org.http4s.Response[F]]](((etagCalc: org.http4s.headers.ETag) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Boolean](fs2.io.file.Files.apply[F](evidence$21).isRegularFile(f))(F).flatMap[Option[org.http4s.Response[F]]](((isFile: Boolean) =&gt; if (isFile)
+  if (start.&gt;=(0).&amp;&amp;(end.&gt;=(start)).&amp;&amp;(buffsize.&gt;(0)))
+    cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$21).getBasicFileAttributes(f, true))(F).flatMap[Option[org.http4s.Response[[_]F[_]]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; {
+      val lastModified: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(attr.lastModifiedTime.toSeconds).toOption;
+      F.pure[Option[org.http4s.Response[[_]F[_]]]](StaticFile.this.notModified[[_]F[_]](req, etagCalc, lastModified).orElse[org.http4s.Response[[_]F[_]]]({
+        &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$14: (org.http4s.EntityBody[[_]F[_]], Long) = (if (attr.size.&lt;(end))
+          scala.Tuple2.apply[fs2.Stream[fs2.Pure,fs2.INothing], Long](fs2.Stream.empty, 0L)
+        else
+          scala.Tuple2.apply[org.http4s.EntityBody[F], Long](StaticFile.this.fileToBody[F](f, start, end)(evidence$21), end.-(start)): (org.http4s.EntityBody[F], Long) @unchecked) match {
+          case (_1: org.http4s.EntityBody[[_]F[_]], _2: Long): (org.http4s.EntityBody[[_]F[_]], Long)((body @ _), (contentLength @ _)) =&gt; scala.Tuple2.apply[org.http4s.EntityBody[[_]F[_]], Long](body, contentLength)
+        };
+        val body: org.http4s.EntityBody[[_]F[_]] = x$14._1;
+        val contentLength: Long = x$14._2;
+        val contentType: Option[org.http4s.headers.Content-Type] = StaticFile.this.nameToContentType(f.fileName.toString);
+        val hs: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance));
+        val r: org.http4s.Response[[_]F[_]] = {
+          &lt;artifact&gt; val x$1: org.http4s.Headers = hs;
+          &lt;artifact&gt; val x$2: org.http4s.EntityBody[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = body;
+          &lt;artifact&gt; val x$3: org.typelevel.vault.Vault = org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f);
+          &lt;artifact&gt; val x$4: org.http4s.Status = Response.apply$default$1[Nothing];
+          &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+          Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+        };
+        if (StaticFile.this.logger.logger.isTraceEnabled())
+          StaticFile.this.logger.logger.trace((&quot;Static file generated response: &quot;.+(r): String))
+        else
+          ();
+        cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+      }))
+    }))
+  else
+    F.raiseError[Option[org.http4s.Response[F]]](new scala.`package`.IllegalArgumentException((&quot;requirement failed: start: &quot;.+(start).+(&quot;, end: &quot;).+(end).+(&quot;, buffsize: &quot;).+(buffsize): String)))
+else
+  F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]]))))))
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          18744
+        </td>
+        <td>
+          7565
+          -
+          7602
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, String](etagCalculator.apply(f))(F).map[org.http4s.headers.ETag](((et: String) =&gt; org.http4s.headers.ETag.apply(et, org.http4s.headers.ETag.apply$default$2)))
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          15711
+        </td>
+        <td>
+          7541
+          -
+          9254
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, org.http4s.headers.ETag](cats.syntax.`package`.all.toFunctorOps[F, String](etagCalculator.apply(f))(F).map[org.http4s.headers.ETag](((et: String) =&gt; org.http4s.headers.ETag.apply(et, org.http4s.headers.ETag.apply$default$2))))(F).flatMap[Option[org.http4s.Response[F]]](((etagCalc: org.http4s.headers.ETag) =&gt; cats.syntax.`package`.all.toFlatMapOps[F, Boolean](fs2.io.file.Files.apply[F](evidence$21).isRegularFile(f))(F).flatMap[Option[org.http4s.Response[F]]](((isFile: Boolean) =&gt; if (isFile)
+  if (start.&gt;=(0).&amp;&amp;(end.&gt;=(start)).&amp;&amp;(buffsize.&gt;(0)))
+    cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$21).getBasicFileAttributes(f, true))(F).flatMap[Option[org.http4s.Response[[_]F[_]]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; {
+      val lastModified: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(attr.lastModifiedTime.toSeconds).toOption;
+      F.pure[Option[org.http4s.Response[[_]F[_]]]](StaticFile.this.notModified[[_]F[_]](req, etagCalc, lastModified).orElse[org.http4s.Response[[_]F[_]]]({
+        &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$14: (org.http4s.EntityBody[[_]F[_]], Long) = (if (attr.size.&lt;(end))
+          scala.Tuple2.apply[fs2.Stream[fs2.Pure,fs2.INothing], Long](fs2.Stream.empty, 0L)
+        else
+          scala.Tuple2.apply[org.http4s.EntityBody[F], Long](StaticFile.this.fileToBody[F](f, start, end)(evidence$21), end.-(start)): (org.http4s.EntityBody[F], Long) @unchecked) match {
+          case (_1: org.http4s.EntityBody[[_]F[_]], _2: Long): (org.http4s.EntityBody[[_]F[_]], Long)((body @ _), (contentLength @ _)) =&gt; scala.Tuple2.apply[org.http4s.EntityBody[[_]F[_]], Long](body, contentLength)
+        };
+        val body: org.http4s.EntityBody[[_]F[_]] = x$14._1;
+        val contentLength: Long = x$14._2;
+        val contentType: Option[org.http4s.headers.Content-Type] = StaticFile.this.nameToContentType(f.fileName.toString);
+        val hs: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance));
+        val r: org.http4s.Response[[_]F[_]] = {
+          &lt;artifact&gt; val x$1: org.http4s.Headers = hs;
+          &lt;artifact&gt; val x$2: org.http4s.EntityBody[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = body;
+          &lt;artifact&gt; val x$3: org.typelevel.vault.Vault = org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f);
+          &lt;artifact&gt; val x$4: org.http4s.Status = Response.apply$default$1[Nothing];
+          &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+          Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+        };
+        if (StaticFile.this.logger.logger.isTraceEnabled())
+          StaticFile.this.logger.logger.trace((&quot;Static file generated response: &quot;.+(r): String))
+        else
+          ();
+        cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+      }))
+    }))
+  else
+    F.raiseError[Option[org.http4s.Response[F]]](new scala.`package`.IllegalArgumentException((&quot;requirement failed: start: &quot;.+(start).+(&quot;, end: &quot;).+(end).+(&quot;, buffsize: &quot;).+(buffsize): String)))
+else
+  F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]])))))
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          20128
+        </td>
+        <td>
+          7565
+          -
+          7582
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          etagCalculator.apply(f)
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          22890
+        </td>
+        <td>
+          7593
+          -
+          7601
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.ETag.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.ETag.apply(et, org.http4s.headers.ETag.apply$default$2)
+        </td>
+      </tr><tr>
+        <td>
+          254
+        </td>
+        <td>
+          16299
+        </td>
+        <td>
+          7593
+          -
+          7593
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.ETag.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.ETag.apply$default$2
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          16803
+        </td>
+        <td>
+          7616
+          -
+          7641
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.isRegularFile
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](evidence$21).isRegularFile(f)
+        </td>
+      </tr><tr>
+        <td>
+          255
+        </td>
+        <td>
+          19431
+        </td>
+        <td>
+          7609
+          -
+          9254
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, Boolean](fs2.io.file.Files.apply[F](evidence$21).isRegularFile(f))(F).flatMap[Option[org.http4s.Response[F]]](((isFile: Boolean) =&gt; if (isFile)
+  if (start.&gt;=(0).&amp;&amp;(end.&gt;=(start)).&amp;&amp;(buffsize.&gt;(0)))
+    cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$21).getBasicFileAttributes(f, true))(F).flatMap[Option[org.http4s.Response[[_]F[_]]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; {
+      val lastModified: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(attr.lastModifiedTime.toSeconds).toOption;
+      F.pure[Option[org.http4s.Response[[_]F[_]]]](StaticFile.this.notModified[[_]F[_]](req, etagCalc, lastModified).orElse[org.http4s.Response[[_]F[_]]]({
+        &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$14: (org.http4s.EntityBody[[_]F[_]], Long) = (if (attr.size.&lt;(end))
+          scala.Tuple2.apply[fs2.Stream[fs2.Pure,fs2.INothing], Long](fs2.Stream.empty, 0L)
+        else
+          scala.Tuple2.apply[org.http4s.EntityBody[F], Long](StaticFile.this.fileToBody[F](f, start, end)(evidence$21), end.-(start)): (org.http4s.EntityBody[F], Long) @unchecked) match {
+          case (_1: org.http4s.EntityBody[[_]F[_]], _2: Long): (org.http4s.EntityBody[[_]F[_]], Long)((body @ _), (contentLength @ _)) =&gt; scala.Tuple2.apply[org.http4s.EntityBody[[_]F[_]], Long](body, contentLength)
+        };
+        val body: org.http4s.EntityBody[[_]F[_]] = x$14._1;
+        val contentLength: Long = x$14._2;
+        val contentType: Option[org.http4s.headers.Content-Type] = StaticFile.this.nameToContentType(f.fileName.toString);
+        val hs: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance));
+        val r: org.http4s.Response[[_]F[_]] = {
+          &lt;artifact&gt; val x$1: org.http4s.Headers = hs;
+          &lt;artifact&gt; val x$2: org.http4s.EntityBody[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = body;
+          &lt;artifact&gt; val x$3: org.typelevel.vault.Vault = org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f);
+          &lt;artifact&gt; val x$4: org.http4s.Status = Response.apply$default$1[Nothing];
+          &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+          Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+        };
+        if (StaticFile.this.logger.logger.isTraceEnabled())
+          StaticFile.this.logger.logger.trace((&quot;Static file generated response: &quot;.+(r): String))
+        else
+          ();
+        cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+      }))
+    }))
+  else
+    F.raiseError[Option[org.http4s.Response[F]]](new scala.`package`.IllegalArgumentException((&quot;requirement failed: start: &quot;.+(start).+(&quot;, end: &quot;).+(end).+(&quot;, buffsize: &quot;).+(buffsize): String)))
+else
+  F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]])))
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          15820
+        </td>
+        <td>
+          7749
+          -
+          7761
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          buffsize.&gt;(0)
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          19555
+        </td>
+        <td>
+          7733
+          -
+          7745
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Long.&gt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          end.&gt;=(start)
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          22072
+        </td>
+        <td>
+          7719
+          -
+          7761
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          start.&gt;=(0).&amp;&amp;(end.&gt;=(start)).&amp;&amp;(buffsize.&gt;(0))
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          13025
+        </td>
+        <td>
+          7728
+          -
+          7729
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          0
+        </td>
+      </tr><tr>
+        <td>
+          257
+        </td>
+        <td>
+          22774
+        </td>
+        <td>
+          7715
+          -
+          9165
+        </td>
+        <td>
+          If
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          if (start.&gt;=(0).&amp;&amp;(end.&gt;=(start)).&amp;&amp;(buffsize.&gt;(0)))
+  cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$21).getBasicFileAttributes(f, true))(F).flatMap[Option[org.http4s.Response[[_]F[_]]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; {
+    val lastModified: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(attr.lastModifiedTime.toSeconds).toOption;
+    F.pure[Option[org.http4s.Response[[_]F[_]]]](StaticFile.this.notModified[[_]F[_]](req, etagCalc, lastModified).orElse[org.http4s.Response[[_]F[_]]]({
+      &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$14: (org.http4s.EntityBody[[_]F[_]], Long) = (if (attr.size.&lt;(end))
+        scala.Tuple2.apply[fs2.Stream[fs2.Pure,fs2.INothing], Long](fs2.Stream.empty, 0L)
+      else
+        scala.Tuple2.apply[org.http4s.EntityBody[F], Long](StaticFile.this.fileToBody[F](f, start, end)(evidence$21), end.-(start)): (org.http4s.EntityBody[F], Long) @unchecked) match {
+        case (_1: org.http4s.EntityBody[[_]F[_]], _2: Long): (org.http4s.EntityBody[[_]F[_]], Long)((body @ _), (contentLength @ _)) =&gt; scala.Tuple2.apply[org.http4s.EntityBody[[_]F[_]], Long](body, contentLength)
+      };
+      val body: org.http4s.EntityBody[[_]F[_]] = x$14._1;
+      val contentLength: Long = x$14._2;
+      val contentType: Option[org.http4s.headers.Content-Type] = StaticFile.this.nameToContentType(f.fileName.toString);
+      val hs: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance));
+      val r: org.http4s.Response[[_]F[_]] = {
+        &lt;artifact&gt; val x$1: org.http4s.Headers = hs;
+        &lt;artifact&gt; val x$2: org.http4s.EntityBody[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = body;
+        &lt;artifact&gt; val x$3: org.typelevel.vault.Vault = org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f);
+        &lt;artifact&gt; val x$4: org.http4s.Status = Response.apply$default$1[Nothing];
+        &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+        Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+      };
+      if (StaticFile.this.logger.logger.isTraceEnabled())
+        StaticFile.this.logger.logger.trace((&quot;Static file generated response: &quot;.+(r): String))
+      else
+        ();
+      cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+    }))
+  }))
+else
+  F.raiseError[Option[org.http4s.Response[F]]](new scala.`package`.IllegalArgumentException((&quot;requirement failed: start: &quot;.+(start).+(&quot;, end: &quot;).+(end).+(&quot;, buffsize: &quot;).+(buffsize): String)))
+        </td>
+      </tr><tr>
+        <td>
+          259
+        </td>
+        <td>
+          20018
+        </td>
+        <td>
+          7777
+          -
+          7846
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.getBasicFileAttributes
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](evidence$21).getBasicFileAttributes(f, true)
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          19838
+        </td>
+        <td>
+          7777
+          -
+          8928
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$21).getBasicFileAttributes(f, true))(F).flatMap[Option[org.http4s.Response[[_]F[_]]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; {
+  val lastModified: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(attr.lastModifiedTime.toSeconds).toOption;
+  F.pure[Option[org.http4s.Response[[_]F[_]]]](StaticFile.this.notModified[[_]F[_]](req, etagCalc, lastModified).orElse[org.http4s.Response[[_]F[_]]]({
+    &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$14: (org.http4s.EntityBody[[_]F[_]], Long) = (if (attr.size.&lt;(end))
+      scala.Tuple2.apply[fs2.Stream[fs2.Pure,fs2.INothing], Long](fs2.Stream.empty, 0L)
+    else
+      scala.Tuple2.apply[org.http4s.EntityBody[F], Long](StaticFile.this.fileToBody[F](f, start, end)(evidence$21), end.-(start)): (org.http4s.EntityBody[F], Long) @unchecked) match {
+      case (_1: org.http4s.EntityBody[[_]F[_]], _2: Long): (org.http4s.EntityBody[[_]F[_]], Long)((body @ _), (contentLength @ _)) =&gt; scala.Tuple2.apply[org.http4s.EntityBody[[_]F[_]], Long](body, contentLength)
+    };
+    val body: org.http4s.EntityBody[[_]F[_]] = x$14._1;
+    val contentLength: Long = x$14._2;
+    val contentType: Option[org.http4s.headers.Content-Type] = StaticFile.this.nameToContentType(f.fileName.toString);
+    val hs: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance));
+    val r: org.http4s.Response[[_]F[_]] = {
+      &lt;artifact&gt; val x$1: org.http4s.Headers = hs;
+      &lt;artifact&gt; val x$2: org.http4s.EntityBody[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = body;
+      &lt;artifact&gt; val x$3: org.typelevel.vault.Vault = org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f);
+      &lt;artifact&gt; val x$4: org.http4s.Status = Response.apply$default$1[Nothing];
+      &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+      Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+    };
+    if (StaticFile.this.logger.logger.isTraceEnabled())
+      StaticFile.this.logger.logger.trace((&quot;Static file generated response: &quot;.+(r): String))
+    else
+      ();
+    cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          260
+        </td>
+        <td>
+          15696
+        </td>
+        <td>
+          7777
+          -
+          8928
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, fs2.io.file.BasicFileAttributes](fs2.io.file.Files.apply[F](evidence$21).getBasicFileAttributes(f, true))(F).flatMap[Option[org.http4s.Response[[_]F[_]]]](((attr: fs2.io.file.BasicFileAttributes) =&gt; {
+  val lastModified: Option[org.http4s.HttpDate] = HttpDate.fromEpochSecond(attr.lastModifiedTime.toSeconds).toOption;
+  F.pure[Option[org.http4s.Response[[_]F[_]]]](StaticFile.this.notModified[[_]F[_]](req, etagCalc, lastModified).orElse[org.http4s.Response[[_]F[_]]]({
+    &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$14: (org.http4s.EntityBody[[_]F[_]], Long) = (if (attr.size.&lt;(end))
+      scala.Tuple2.apply[fs2.Stream[fs2.Pure,fs2.INothing], Long](fs2.Stream.empty, 0L)
+    else
+      scala.Tuple2.apply[org.http4s.EntityBody[F], Long](StaticFile.this.fileToBody[F](f, start, end)(evidence$21), end.-(start)): (org.http4s.EntityBody[F], Long) @unchecked) match {
+      case (_1: org.http4s.EntityBody[[_]F[_]], _2: Long): (org.http4s.EntityBody[[_]F[_]], Long)((body @ _), (contentLength @ _)) =&gt; scala.Tuple2.apply[org.http4s.EntityBody[[_]F[_]], Long](body, contentLength)
+    };
+    val body: org.http4s.EntityBody[[_]F[_]] = x$14._1;
+    val contentLength: Long = x$14._2;
+    val contentType: Option[org.http4s.headers.Content-Type] = StaticFile.this.nameToContentType(f.fileName.toString);
+    val hs: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance));
+    val r: org.http4s.Response[[_]F[_]] = {
+      &lt;artifact&gt; val x$1: org.http4s.Headers = hs;
+      &lt;artifact&gt; val x$2: org.http4s.EntityBody[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = body;
+      &lt;artifact&gt; val x$3: org.typelevel.vault.Vault = org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f);
+      &lt;artifact&gt; val x$4: org.http4s.Status = Response.apply$default$1[Nothing];
+      &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+      Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+    };
+    if (StaticFile.this.logger.logger.isTraceEnabled())
+      StaticFile.this.logger.logger.trace((&quot;Static file generated response: &quot;.+(r): String))
+    else
+      ();
+    cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+  }))
+}))
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          16684
+        </td>
+        <td>
+          7958
+          -
+          7989
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.concurrent.duration.FiniteDuration.toSeconds
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          attr.lastModifiedTime.toSeconds
+        </td>
+      </tr><tr>
+        <td>
+          262
+        </td>
+        <td>
+          22766
+        </td>
+        <td>
+          7933
+          -
+          7999
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.toOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          HttpDate.fromEpochSecond(attr.lastModifiedTime.toSeconds).toOption
+        </td>
+      </tr><tr>
+        <td>
+          264
+        </td>
+        <td>
+          13209
+        </td>
+        <td>
+          8017
+          -
+          8912
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          F.pure[Option[org.http4s.Response[[_]F[_]]]](StaticFile.this.notModified[[_]F[_]](req, etagCalc, lastModified).orElse[org.http4s.Response[[_]F[_]]]({
+  &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$14: (org.http4s.EntityBody[[_]F[_]], Long) = (if (attr.size.&lt;(end))
+    scala.Tuple2.apply[fs2.Stream[fs2.Pure,fs2.INothing], Long](fs2.Stream.empty, 0L)
+  else
+    scala.Tuple2.apply[org.http4s.EntityBody[F], Long](StaticFile.this.fileToBody[F](f, start, end)(evidence$21), end.-(start)): (org.http4s.EntityBody[F], Long) @unchecked) match {
+    case (_1: org.http4s.EntityBody[[_]F[_]], _2: Long): (org.http4s.EntityBody[[_]F[_]], Long)((body @ _), (contentLength @ _)) =&gt; scala.Tuple2.apply[org.http4s.EntityBody[[_]F[_]], Long](body, contentLength)
+  };
+  val body: org.http4s.EntityBody[[_]F[_]] = x$14._1;
+  val contentLength: Long = x$14._2;
+  val contentType: Option[org.http4s.headers.Content-Type] = StaticFile.this.nameToContentType(f.fileName.toString);
+  val hs: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance));
+  val r: org.http4s.Response[[_]F[_]] = {
+    &lt;artifact&gt; val x$1: org.http4s.Headers = hs;
+    &lt;artifact&gt; val x$2: org.http4s.EntityBody[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = body;
+    &lt;artifact&gt; val x$3: org.typelevel.vault.Vault = org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f);
+    &lt;artifact&gt; val x$4: org.http4s.Status = Response.apply$default$1[Nothing];
+    &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+    Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+  };
+  if (StaticFile.this.logger.logger.isTraceEnabled())
+    StaticFile.this.logger.logger.trace((&quot;Static file generated response: &quot;.+(r): String))
+  else
+    ();
+  cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+}))
+        </td>
+      </tr><tr>
+        <td>
+          264
+        </td>
+        <td>
+          14855
+        </td>
+        <td>
+          8024
+          -
+          8911
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.orElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.notModified[[_]F[_]](req, etagCalc, lastModified).orElse[org.http4s.Response[[_]F[_]]]({
+  &lt;synthetic&gt; &lt;artifact&gt; private[this] val x$14: (org.http4s.EntityBody[[_]F[_]], Long) = (if (attr.size.&lt;(end))
+    scala.Tuple2.apply[fs2.Stream[fs2.Pure,fs2.INothing], Long](fs2.Stream.empty, 0L)
+  else
+    scala.Tuple2.apply[org.http4s.EntityBody[F], Long](StaticFile.this.fileToBody[F](f, start, end)(evidence$21), end.-(start)): (org.http4s.EntityBody[F], Long) @unchecked) match {
+    case (_1: org.http4s.EntityBody[[_]F[_]], _2: Long): (org.http4s.EntityBody[[_]F[_]], Long)((body @ _), (contentLength @ _)) =&gt; scala.Tuple2.apply[org.http4s.EntityBody[[_]F[_]], Long](body, contentLength)
+  };
+  val body: org.http4s.EntityBody[[_]F[_]] = x$14._1;
+  val contentLength: Long = x$14._2;
+  val contentType: Option[org.http4s.headers.Content-Type] = StaticFile.this.nameToContentType(f.fileName.toString);
+  val hs: org.http4s.Headers = Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance));
+  val r: org.http4s.Response[[_]F[_]] = {
+    &lt;artifact&gt; val x$1: org.http4s.Headers = hs;
+    &lt;artifact&gt; val x$2: org.http4s.EntityBody[[_]F[_]] @scala.reflect.internal.annotations.uncheckedBounds = body;
+    &lt;artifact&gt; val x$3: org.typelevel.vault.Vault = org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f);
+    &lt;artifact&gt; val x$4: org.http4s.Status = Response.apply$default$1[Nothing];
+    &lt;artifact&gt; val x$5: org.http4s.HttpVersion = Response.apply$default$2[Nothing];
+    Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+  };
+  if (StaticFile.this.logger.logger.isTraceEnabled())
+    StaticFile.this.logger.logger.trace((&quot;Static file generated response: &quot;.+(r): String))
+  else
+    ();
+  cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+})
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          14979
+        </td>
+        <td>
+          8103
+          -
+          8103
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$14._2
+        </td>
+      </tr><tr>
+        <td>
+          265
+        </td>
+        <td>
+          18766
+        </td>
+        <td>
+          8097
+          -
+          8097
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.Tuple2._1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$14._1
+        </td>
+      </tr><tr>
+        <td>
+          269
+        </td>
+        <td>
+          19905
+        </td>
+        <td>
+          8286
+          -
+          8324
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.StaticFile.nameToContentType
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.nameToContentType(f.fileName.toString)
+        </td>
+      </tr><tr>
+        <td>
+          269
+        </td>
+        <td>
+          13307
+        </td>
+        <td>
+          8304
+          -
+          8323
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          fs2.io.file.Path.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          f.fileName.toString
+        </td>
+      </tr><tr>
+        <td>
+          271
+        </td>
+        <td>
+          19821
+        </td>
+        <td>
+          8372
+          -
+          8602
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply(Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance))), Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance))), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          23099
+        </td>
+        <td>
+          8419
+          -
+          8419
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          21956
+        </td>
+        <td>
+          8403
+          -
+          8439
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15)))
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          15699
+        </td>
+        <td>
+          8420
+          -
+          8438
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Last-Modified.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Last-Modified.apply(x$15)
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          18785
+        </td>
+        <td>
+          8403
+          -
+          8439
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.foldablesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Last-Modified](lastModified.map[org.http4s.headers.Last-Modified](((x$15: org.http4s.HttpDate) =&gt; org.http4s.headers.Last-Modified.apply(x$15))))(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Last-Modified) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Last-Modified](h)(headers.this.Last-Modified.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          20038
+        </td>
+        <td>
+          8419
+          -
+          8419
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForOption
+        </td>
+      </tr><tr>
+        <td>
+          272
+        </td>
+        <td>
+          16565
+        </td>
+        <td>
+          8419
+          -
+          8419
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Last-Modified.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Last-Modified.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          19806
+        </td>
+        <td>
+          8504
+          -
+          8504
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          21977
+        </td>
+        <td>
+          8463
+          -
+          8512
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.foldablesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.fromLong(contentLength).toOption)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Length) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          15801
+        </td>
+        <td>
+          8504
+          -
+          8504
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](h)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          13326
+        </td>
+        <td>
+          8504
+          -
+          8504
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForOption
+        </td>
+      </tr><tr>
+        <td>
+          273
+        </td>
+        <td>
+          14875
+        </td>
+        <td>
+          8463
+          -
+          8512
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.util.Either.toOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Length.fromLong(contentLength).toOption
+        </td>
+      </tr><tr>
+        <td>
+          274
+        </td>
+        <td>
+          16585
+        </td>
+        <td>
+          8536
+          -
+          8536
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.Content-Type.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          274
+        </td>
+        <td>
+          18481
+        </td>
+        <td>
+          8536
+          -
+          8536
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForOption
+        </td>
+      </tr><tr>
+        <td>
+          274
+        </td>
+        <td>
+          19003
+        </td>
+        <td>
+          8536
+          -
+          8547
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.foldablesToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.foldablesToRaw[Option, org.http4s.headers.Content-Type](contentType)(cats.this.UnorderedFoldable.catsTraverseForOption, ((h: org.http4s.headers.Content-Type) =&gt; Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance)))
+        </td>
+      </tr><tr>
+        <td>
+          274
+        </td>
+        <td>
+          23115
+        </td>
+        <td>
+          8536
+          -
+          8536
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Type](h)(headers.this.Content-Type.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          13193
+        </td>
+        <td>
+          8571
+          -
+          8579
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.ETag](etagCalc)(headers.this.ETag.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          275
+        </td>
+        <td>
+          14894
+        </td>
+        <td>
+          8571
+          -
+          8571
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.ETag.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.ETag.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          16457
+        </td>
+        <td>
+          8630
+          -
+          8630
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          22757
+        </td>
+        <td>
+          8630
+          -
+          8797
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[[_]F[_]](x$4, x$5, x$1, x$2, x$3)
+        </td>
+      </tr><tr>
+        <td>
+          278
+        </td>
+        <td>
+          18506
+        </td>
+        <td>
+          8630
+          -
+          8630
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$1
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$1[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          22173
+        </td>
+        <td>
+          8740
+          -
+          8776
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.typelevel.vault.Vault.insert
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.vault.Vault.empty.insert[fs2.io.file.Path](StaticFile.this.staticPathKey, f)
+        </td>
+      </tr><tr>
+        <td>
+          281
+        </td>
+        <td>
+          15814
+        </td>
+        <td>
+          8759
+          -
+          8772
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.StaticFile.staticPathKey
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.staticPathKey
+        </td>
+      </tr><tr>
+        <td>
+          285
+        </td>
+        <td>
+          19015
+        </td>
+        <td>
+          8887
+          -
+          8893
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.syntax.OptionIdOps.some
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.catsSyntaxOptionId[org.http4s.Response[[_]F[_]]](r).some
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          16473
+        </td>
+        <td>
+          8960
+          -
+          9153
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.raiseError[Option[org.http4s.Response[F]]](new scala.`package`.IllegalArgumentException((&quot;requirement failed: start: &quot;.+(start).+(&quot;, end: &quot;).+(end).+(&quot;, buffsize: &quot;).+(buffsize): String)))
+        </td>
+      </tr><tr>
+        <td>
+          289
+        </td>
+        <td>
+          18091
+        </td>
+        <td>
+          8960
+          -
+          9153
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.ApplicativeError.raiseError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.raiseError[Option[org.http4s.Response[F]]](new scala.`package`.IllegalArgumentException((&quot;requirement failed: start: &quot;.+(start).+(&quot;, end: &quot;).+(end).+(&quot;, buffsize: &quot;).+(buffsize): String)))
+        </td>
+      </tr><tr>
+        <td>
+          290
+        </td>
+        <td>
+          22186
+        </td>
+        <td>
+          9009
+          -
+          9139
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.IllegalArgumentException.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new scala.`package`.IllegalArgumentException((&quot;requirement failed: start: &quot;.+(start).+(&quot;, end: &quot;).+(end).+(&quot;, buffsize: &quot;).+(buffsize): String))
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          18912
+        </td>
+        <td>
+          9201
+          -
+          9218
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          cats.syntax.OptionSyntax.none
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.none[org.http4s.Response[F]]
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          14871
+        </td>
+        <td>
+          9194
+          -
+          9219
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]])
+        </td>
+      </tr><tr>
+        <td>
+          297
+        </td>
+        <td>
+          21289
+        </td>
+        <td>
+          9194
+          -
+          9219
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[Option[org.http4s.Response[F]]](cats.syntax.`package`.all.none[org.http4s.Response[F]])
+        </td>
+      </tr><tr>
+        <td>
+          308
+        </td>
+        <td>
+          16186
+        </td>
+        <td>
+          9461
+          -
+          9464
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.StaticFile.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          309
+        </td>
+        <td>
+          18110
+        </td>
+        <td>
+          9539
+          -
+          9545
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.&amp;&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x.&amp;&amp;(y)
+        </td>
+      </tr><tr>
+        <td>
+          312
+        </td>
+        <td>
+          18927
+        </td>
+        <td>
+          9588
+          -
+          9623
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.StaticFile.notModifiedSince
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.notModifiedSince[[_]F[_]](req, lastModified)
+        </td>
+      </tr><tr>
+        <td>
+          312
+        </td>
+        <td>
+          15394
+        </td>
+        <td>
+          9557
+          -
+          9624
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableFactory.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.`package`.List.apply[Option[Boolean]](StaticFile.this.etagMatch[[_]F[_]](req, etagCalc), StaticFile.this.notModifiedSince[[_]F[_]](req, lastModified))
+        </td>
+      </tr><tr>
+        <td>
+          312
+        </td>
+        <td>
+          22640
+        </td>
+        <td>
+          9562
+          -
+          9586
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.StaticFile.etagMatch
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.etagMatch[[_]F[_]](req, etagCalc)
+        </td>
+      </tr><tr>
+        <td>
+          312
+        </td>
+        <td>
+          19813
+        </td>
+        <td>
+          9625
+          -
+          9625
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.kernel.MonoidInstances.catsKernelMonoidForOption
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          kernel.this.Semigroup.catsKernelMonoidForOption[Boolean](conjunction)
+        </td>
+      </tr><tr>
+        <td>
+          312
+        </td>
+        <td>
+          21305
+        </td>
+        <td>
+          9561
+          -
+          9561
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          cats.UnorderedFoldable.catsTraverseForList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.this.UnorderedFoldable.catsTraverseForList
+        </td>
+      </tr><tr>
+        <td>
+          313
+        </td>
+        <td>
+          15583
+        </td>
+        <td>
+          9650
+          -
+          9658
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Predef.identity
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.identity[Boolean](x)
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          23015
+        </td>
+        <td>
+          9684
+          -
+          9684
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$4[F]
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          18813
+        </td>
+        <td>
+          9684
+          -
+          9684
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$5[F]
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          18125
+        </td>
+        <td>
+          9684
+          -
+          9684
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$2
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$2[F]
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          21322
+        </td>
+        <td>
+          9557
+          -
+          9701
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFoldableOps[List, Option[Boolean]](scala.`package`.List.apply[Option[Boolean]](StaticFile.this.etagMatch[[_]F[_]](req, etagCalc), StaticFile.this.notModifiedSince[[_]F[_]](req, lastModified)))(cats.this.UnorderedFoldable.catsTraverseForList).combineAll(kernel.this.Semigroup.catsKernelMonoidForOption[Boolean](conjunction)).filter(((x: Boolean) =&gt; scala.Predef.identity[Boolean](x))).map[org.http4s.Response[F]](((x$16: Boolean) =&gt; Response.apply[F](org.http4s.Status.NotModified, Response.apply$default$2[F], Response.apply$default$3[F], Response.apply$default$4[F], Response.apply$default$5[F])))
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          22482
+        </td>
+        <td>
+          9688
+          -
+          9699
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.NotModified
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Status.NotModified
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          15415
+        </td>
+        <td>
+          9676
+          -
+          9700
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply[F](org.http4s.Status.NotModified, Response.apply$default$2[F], Response.apply$default$3[F], Response.apply$default$4[F], Response.apply$default$5[F])
+        </td>
+      </tr><tr>
+        <td>
+          314
+        </td>
+        <td>
+          16446
+        </td>
+        <td>
+          9684
+          -
+          9684
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$3
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Response.apply$default$3[F]
+        </td>
+      </tr><tr>
+        <td>
+          319
+        </td>
+        <td>
+          15433
+        </td>
+        <td>
+          9784
+          -
+          10082
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.flatMap[Boolean](((r: org.http4s.Request[F]) =&gt; r.headers.get[org.http4s.headers.If-None-Match](Header.this.Select.singleHeaders[org.http4s.headers.If-None-Match](headers.this.If-None-Match.headerInstance)).map[Boolean](((etagHeader: org.http4s.headers.If-None-Match) =&gt; {
+  val etagMatch: Boolean = etagHeader.tags.exists(((x$17: cats.data.NonEmptyList[org.http4s.EntityTag]) =&gt; x$17.exists(((x$18: org.http4s.EntityTag) =&gt; x$18.==(etagCalc.tag)))));
+  &lt;synthetic&gt; val $suppressedUnused$1: Unit = if (StaticFile.this.logger.logger.isTraceEnabled())
+    StaticFile.this.logger.logger.trace((&quot;Matches `If-None-Match`: &quot;.+(etagMatch).+(&quot; Previous ETag: &quot;).+(org.http4s.syntax.`package`.header.http4sHeaderSyntax[org.http4s.headers.If-None-Match](etagHeader)(headers.this.If-None-Match.headerInstance).value).+(&quot;, New ETag: &quot;).+(etagCalc): String))
+  else
+    ();
+  etagMatch
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          320
+        </td>
+        <td>
+          15934
+        </td>
+        <td>
+          9838
+          -
+          9838
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.If-None-Match](headers.this.If-None-Match.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          320
+        </td>
+        <td>
+          18904
+        </td>
+        <td>
+          9811
+          -
+          10082
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.headers.get[org.http4s.headers.If-None-Match](Header.this.Select.singleHeaders[org.http4s.headers.If-None-Match](headers.this.If-None-Match.headerInstance)).map[Boolean](((etagHeader: org.http4s.headers.If-None-Match) =&gt; {
+  val etagMatch: Boolean = etagHeader.tags.exists(((x$17: cats.data.NonEmptyList[org.http4s.EntityTag]) =&gt; x$17.exists(((x$18: org.http4s.EntityTag) =&gt; x$18.==(etagCalc.tag)))));
+  &lt;synthetic&gt; val $suppressedUnused$1: Unit = if (StaticFile.this.logger.logger.isTraceEnabled())
+    StaticFile.this.logger.logger.trace((&quot;Matches `If-None-Match`: &quot;.+(etagMatch).+(&quot; Previous ETag: &quot;).+(org.http4s.syntax.`package`.header.http4sHeaderSyntax[org.http4s.headers.If-None-Match](etagHeader)(headers.this.If-None-Match.headerInstance).value).+(&quot;, New ETag: &quot;).+(etagCalc): String))
+  else
+    ();
+  etagMatch
+}))
+        </td>
+      </tr><tr>
+        <td>
+          320
+        </td>
+        <td>
+          19699
+        </td>
+        <td>
+          9838
+          -
+          9838
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.If-None-Match.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.If-None-Match.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          18658
+        </td>
+        <td>
+          9906
+          -
+          9923
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.==
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$18.==(etagCalc.tag)
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          14656
+        </td>
+        <td>
+          9897
+          -
+          9924
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.data.NonEmptyList.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$17.exists(((x$18: org.http4s.EntityTag) =&gt; x$18.==(etagCalc.tag)))
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          22341
+        </td>
+        <td>
+          9911
+          -
+          9923
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.ETag.tag
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          etagCalc.tag
+        </td>
+      </tr><tr>
+        <td>
+          321
+        </td>
+        <td>
+          22905
+        </td>
+        <td>
+          9874
+          -
+          9925
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          etagHeader.tags.exists(((x$17: cats.data.NonEmptyList[org.http4s.EntityTag]) =&gt; x$17.exists(((x$18: org.http4s.EntityTag) =&gt; x$18.==(etagCalc.tag)))))
+        </td>
+      </tr><tr>
+        <td>
+          329
+        </td>
+        <td>
+          14528
+        </td>
+        <td>
+          10184
+          -
+          10456
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          req.flatMap[Boolean](((r: org.http4s.Request[F]) =&gt; r.headers.get[org.http4s.headers.If-Modified-Since](Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance)).flatMap[Boolean](((h: org.http4s.headers.If-Modified-Since) =&gt; lastModified.map[Boolean](((lm: org.http4s.HttpDate) =&gt; {
+  val notModified: Boolean = h.date.&gt;=(lm);
+  &lt;synthetic&gt; val $suppressedUnused$2: Unit = if (StaticFile.this.logger.logger.isTraceEnabled())
+    StaticFile.this.logger.logger.trace((&quot;Matches `If-Modified-Since`: &quot;.+(notModified).+(&quot;. Request age: &quot;).+(h.date).+(&quot;, Modified: &quot;).+(lm): String))
+  else
+    ();
+  notModified
+}))))))
+        </td>
+      </tr><tr>
+        <td>
+          330
+        </td>
+        <td>
+          19721
+        </td>
+        <td>
+          10229
+          -
+          10229
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.Select.singleHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          330
+        </td>
+        <td>
+          18676
+        </td>
+        <td>
+          10211
+          -
+          10456
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          r.headers.get[org.http4s.headers.If-Modified-Since](Header.this.Select.singleHeaders[org.http4s.headers.If-Modified-Since](headers.this.If-Modified-Since.headerInstance)).flatMap[Boolean](((h: org.http4s.headers.If-Modified-Since) =&gt; lastModified.map[Boolean](((lm: org.http4s.HttpDate) =&gt; {
+  val notModified: Boolean = h.date.&gt;=(lm);
+  &lt;synthetic&gt; val $suppressedUnused$2: Unit = if (StaticFile.this.logger.logger.isTraceEnabled())
+    StaticFile.this.logger.logger.trace((&quot;Matches `If-Modified-Since`: &quot;.+(notModified).+(&quot;. Request age: &quot;).+(h.date).+(&quot;, Modified: &quot;).+(lm): String))
+  else
+    ();
+  notModified
+}))))
+        </td>
+      </tr><tr>
+        <td>
+          330
+        </td>
+        <td>
+          21586
+        </td>
+        <td>
+          10229
+          -
+          10229
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.If-Modified-Since.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          headers.this.If-Modified-Since.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          331
+        </td>
+        <td>
+          22082
+        </td>
+        <td>
+          10257
+          -
+          10456
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          lastModified.map[Boolean](((lm: org.http4s.HttpDate) =&gt; {
+  val notModified: Boolean = h.date.&gt;=(lm);
+  &lt;synthetic&gt; val $suppressedUnused$2: Unit = if (StaticFile.this.logger.logger.isTraceEnabled())
+    StaticFile.this.logger.logger.trace((&quot;Matches `If-Modified-Since`: &quot;.+(notModified).+(&quot;. Request age: &quot;).+(h.date).+(&quot;, Modified: &quot;).+(lm): String))
+  else
+    ();
+  notModified
+}))
+        </td>
+      </tr><tr>
+        <td>
+          332
+        </td>
+        <td>
+          15834
+        </td>
+        <td>
+          10296
+          -
+          10308
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.math.Ordered.&gt;=
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          h.date.&gt;=(lm)
+        </td>
+      </tr><tr>
+        <td>
+          339
+        </td>
+        <td>
+          18786
+        </td>
+        <td>
+          10550
+          -
+          10602
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.io.file.Files.readRange
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.io.file.Files.apply[F](evidence$22).readRange(f, StaticFile.this.DefaultBufferSize, start, end)
+        </td>
+      </tr><tr>
+        <td>
+          339
+        </td>
+        <td>
+          22921
+        </td>
+        <td>
+          10572
+          -
+          10589
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.StaticFile.DefaultBufferSize
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          StaticFile.this.DefaultBufferSize
+        </td>
+      </tr><tr>
+        <td>
+          342
+        </td>
+        <td>
+          14989
+        </td>
+        <td>
+          10680
+          -
+          10701
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.lastIndexOf
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          name.lastIndexOf(46)
+        </td>
+      </tr><tr>
+        <td>
+          343
+        </td>
+        <td>
+          21611
+        </td>
+        <td>
+          10727
+          -
+          10731
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          344
+        </td>
+        <td>
+          18637
+        </td>
+        <td>
+          10748
+          -
+          10816
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          MediaType.forExtension(name.substring(i.+(1))).map[org.http4s.headers.Content-Type](((x$23: org.http4s.MediaType) =&gt; org.http4s.headers.Content-Type.apply(x$23)))
+        </td>
+      </tr><tr>
+        <td>
+          344
+        </td>
+        <td>
+          22093
+        </td>
+        <td>
+          10798
+          -
+          10815
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.headers.Content-Type.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.headers.Content-Type.apply(x$23)
+        </td>
+      </tr><tr>
+        <td>
+          344
+        </td>
+        <td>
+          15572
+        </td>
+        <td>
+          10771
+          -
+          10792
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.substring
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          name.substring(i.+(1))
+        </td>
+      </tr><tr>
+        <td>
+          344
+        </td>
+        <td>
+          17764
+        </td>
+        <td>
+          10786
+          -
+          10791
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Int.+
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          i.+(1)
+        </td>
+      </tr><tr>
+        <td>
+          347
+        </td>
+        <td>
+          14550
+        </td>
+        <td>
+          10862
+          -
+          10902
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.effect.SyncIO.unsafeRunSync
+        </td>
+        <td>
+          org.http4s.staticfilesuite
+        </td>
+        <td style="background: #AEF1AE">
+          org.typelevel.vault.Key.newKey[cats.effect.SyncIO, fs2.io.file.Path](effect.this.SyncIO.syncForSyncIO, effect.this.SyncIO.syncForSyncIO).unsafeRunSync()
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

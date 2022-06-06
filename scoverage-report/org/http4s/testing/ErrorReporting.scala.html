@@ -1,0 +1,1468 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/testing/ErrorReporting.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>/*
+</span>18 <span style=''> * Copyright 2013-2020 http4s.org
+</span>19 <span style=''> *
+</span>20 <span style=''> * SPDX-License-Identifier: Apache-2.0
+</span>21 <span style=''> *
+</span>22 <span style=''> * Based on https://github.com/typelevel/cats-effect/blob/v1.0.0/core/shared/src/test/scala/cats/effect/internals/TestUtils.scala
+</span>23 <span style=''> * Copyright (c) 2017-2018 The Typelevel Cats-effect Project Developers
+</span>24 <span style=''> */
+</span>25 <span style=''>
+</span>26 <span style=''>package org.http4s
+</span>27 <span style=''>package testing
+</span>28 <span style=''>
+</span>29 <span style=''>import cats.Monad
+</span>30 <span style=''>import cats.syntax.all._
+</span>31 <span style=''>import org.http4s.headers.Connection
+</span>32 <span style=''>import org.http4s.headers.`Content-Length`
+</span>33 <span style=''>
+</span>34 <span style=''>import java.io.ByteArrayOutputStream
+</span>35 <span style=''>import java.io.PrintStream
+</span>36 <span style=''>import scala.util.control.NonFatal
+</span>37 <span style=''>
+</span>38 <span style=''>object ErrorReporting {
+</span>39 <span style=''>
+</span>40 <span style=''>  /** Silences System.out and System.err streams for the duration of thunk.
+</span>41 <span style=''>    * Restores the original streams before exiting.
+</span>42 <span style=''>    */
+</span>43 <span style=''>  def silenceOutputStreams[R](thunk: =&gt; R): R =
+</span>44 <span style=''>    </span><span style='background: #AEF1AE'>synchronized {
+</span>45 <span style=''></span><span style='background: #AEF1AE'>      val originalOut = System.out
+</span>46 <span style=''></span><span style='background: #AEF1AE'>      val originalErr = System.err
+</span>47 <span style=''></span><span style='background: #AEF1AE'>
+</span>48 <span style=''></span><span style='background: #AEF1AE'>      // Redirect output to dummy stream
+</span>49 <span style=''></span><span style='background: #AEF1AE'>      val fakeOutStream = new PrintStream(NullOutStream)
+</span>50 <span style=''></span><span style='background: #AEF1AE'>      val fakeErrStream = new PrintStream(NullOutStream)
+</span>51 <span style=''></span><span style='background: #AEF1AE'>      System.setOut(fakeOutStream)
+</span>52 <span style=''></span><span style='background: #AEF1AE'>      System.setErr(fakeErrStream)
+</span>53 <span style=''></span><span style='background: #AEF1AE'>      try thunk
+</span>54 <span style=''></span><span style='background: #AEF1AE'>      finally {
+</span>55 <span style=''></span><span style='background: #AEF1AE'>        // Set back the original streams
+</span>56 <span style=''></span><span style='background: #AEF1AE'>        System.setOut(originalOut)
+</span>57 <span style=''></span><span style='background: #AEF1AE'>        System.setErr(originalErr)
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>59 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>60 <span style=''>
+</span>61 <span style=''>  /** Returns an ErrorHandler that does not log
+</span>62 <span style=''>    */
+</span>63 <span style=''>  def silentErrorHandler[F[_], G[_]](implicit
+</span>64 <span style=''>      F: Monad[F]
+</span>65 <span style=''>  ): Request[F] =&gt; PartialFunction[Throwable, F[Response[G]]] =
+</span>66 <span style=''>    req =&gt; {
+</span>67 <span style=''>      case mf: MessageFailure =&gt;
+</span>68 <span style=''>        </span><span style='background: #F0ADAD'>mf.toHttpResponse[G](req.httpVersion).pure[F]</span><span style=''>
+</span>69 <span style=''>      case NonFatal(_) =&gt;
+</span>70 <span style=''>        </span><span style='background: #F0ADAD'>F.pure(
+</span>71 <span style=''></span><span style='background: #F0ADAD'>          Response(
+</span>72 <span style=''></span><span style='background: #F0ADAD'>            Status.InternalServerError,
+</span>73 <span style=''></span><span style='background: #F0ADAD'>            req.httpVersion,
+</span>74 <span style=''></span><span style='background: #F0ADAD'>            Headers(
+</span>75 <span style=''></span><span style='background: #F0ADAD'>              Connection.close,
+</span>76 <span style=''></span><span style='background: #F0ADAD'>              `Content-Length`.zero,
+</span>77 <span style=''></span><span style='background: #F0ADAD'>            ),
+</span>78 <span style=''></span><span style='background: #F0ADAD'>          )
+</span>79 <span style=''></span><span style='background: #F0ADAD'>        )</span><span style=''>
+</span>80 <span style=''>    }
+</span>81 <span style=''>
+</span>82 <span style=''>  /** Silences `System.err`, only printing the output in case exceptions are
+</span>83 <span style=''>    * thrown by the executed `thunk`.
+</span>84 <span style=''>    */
+</span>85 <span style=''>  def silenceSystemErr[A](thunk: =&gt; A): A =
+</span>86 <span style=''>    </span><span style='background: #AEF1AE'>synchronized {
+</span>87 <span style=''></span><span style='background: #AEF1AE'>      // Silencing System.err
+</span>88 <span style=''></span><span style='background: #AEF1AE'>      val oldErr = System.err
+</span>89 <span style=''></span><span style='background: #AEF1AE'>      val outStream = new ByteArrayOutputStream()
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      val fakeErr = new PrintStream(outStream)
+</span>91 <span style=''></span><span style='background: #AEF1AE'>      System.setErr(fakeErr)
+</span>92 <span style=''></span><span style='background: #AEF1AE'>      try {
+</span>93 <span style=''></span><span style='background: #AEF1AE'>        val result = thunk
+</span>94 <span style=''></span><span style='background: #AEF1AE'>        System.setErr(oldErr)
+</span>95 <span style=''></span><span style='background: #AEF1AE'>        result
+</span>96 <span style=''></span><span style='background: #AEF1AE'>      } catch {
+</span>97 <span style=''></span><span style='background: #AEF1AE'>        case NonFatal(e) =&gt;
+</span>98 <span style=''></span><span style='background: #AEF1AE'>          </span><span style='background: #F0ADAD'>System.setErr(oldErr)</span><span style='background: #AEF1AE'>
+</span>99 <span style=''></span><span style='background: #AEF1AE'>          // In case of errors, print whatever was caught
+</span>100 <span style=''></span><span style='background: #AEF1AE'>          </span><span style='background: #F0ADAD'>fakeErr.close()</span><span style='background: #AEF1AE'>
+</span>101 <span style=''></span><span style='background: #AEF1AE'>          val out = </span><span style='background: #F0ADAD'>outStream.toString(&quot;utf-8&quot;)</span><span style='background: #AEF1AE'>
+</span>102 <span style=''></span><span style='background: #AEF1AE'>          if (</span><span style='background: #F0ADAD'>out.nonEmpty</span><span style='background: #AEF1AE'>) </span><span style='background: #F0ADAD'>oldErr.println(out)</span><span style='background: #AEF1AE'>
+</span>103 <span style=''></span><span style='background: #AEF1AE'>          </span><span style='background: #F0ADAD'>throw e</span><span style='background: #AEF1AE'>
+</span>104 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>105 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''>
+</span>106 <span style=''>
+</span>107 <span style=''>  /** Catches `System.err` output, for testing purposes.
+</span>108 <span style=''>    */
+</span>109 <span style=''>  def catchSystemErr(thunk: =&gt; Unit): String =
+</span>110 <span style=''>    </span><span style='background: #F0ADAD'>synchronized {
+</span>111 <span style=''></span><span style='background: #F0ADAD'>      val oldErr = System.err
+</span>112 <span style=''></span><span style='background: #F0ADAD'>      val outStream = new ByteArrayOutputStream()
+</span>113 <span style=''></span><span style='background: #F0ADAD'>      val fakeErr = new PrintStream(outStream)
+</span>114 <span style=''></span><span style='background: #F0ADAD'>      System.setErr(fakeErr)
+</span>115 <span style=''></span><span style='background: #F0ADAD'>      try thunk
+</span>116 <span style=''></span><span style='background: #F0ADAD'>      finally {
+</span>117 <span style=''></span><span style='background: #F0ADAD'>        System.setErr(oldErr)
+</span>118 <span style=''></span><span style='background: #F0ADAD'>        fakeErr.close()
+</span>119 <span style=''></span><span style='background: #F0ADAD'>      }
+</span>120 <span style=''></span><span style='background: #F0ADAD'>      outStream.toString(&quot;utf-8&quot;)
+</span>121 <span style=''></span><span style='background: #F0ADAD'>    }</span><span style=''>
+</span>122 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          6391
+        </td>
+        <td>
+          1356
+          -
+          1823
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.synchronized
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          ErrorReporting.this.synchronized[R]({
+  val originalOut: java.io.PrintStream = java.lang.System.out;
+  val originalErr: java.io.PrintStream = java.lang.System.err;
+  val fakeOutStream: java.io.PrintStream = new java.io.PrintStream(NullOutStream);
+  val fakeErrStream: java.io.PrintStream = new java.io.PrintStream(NullOutStream);
+  java.lang.System.setOut(fakeOutStream);
+  java.lang.System.setErr(fakeErrStream);
+  try {
+    thunk
+  } finally {
+    java.lang.System.setOut(originalOut);
+    java.lang.System.setErr(originalErr)
+  }
+})
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          6430
+        </td>
+        <td>
+          1395
+          -
+          1405
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.lang.System.out
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.out
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          6390
+        </td>
+        <td>
+          1430
+          -
+          1440
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.lang.System.err
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.err
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          6486
+        </td>
+        <td>
+          1509
+          -
+          1539
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.PrintStream.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          new java.io.PrintStream(NullOutStream)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          6445
+        </td>
+        <td>
+          1566
+          -
+          1596
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.PrintStream.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          new java.io.PrintStream(NullOutStream)
+        </td>
+      </tr><tr>
+        <td>
+          51
+        </td>
+        <td>
+          6395
+        </td>
+        <td>
+          1603
+          -
+          1631
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setOut
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.setOut(fakeOutStream)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          6464
+        </td>
+        <td>
+          1638
+          -
+          1666
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setErr
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.setErr(fakeErrStream)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          6423
+        </td>
+        <td>
+          1677
+          -
+          1682
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.testing.ErrorReporting.thunk
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          thunk
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          6426
+        </td>
+        <td>
+          1697
+          -
+          1817
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  java.lang.System.setOut(originalOut);
+  java.lang.System.setErr(originalErr)
+}
+        </td>
+      </tr><tr>
+        <td>
+          56
+        </td>
+        <td>
+          6409
+        </td>
+        <td>
+          1748
+          -
+          1774
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setOut
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.setOut(originalOut)
+        </td>
+      </tr><tr>
+        <td>
+          57
+        </td>
+        <td>
+          6474
+        </td>
+        <td>
+          1783
+          -
+          1809
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setErr
+        </td>
+        <td>
+          org.http4s.circe.middleware.jsondebugerrorhandlerspec
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.setErr(originalErr)
+        </td>
+      </tr><tr>
+        <td>
+          66
+        </td>
+        <td>
+          6408
+        </td>
+        <td>
+          2019
+          -
+          2019
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.testing.ErrorReporting.$anonfun.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anonfun()
+        </td>
+      </tr><tr>
+        <td>
+          68
+        </td>
+        <td>
+          6454
+        </td>
+        <td>
+          2062
+          -
+          2107
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          cats.syntax.ApplicativeIdOps.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          cats.syntax.`package`.all.catsSyntaxApplicativeId[org.http4s.Response[G]](mf.toHttpResponse[G](req.httpVersion)).pure[F](F)
+        </td>
+      </tr><tr>
+        <td>
+          70
+        </td>
+        <td>
+          6425
+        </td>
+        <td>
+          2142
+          -
+          2365
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[org.http4s.Response[[_]G[_]]](Response.apply[[_]G[_]](Status.InternalServerError, req.httpVersion, Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.close)(headers.this.Connection.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)), Response.apply$default$4[Nothing], Response.apply$default$5[Nothing]))
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          6465
+        </td>
+        <td>
+          2160
+          -
+          2355
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Response.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply[[_]G[_]](Status.InternalServerError, req.httpVersion, Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.close)(headers.this.Connection.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)), Response.apply$default$4[Nothing], Response.apply$default$5[Nothing])
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          6405
+        </td>
+        <td>
+          2160
+          -
+          2160
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$5
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          71
+        </td>
+        <td>
+          6443
+        </td>
+        <td>
+          2160
+          -
+          2160
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Response.apply$default$4
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Response.apply$default$4[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          72
+        </td>
+        <td>
+          6448
+        </td>
+        <td>
+          2182
+          -
+          2208
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Status.InternalServerError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Status.InternalServerError
+        </td>
+      </tr><tr>
+        <td>
+          73
+        </td>
+        <td>
+          6396
+        </td>
+        <td>
+          2222
+          -
+          2237
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Request.httpVersion
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          req.httpVersion
+        </td>
+      </tr><tr>
+        <td>
+          74
+        </td>
+        <td>
+          6458
+        </td>
+        <td>
+          2251
+          -
+          2342
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Headers.apply(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.close)(headers.this.Connection.headerInstance), Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance))
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          6461
+        </td>
+        <td>
+          2274
+          -
+          2290
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.close
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Connection.close
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          6415
+        </td>
+        <td>
+          2274
+          -
+          2290
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Connection](org.http4s.headers.Connection.close)(headers.this.Connection.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          75
+        </td>
+        <td>
+          6424
+        </td>
+        <td>
+          2285
+          -
+          2285
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Connection.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Connection.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          6483
+        </td>
+        <td>
+          2306
+          -
+          2327
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.zero
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          org.http4s.headers.Content-Length.zero
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          6427
+        </td>
+        <td>
+          2323
+          -
+          2323
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.headers.Content-Length.headerInstance
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          headers.this.Content-Length.headerInstance
+        </td>
+      </tr><tr>
+        <td>
+          76
+        </td>
+        <td>
+          6394
+        </td>
+        <td>
+          2306
+          -
+          2327
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.Header.ToRaw.modelledHeadersToRaw
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](org.http4s.headers.Content-Length.zero)(headers.this.Content-Length.headerInstance)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          6462
+        </td>
+        <td>
+          2543
+          -
+          3115
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.synchronized
+        </td>
+        <td>
+          org.http4s.internal.executionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          ErrorReporting.this.synchronized[A]({
+  val oldErr: java.io.PrintStream = java.lang.System.err;
+  val outStream: java.io.ByteArrayOutputStream = new java.io.ByteArrayOutputStream();
+  val fakeErr: java.io.PrintStream = new java.io.PrintStream(outStream);
+  java.lang.System.setErr(fakeErr);
+  try {
+    val result: A = thunk;
+    java.lang.System.setErr(oldErr);
+    result
+  } catch {
+    case scala.util.control.NonFatal.unapply(&lt;unapply-selector&gt;) &lt;unapply&gt; ((e @ _)) =&gt; {
+      java.lang.System.setErr(oldErr);
+      fakeErr.close();
+      val out: String = outStream.toString(&quot;utf-8&quot;);
+      if (scala.Predef.augmentString(out).nonEmpty)
+        oldErr.println(out)
+      else
+        ();
+      throw e
+    }
+  }
+})
+        </td>
+      </tr><tr>
+        <td>
+          88
+        </td>
+        <td>
+          6480
+        </td>
+        <td>
+          2607
+          -
+          2617
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.lang.System.err
+        </td>
+        <td>
+          org.http4s.internal.executionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.err
+        </td>
+      </tr><tr>
+        <td>
+          89
+        </td>
+        <td>
+          6437
+        </td>
+        <td>
+          2640
+          -
+          2667
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.ByteArrayOutputStream.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.internal.executionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new java.io.ByteArrayOutputStream()
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          6388
+        </td>
+        <td>
+          2688
+          -
+          2714
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.PrintStream.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.internal.executionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new java.io.PrintStream(outStream)
+        </td>
+      </tr><tr>
+        <td>
+          91
+        </td>
+        <td>
+          6459
+        </td>
+        <td>
+          2721
+          -
+          2743
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setErr
+        </td>
+        <td>
+          org.http4s.internal.executionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.setErr(fakeErr)
+        </td>
+      </tr><tr>
+        <td>
+          92
+        </td>
+        <td>
+          6402
+        </td>
+        <td>
+          2754
+          -
+          2835
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          org.http4s.internal.executionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val result: A = thunk;
+  java.lang.System.setErr(oldErr);
+  result
+}
+        </td>
+      </tr><tr>
+        <td>
+          94
+        </td>
+        <td>
+          6441
+        </td>
+        <td>
+          2791
+          -
+          2812
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setErr
+        </td>
+        <td>
+          org.http4s.internal.executionsuite
+        </td>
+        <td style="background: #AEF1AE">
+          java.lang.System.setErr(oldErr)
+        </td>
+      </tr><tr>
+        <td>
+          98
+        </td>
+        <td>
+          6466
+        </td>
+        <td>
+          2882
+          -
+          2903
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setErr
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.System.setErr(oldErr)
+        </td>
+      </tr><tr>
+        <td>
+          100
+        </td>
+        <td>
+          6421
+        </td>
+        <td>
+          2972
+          -
+          2987
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.PrintStream.close
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fakeErr.close()
+        </td>
+      </tr><tr>
+        <td>
+          101
+        </td>
+        <td>
+          6384
+        </td>
+        <td>
+          3008
+          -
+          3035
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.ByteArrayOutputStream.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          outStream.toString(&quot;utf-8&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          6477
+        </td>
+        <td>
+          3050
+          -
+          3062
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.StringOps.nonEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.Predef.augmentString(out).nonEmpty
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          6455
+        </td>
+        <td>
+          3046
+          -
+          3046
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          6428
+        </td>
+        <td>
+          3064
+          -
+          3083
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.PrintStream.println
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          oldErr.println(out)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          6389
+        </td>
+        <td>
+          3064
+          -
+          3083
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          java.io.PrintStream.println
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          oldErr.println(out)
+        </td>
+      </tr><tr>
+        <td>
+          102
+        </td>
+        <td>
+          6442
+        </td>
+        <td>
+          3046
+          -
+          3046
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ()
+        </td>
+      </tr><tr>
+        <td>
+          103
+        </td>
+        <td>
+          6403
+        </td>
+        <td>
+          3094
+          -
+          3101
+        </td>
+        <td>
+          Throw
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          throw e
+        </td>
+      </tr><tr>
+        <td>
+          110
+        </td>
+        <td>
+          6420
+        </td>
+        <td>
+          3232
+          -
+          3536
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Object.synchronized
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          ErrorReporting.this.synchronized[String]({
+  val oldErr: java.io.PrintStream = java.lang.System.err;
+  val outStream: java.io.ByteArrayOutputStream = new java.io.ByteArrayOutputStream();
+  val fakeErr: java.io.PrintStream = new java.io.PrintStream(outStream);
+  java.lang.System.setErr(fakeErr);
+  try {
+    thunk
+  } finally {
+    java.lang.System.setErr(oldErr);
+    fakeErr.close()
+  };
+  outStream.toString(&quot;utf-8&quot;)
+})
+        </td>
+      </tr><tr>
+        <td>
+          111
+        </td>
+        <td>
+          6422
+        </td>
+        <td>
+          3266
+          -
+          3276
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          java.lang.System.err
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.System.err
+        </td>
+      </tr><tr>
+        <td>
+          112
+        </td>
+        <td>
+          6382
+        </td>
+        <td>
+          3299
+          -
+          3326
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.ByteArrayOutputStream.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.io.ByteArrayOutputStream()
+        </td>
+      </tr><tr>
+        <td>
+          113
+        </td>
+        <td>
+          6479
+        </td>
+        <td>
+          3347
+          -
+          3373
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.PrintStream.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new java.io.PrintStream(outStream)
+        </td>
+      </tr><tr>
+        <td>
+          114
+        </td>
+        <td>
+          6429
+        </td>
+        <td>
+          3380
+          -
+          3402
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setErr
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.System.setErr(fakeErr)
+        </td>
+      </tr><tr>
+        <td>
+          115
+        </td>
+        <td>
+          6387
+        </td>
+        <td>
+          3413
+          -
+          3418
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.testing.ErrorReporting.thunk
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          thunk
+        </td>
+      </tr><tr>
+        <td>
+          116
+        </td>
+        <td>
+          6404
+        </td>
+        <td>
+          3433
+          -
+          3496
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          {
+  java.lang.System.setErr(oldErr);
+  fakeErr.close()
+}
+        </td>
+      </tr><tr>
+        <td>
+          117
+        </td>
+        <td>
+          6456
+        </td>
+        <td>
+          3443
+          -
+          3464
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.System.setErr
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.System.setErr(oldErr)
+        </td>
+      </tr><tr>
+        <td>
+          118
+        </td>
+        <td>
+          6439
+        </td>
+        <td>
+          3473
+          -
+          3488
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.PrintStream.close
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          fakeErr.close()
+        </td>
+      </tr><tr>
+        <td>
+          120
+        </td>
+        <td>
+          6460
+        </td>
+        <td>
+          3503
+          -
+          3530
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.io.ByteArrayOutputStream.toString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          outStream.toString(&quot;utf-8&quot;)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

@@ -1,0 +1,560 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/client/Http4sClientDsl.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2014 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s
+</span>18 <span style=''>package client
+</span>19 <span style=''>package dsl
+</span>20 <span style=''>
+</span>21 <span style=''>import cats.Applicative
+</span>22 <span style=''>import org.http4s.headers.`Content-Length`
+</span>23 <span style=''>
+</span>24 <span style=''>trait Http4sClientDsl[F[_]] {
+</span>25 <span style=''>  implicit def http4sClientSyntaxMethod(method: Method): MethodOps[F] =
+</span>26 <span style=''>    </span><span style='background: #AEF1AE'>new MethodOps[F](method)</span><span style=''>
+</span>27 <span style=''>
+</span>28 <span style=''>  implicit def http4sHeadersDecoder[T](implicit
+</span>29 <span style=''>      F: Applicative[F],
+</span>30 <span style=''>      decoder: EntityDecoder[F, T],
+</span>31 <span style=''>  ): EntityDecoder[F, (Headers, T)] = {
+</span>32 <span style=''>    val s = </span><span style='background: #F0ADAD'>decoder.consumes.toList</span><span style=''>
+</span>33 <span style=''>    </span><span style='background: #F0ADAD'>EntityDecoder.decodeBy(s.head, s.tail: _*)(resp =&gt;
+</span>34 <span style=''></span><span style='background: #F0ADAD'>      decoder.decode(resp, strict = true).map(t =&gt; (resp.headers, t))
+</span>35 <span style=''></span><span style='background: #F0ADAD'>    )</span><span style=''>
+</span>36 <span style=''>  }
+</span>37 <span style=''>}
+</span>38 <span style=''>
+</span>39 <span style=''>object Http4sClientDsl {
+</span>40 <span style=''>  def apply[F[_]]: Http4sClientDsl[F] = </span><span style='background: #F0ADAD'>new</span><span style=''> Http4sClientDsl[F] {}
+</span>41 <span style=''>}
+</span>42 <span style=''>
+</span>43 <span style=''>class MethodOps[F[_]](private val method: Method) extends AnyVal {
+</span>44 <span style=''>
+</span>45 <span style=''>  /** Make a [[org.http4s.Request]] using this [[Method]] */
+</span>46 <span style=''>  final def apply(uri: Uri, headers: Header.ToRaw*): Request[F] =
+</span>47 <span style=''>    </span><span style='background: #AEF1AE'>Request(method, uri, headers = Headers(headers: _*))</span><span style=''>
+</span>48 <span style=''>
+</span>49 <span style=''>  /** Make a [[org.http4s.Request]] using this Method */
+</span>50 <span style=''>  final def apply[A](body: A, uri: Uri, headers: Header.ToRaw*)(implicit
+</span>51 <span style=''>      w: EntityEncoder[F, A]
+</span>52 <span style=''>  ): Request[F] = {
+</span>53 <span style=''>    val h = </span><span style='background: #AEF1AE'>w.headers ++ Headers(headers: _*)</span><span style=''>
+</span>54 <span style=''>    val entity = </span><span style='background: #AEF1AE'>w.toEntity(body)</span><span style=''>
+</span>55 <span style=''>    val newHeaders = </span><span style='background: #AEF1AE'>entity.length
+</span>56 <span style=''></span><span style='background: #AEF1AE'>      .map { l =&gt;
+</span>57 <span style=''></span><span style='background: #AEF1AE'>        `Content-Length`.fromLong(l).fold(_ =&gt; h, c =&gt; h.put(c))
+</span>58 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>59 <span style=''></span><span style='background: #AEF1AE'>      .getOrElse(h)</span><span style=''>
+</span>60 <span style=''>    </span><span style='background: #AEF1AE'>Request(method = method, uri = uri, headers = newHeaders, body = entity.body)</span><span style=''>
+</span>61 <span style=''>  }
+</span>62 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          26
+        </td>
+        <td>
+          11659
+        </td>
+        <td>
+          816
+          -
+          840
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.dsl.MethodOps.&lt;init&gt;
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          new org.http4s.client.dsl.MethodOps[F](method)
+        </td>
+      </tr><tr>
+        <td>
+          32
+        </td>
+        <td>
+          11473
+        </td>
+        <td>
+          1003
+          -
+          1026
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.toList
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          decoder.consumes.toList
+        </td>
+      </tr><tr>
+        <td>
+          33
+        </td>
+        <td>
+          11017
+        </td>
+        <td>
+          1031
+          -
+          1157
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.EntityDecoder.decodeBy
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          EntityDecoder.decodeBy[[_]F[_], (org.http4s.Headers, T)](s.head, (s.tail: _*))(((resp: org.http4s.Media[[_]F[_]]) =&gt; decoder.decode(resp, true).map[(org.http4s.Headers, T)](((t: T) =&gt; scala.Tuple2.apply[org.http4s.Headers, T](resp.headers, t)))(F)))(F)
+        </td>
+      </tr><tr>
+        <td>
+          40
+        </td>
+        <td>
+          11784
+        </td>
+        <td>
+          1230
+          -
+          1233
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.client.dsl.Http4sClientDsl.$anon.&lt;init&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          new $anon()
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          11845
+        </td>
+        <td>
+          1458
+          -
+          1458
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Request.apply$default$3
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          11300
+        </td>
+        <td>
+          1466
+          -
+          1472
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.dsl.MethodOps.method
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          MethodOps.this.method
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          11395
+        </td>
+        <td>
+          1458
+          -
+          1458
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Request.apply$default$5
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.apply$default$5[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          12073
+        </td>
+        <td>
+          1489
+          -
+          1509
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply((headers: _*))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          12136
+        </td>
+        <td>
+          1458
+          -
+          1458
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Request.apply$default$6
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.apply$default$6[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          11663
+        </td>
+        <td>
+          1458
+          -
+          1510
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.apply
+        </td>
+        <td>
+          org.http4s.ember.server.emberservermtlssuite,org.http4s.client.clientsyntaxsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.apply[[_]F[_]](x$1, x$2, x$4, x$3, x$5, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          11055
+        </td>
+        <td>
+          1703
+          -
+          1736
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.++
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          w.headers.++(Headers.apply((headers: _*)))
+        </td>
+      </tr><tr>
+        <td>
+          53
+        </td>
+        <td>
+          11475
+        </td>
+        <td>
+          1716
+          -
+          1736
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Headers.apply
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Headers.apply((headers: _*))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          11787
+        </td>
+        <td>
+          1754
+          -
+          1770
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.EntityEncoder.toEntity
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          w.toEntity(body)
+        </td>
+      </tr><tr>
+        <td>
+          59
+        </td>
+        <td>
+          11302
+        </td>
+        <td>
+          1792
+          -
+          1916
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          entity.length.map[org.http4s.Headers](((l: Long) =&gt; org.http4s.headers.Content-Length.fromLong(l).fold[org.http4s.Headers](((x$1: org.http4s.ParseFailure) =&gt; h), ((c: org.http4s.headers.Content-Length) =&gt; h.put(Header.this.ToRaw.modelledHeadersToRaw[org.http4s.headers.Content-Length](c)(headers.this.Content-Length.headerInstance)))))).getOrElse[org.http4s.Headers](h)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          11693
+        </td>
+        <td>
+          1921
+          -
+          1998
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Request.apply
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.apply[[_]F[_]](x$1, x$2, x$5, x$3, x$4, x$6)
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          11847
+        </td>
+        <td>
+          1986
+          -
+          1997
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Entity.body
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          entity.body
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          12140
+        </td>
+        <td>
+          1921
+          -
+          1921
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Request.apply$default$6
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.apply$default$6[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          11382
+        </td>
+        <td>
+          1921
+          -
+          1921
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          org.http4s.Request.apply$default$3
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          Request.apply$default$3[Nothing]
+        </td>
+      </tr><tr>
+        <td>
+          60
+        </td>
+        <td>
+          12058
+        </td>
+        <td>
+          1938
+          -
+          1944
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.client.dsl.MethodOps.method
+        </td>
+        <td>
+          org.http4s.ember.server.emberserversuite,org.http4s.client.middleware.followredirectsuite
+        </td>
+        <td style="background: #AEF1AE">
+          MethodOps.this.method
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>

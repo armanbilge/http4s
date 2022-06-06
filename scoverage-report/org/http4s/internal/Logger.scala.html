@@ -1,0 +1,1079 @@
+<html>
+      <head>
+        <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+        <title id="title">
+          org/http4s/internal/Logger.scala.html
+        </title>
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/1.10.2/jquery.min.js"></script><link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/css/theme.default.min.css" type="text/css"/><script src="https://cdnjs.cloudflare.com/ajax/libs/jquery.tablesorter/2.20.1/js/jquery.tablesorter.min.js"></script><link rel="stylesheet" href="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/css/bootstrap.min.css" type="text/css"/><script src="https://netdna.bootstrapcdn.com/bootstrap/3.0.3/js/bootstrap.min.js"></script><script type="text/javascript">
+        $(document).ready(function() {$(".tablesorter").tablesorter();});
+      </script>
+        <style>
+          table.codegrid { font-family: monospace; font-size: 12px; width: auto!important; }table.statementlist { width: auto!important; font-size: 13px; } table.codegrid td { padding: 0!important; border: 0!important } table td.linenumber { width: 40px!important; } 
+        </style>
+      </head>
+      <body style="font-family: monospace;">
+        <ul class="nav nav-tabs">
+          <li>
+            <a href="#codegrid" data-toggle="tab">Codegrid</a>
+          </li>
+          <li>
+            <a href="#statementlist" data-toggle="tab">Statement List</a>
+          </li>
+        </ul>
+        <div class="tab-content">
+          <div class="tab-pane active" id="codegrid">
+            <pre style='font-size: 12pt; font-family: courier, monospace;'>1 <span style=''>/*
+</span>2 <span style=''> * Copyright 2013 http4s.org
+</span>3 <span style=''> *
+</span>4 <span style=''> * Licensed under the Apache License, Version 2.0 (the &quot;License&quot;);
+</span>5 <span style=''> * you may not use this file except in compliance with the License.
+</span>6 <span style=''> * You may obtain a copy of the License at
+</span>7 <span style=''> *
+</span>8 <span style=''> *     http://www.apache.org/licenses/LICENSE-2.0
+</span>9 <span style=''> *
+</span>10 <span style=''> * Unless required by applicable law or agreed to in writing, software
+</span>11 <span style=''> * distributed under the License is distributed on an &quot;AS IS&quot; BASIS,
+</span>12 <span style=''> * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+</span>13 <span style=''> * See the License for the specific language governing permissions and
+</span>14 <span style=''> * limitations under the License.
+</span>15 <span style=''> */
+</span>16 <span style=''>
+</span>17 <span style=''>package org.http4s.internal
+</span>18 <span style=''>
+</span>19 <span style=''>import cats.Monad
+</span>20 <span style=''>import cats.effect.Concurrent
+</span>21 <span style=''>import cats.syntax.all._
+</span>22 <span style=''>import fs2.Stream
+</span>23 <span style=''>import org.http4s.Charset
+</span>24 <span style=''>import org.http4s.Headers
+</span>25 <span style=''>import org.http4s.MediaType
+</span>26 <span style=''>import org.http4s.Message
+</span>27 <span style=''>import org.http4s.Request
+</span>28 <span style=''>import org.http4s.Response
+</span>29 <span style=''>import org.typelevel.ci.CIString
+</span>30 <span style=''>
+</span>31 <span style=''>object Logger {
+</span>32 <span style=''>
+</span>33 <span style=''>  def defaultLogHeaders[F[_], A &lt;: Message[F]](message: A)(
+</span>34 <span style=''>      logHeaders: Boolean,
+</span>35 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>36 <span style=''>  ): String =
+</span>37 <span style=''>    if (logHeaders)
+</span>38 <span style=''>      </span><span style='background: #AEF1AE'>message.headers.redactSensitive(redactHeadersWhen).headers.mkString(&quot;Headers(&quot;, &quot;, &quot;, &quot;)&quot;)</span><span style=''>
+</span>39 <span style=''>    else </span><span style='background: #F0ADAD'>&quot;&quot;</span><span style=''>
+</span>40 <span style=''>
+</span>41 <span style=''>  def defaultLogBody[F[_]: Concurrent, A &lt;: Message[F]](
+</span>42 <span style=''>      message: A
+</span>43 <span style=''>  )(logBody: Boolean): Option[F[String]] =
+</span>44 <span style=''>    if (logBody) </span><span style='background: #AEF1AE'>{
+</span>45 <span style=''></span><span style='background: #AEF1AE'>      val isBinary = message.contentType.exists(_.mediaType.binary)
+</span>46 <span style=''></span><span style='background: #AEF1AE'>      val isJson = message.contentType.exists(mT =&gt;
+</span>47 <span style=''></span><span style='background: #AEF1AE'>        mT.mediaType == MediaType.application.json || mT.mediaType.subType.endsWith(&quot;+json&quot;)
+</span>48 <span style=''></span><span style='background: #AEF1AE'>      )
+</span>49 <span style=''></span><span style='background: #AEF1AE'>      val bodyStream = if (!isBinary || isJson) {
+</span>50 <span style=''></span><span style='background: #AEF1AE'>        message.bodyText(implicitly, message.charset.getOrElse(Charset.`UTF-8`))
+</span>51 <span style=''></span><span style='background: #AEF1AE'>      } else {
+</span>52 <span style=''></span><span style='background: #AEF1AE'>        </span><span style='background: #F0ADAD'>message.body.map(b =&gt; java.lang.Integer.toHexString(b &amp; 0xff))</span><span style='background: #AEF1AE'>
+</span>53 <span style=''></span><span style='background: #AEF1AE'>      }
+</span>54 <span style=''></span><span style='background: #AEF1AE'>      Some(bodyStream.compile.string)
+</span>55 <span style=''></span><span style='background: #AEF1AE'>    }</span><span style=''> else </span><span style='background: #F0ADAD'>None</span><span style=''>
+</span>56 <span style=''>
+</span>57 <span style=''>  def logMessage[F[_], A &lt;: Message[F]](message: A)(
+</span>58 <span style=''>      logHeaders: Boolean,
+</span>59 <span style=''>      logBody: Boolean,
+</span>60 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>61 <span style=''>  )(log: String =&gt; F[Unit])(implicit F: Concurrent[F]): F[Unit] = {
+</span>62 <span style=''>    val logBodyText = (_: Stream[F, Byte]) =&gt; </span><span style='background: #AEF1AE'>defaultLogBody[F, A](message)(logBody)</span><span style=''>
+</span>63 <span style=''>
+</span>64 <span style=''>    </span><span style='background: #AEF1AE'>logMessageWithBodyText[F, A](message)(logHeaders, logBodyText, redactHeadersWhen)(log)</span><span style=''>
+</span>65 <span style=''>  }
+</span>66 <span style=''>
+</span>67 <span style=''>  def logMessageWithBodyText[F[_], A &lt;: Message[F]](message: A)(
+</span>68 <span style=''>      logHeaders: Boolean,
+</span>69 <span style=''>      logBodyText: Stream[F, Byte] =&gt; Option[F[String]],
+</span>70 <span style=''>      redactHeadersWhen: CIString =&gt; Boolean = Headers.SensitiveHeaders.contains,
+</span>71 <span style=''>  )(log: String =&gt; F[Unit])(implicit F: Monad[F]): F[Unit] = {
+</span>72 <span style=''>    def prelude =
+</span>73 <span style=''>      message match {
+</span>74 <span style=''>        case req: Request[_] =&gt; s&quot;${req.httpVersion} ${req.method} ${req.uri}&quot;
+</span>75 <span style=''>        case resp: Response[_] =&gt; s&quot;${resp.httpVersion} ${resp.status}&quot;
+</span>76 <span style=''>      }
+</span>77 <span style=''>
+</span>78 <span style=''>    val headers: String = </span><span style='background: #AEF1AE'>defaultLogHeaders[F, A](message)(logHeaders, redactHeadersWhen)</span><span style=''>
+</span>79 <span style=''>
+</span>80 <span style=''>    val bodyText: F[String] =
+</span>81 <span style=''>      </span><span style='background: #AEF1AE'>logBodyText(message.body)</span><span style=''> match {
+</span>82 <span style=''>        case Some(textF) =&gt; </span><span style='background: #AEF1AE'>textF.map(text =&gt; s&quot;&quot;&quot;body=&quot;$text&quot;&quot;&quot;&quot;)</span><span style=''>
+</span>83 <span style=''>        case None =&gt; </span><span style='background: #F0ADAD'>F.pure(&quot;&quot;)</span><span style=''>
+</span>84 <span style=''>      }
+</span>85 <span style=''>
+</span>86 <span style=''>    def spaced(x: String): String = if (</span><span style='background: #AEF1AE'>x.isEmpty</span><span style=''>) </span><span style='background: #F0ADAD'>x</span><span style=''> else </span><span style='background: #AEF1AE'>s&quot; $x&quot;</span><span style=''>
+</span>87 <span style=''>
+</span>88 <span style=''>    </span><span style='background: #AEF1AE'>bodyText
+</span>89 <span style=''></span><span style='background: #AEF1AE'>      .map(body =&gt; s&quot;$prelude${spaced(headers)}${spaced(body)}&quot;)
+</span>90 <span style=''></span><span style='background: #AEF1AE'>      .flatMap(log)</span><span style=''>
+</span>91 <span style=''>  }
+</span>92 <span style=''>
+</span>93 <span style=''>}
+</span></pre>
+          </div>
+          <div class="tab-pane" id="statementlist">
+            <table cellspacing="0" cellpadding="0" class="table statementlist">
+      <tr>
+        <th>Line</th>
+        <th>Stmt Id</th>
+        <th>Pos</th>
+        <th>Tree</th>
+        <th>Symbol</th>
+        <th>Tests</th>
+        <th>Code</th>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          19136
+        </td>
+        <td>
+          1134
+          -
+          1224
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          message.headers.redactSensitive(redactHeadersWhen).headers.mkString(&quot;Headers(&quot;, &quot;, &quot;, &quot;)&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          38
+        </td>
+        <td>
+          22627
+        </td>
+        <td>
+          1134
+          -
+          1224
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.collection.IterableOnceOps.mkString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          message.headers.redactSensitive(redactHeadersWhen).headers.mkString(&quot;Headers(&quot;, &quot;, &quot;, &quot;)&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          13178
+        </td>
+        <td>
+          1234
+          -
+          1236
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          39
+        </td>
+        <td>
+          15388
+        </td>
+        <td>
+          1234
+          -
+          1236
+        </td>
+        <td>
+          Literal
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          &quot;&quot;
+        </td>
+      </tr><tr>
+        <td>
+          44
+        </td>
+        <td>
+          18233
+        </td>
+        <td>
+          1372
+          -
+          1863
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          {
+  val isBinary: Boolean = message.contentType.exists(((x$1: org.http4s.headers.Content-Type) =&gt; x$1.mediaType.binary));
+  val isJson: Boolean = message.contentType.exists(((mT: org.http4s.headers.Content-Type) =&gt; mT.mediaType.==(org.http4s.MediaType.application.json).||(mT.mediaType.subType.endsWith(&quot;+json&quot;))));
+  val bodyStream: fs2.Stream[F,String] = if (isBinary.unary_!.||(isJson))
+    message.bodyText(scala.Predef.implicitly[fs2.RaiseThrowable[F]](fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](evidence$1)), message.charset.getOrElse[org.http4s.Charset](org.http4s.Charset.UTF-8))
+  else
+    message.body.map[String](((b: Byte) =&gt; java.lang.Integer.toHexString(b.&amp;(255))));
+  scala.Some.apply[F[String]](bodyStream.compile[[x]F[x], [x]F[x], String](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$1))).string(scala.this.&lt;:&lt;.refl[String]))
+}
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          19946
+        </td>
+        <td>
+          1422
+          -
+          1440
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.MediaType.binary
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x$1.mediaType.binary
+        </td>
+      </tr><tr>
+        <td>
+          45
+        </td>
+        <td>
+          15567
+        </td>
+        <td>
+          1395
+          -
+          1441
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          message.contentType.exists(((x$1: org.http4s.headers.Content-Type) =&gt; x$1.mediaType.binary))
+        </td>
+      </tr><tr>
+        <td>
+          46
+        </td>
+        <td>
+          16440
+        </td>
+        <td>
+          1461
+          -
+          1594
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.exists
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          message.contentType.exists(((mT: org.http4s.headers.Content-Type) =&gt; mT.mediaType.==(org.http4s.MediaType.application.json).||(mT.mediaType.subType.endsWith(&quot;+json&quot;))))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          18633
+        </td>
+        <td>
+          1502
+          -
+          1586
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          mT.mediaType.==(org.http4s.MediaType.application.json).||(mT.mediaType.subType.endsWith(&quot;+json&quot;))
+        </td>
+      </tr><tr>
+        <td>
+          47
+        </td>
+        <td>
+          22308
+        </td>
+        <td>
+          1548
+          -
+          1586
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.endsWith
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          mT.mediaType.subType.endsWith(&quot;+json&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          49
+        </td>
+        <td>
+          23149
+        </td>
+        <td>
+          1622
+          -
+          1641
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Boolean.||
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          isBinary.unary_!.||(isJson)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          15403
+        </td>
+        <td>
+          1670
+          -
+          1680
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          scala.Predef.implicitly
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Predef.implicitly[fs2.RaiseThrowable[F]](fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](evidence$1))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          13046
+        </td>
+        <td>
+          1708
+          -
+          1723
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Charset.UTF-8
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          org.http4s.Charset.UTF-8
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          22331
+        </td>
+        <td>
+          1653
+          -
+          1725
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          org.http4s.Media.bodyText
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          message.bodyText(scala.Predef.implicitly[fs2.RaiseThrowable[F]](fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](evidence$1)), message.charset.getOrElse[org.http4s.Charset](org.http4s.Charset.UTF-8))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          19149
+        </td>
+        <td>
+          1670
+          -
+          1670
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.RaiseThrowable.fromApplicativeError
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          15841
+        </td>
+        <td>
+          1653
+          -
+          1725
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.Media.bodyText
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          message.bodyText(scala.Predef.implicitly[fs2.RaiseThrowable[F]](fs2.this.RaiseThrowable.fromApplicativeError[[_]F[_]](evidence$1)), message.charset.getOrElse[org.http4s.Charset](org.http4s.Charset.UTF-8))
+        </td>
+      </tr><tr>
+        <td>
+          50
+        </td>
+        <td>
+          19693
+        </td>
+        <td>
+          1682
+          -
+          1724
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Option.getOrElse
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          message.charset.getOrElse[org.http4s.Charset](org.http4s.Charset.UTF-8)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          18350
+        </td>
+        <td>
+          1801
+          -
+          1809
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Byte.&amp;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          b.&amp;(255)
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          22898
+        </td>
+        <td>
+          1749
+          -
+          1811
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          fs2.Stream.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          message.body.map[String](((b: Byte) =&gt; java.lang.Integer.toHexString(b.&amp;(255))))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          19045
+        </td>
+        <td>
+          1749
+          -
+          1811
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          fs2.Stream.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          message.body.map[String](((b: Byte) =&gt; java.lang.Integer.toHexString(b.&amp;(255))))
+        </td>
+      </tr><tr>
+        <td>
+          52
+        </td>
+        <td>
+          16308
+        </td>
+        <td>
+          1771
+          -
+          1810
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.Integer.toHexString
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          java.lang.Integer.toHexString(b.&amp;(255))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          22351
+        </td>
+        <td>
+          1826
+          -
+          1857
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Some.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.Some.apply[F[String]](bodyStream.compile[[x]F[x], [x]F[x], String](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$1))).string(scala.this.&lt;:&lt;.refl[String]))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          13065
+        </td>
+        <td>
+          1842
+          -
+          1842
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.CompilerLowPriority1.target
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$1))
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          19560
+        </td>
+        <td>
+          1850
+          -
+          1850
+        </td>
+        <td>
+          TypeApply
+        </td>
+        <td>
+          scala.&lt;:&lt;.refl
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          scala.this.&lt;:&lt;.refl[String]
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          15265
+        </td>
+        <td>
+          1842
+          -
+          1842
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Compiler.Target.forConcurrent
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Compiler.this.Target.forConcurrent[[x]F[x]](evidence$1)
+        </td>
+      </tr><tr>
+        <td>
+          54
+        </td>
+        <td>
+          15539
+        </td>
+        <td>
+          1831
+          -
+          1856
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          fs2.Stream.CompileOps.string
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          bodyStream.compile[[x]F[x], [x]F[x], String](fs2.this.Compiler.target[[x]F[x]](Compiler.this.Target.forConcurrent[[x]F[x]](evidence$1))).string(scala.this.&lt;:&lt;.refl[String])
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          23125
+        </td>
+        <td>
+          1869
+          -
+          1873
+        </td>
+        <td>
+          Block
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          55
+        </td>
+        <td>
+          16329
+        </td>
+        <td>
+          1869
+          -
+          1873
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          scala.None
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          scala.None
+        </td>
+      </tr><tr>
+        <td>
+          62
+        </td>
+        <td>
+          18774
+        </td>
+        <td>
+          2175
+          -
+          2213
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.internal.Logger.defaultLogBody
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Logger.this.defaultLogBody[F, A](message)(logBody)(F)
+        </td>
+      </tr><tr>
+        <td>
+          64
+        </td>
+        <td>
+          15009
+        </td>
+        <td>
+          2219
+          -
+          2305
+        </td>
+        <td>
+          ApplyToImplicitArgs
+        </td>
+        <td>
+          org.http4s.internal.Logger.logMessageWithBodyText
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Logger.this.logMessageWithBodyText[F, A](message)(logHeaders, logBodyText, redactHeadersWhen)(log)(F)
+        </td>
+      </tr><tr>
+        <td>
+          78
+        </td>
+        <td>
+          21445
+        </td>
+        <td>
+          2831
+          -
+          2894
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          org.http4s.internal.Logger.defaultLogHeaders
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          Logger.this.defaultLogHeaders[F, A](message)(logHeaders, redactHeadersWhen)
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          19581
+        </td>
+        <td>
+          2944
+          -
+          2956
+        </td>
+        <td>
+          Select
+        </td>
+        <td>
+          org.http4s.Message.body
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          message.body
+        </td>
+      </tr><tr>
+        <td>
+          81
+        </td>
+        <td>
+          15563
+        </td>
+        <td>
+          2932
+          -
+          2957
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          scala.Function1.apply
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          logBodyText.apply(message.body)
+        </td>
+      </tr><tr>
+        <td>
+          82
+        </td>
+        <td>
+          21964
+        </td>
+        <td>
+          2994
+          -
+          3032
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Functor.Ops.map
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFunctorOps[F, String](textF)(F).map[String](((text: String) =&gt; (&quot;body=\&quot;&quot;.+(text).+(&quot;\&quot;&quot;): String)))
+        </td>
+      </tr><tr>
+        <td>
+          83
+        </td>
+        <td>
+          18247
+        </td>
+        <td>
+          3054
+          -
+          3064
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.Applicative.pure
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          F.pure[String](&quot;&quot;)
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          16205
+        </td>
+        <td>
+          3114
+          -
+          3123
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          java.lang.String.isEmpty
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          x.isEmpty()
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          23142
+        </td>
+        <td>
+          3125
+          -
+          3126
+        </td>
+        <td>
+          Ident
+        </td>
+        <td>
+          org.http4s.internal.Logger.x
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #F0ADAD">
+          x
+        </td>
+      </tr><tr>
+        <td>
+          86
+        </td>
+        <td>
+          18793
+        </td>
+        <td>
+          3132
+          -
+          3138
+        </td>
+        <td>
+          Typed
+        </td>
+        <td>
+          &lt;nosymbol&gt;
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          (&quot; &quot;.+(x): String)
+        </td>
+      </tr><tr>
+        <td>
+          90
+        </td>
+        <td>
+          15238
+        </td>
+        <td>
+          3144
+          -
+          3237
+        </td>
+        <td>
+          Apply
+        </td>
+        <td>
+          cats.FlatMap.Ops.flatMap
+        </td>
+        <td>
+          
+        </td>
+        <td style="background: #AEF1AE">
+          cats.syntax.`package`.all.toFlatMapOps[F, String](cats.syntax.`package`.all.toFunctorOps[F, String](bodyText)(F).map[String](((body: String) =&gt; (&quot;&quot;.+(prelude).+(spaced(headers)).+(spaced(body)): String))))(F).flatMap[Unit](log)
+        </td>
+      </tr>
+    </table>
+          </div>
+        </div>
+      </body>
+    </html>
