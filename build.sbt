@@ -18,6 +18,20 @@ ThisBuild / scalafixAll / skip := tlIsScala3.value
 ThisBuild / ScalafixConfig / skip := tlIsScala3.value
 ThisBuild / Test / scalafixConfig := Some(file(".scalafix.test.conf"))
 
+ThisBuild / githubWorkflowBuild ++= Seq(
+  WorkflowStep.Sbt(List("coverageAggregate")),
+  WorkflowStep.Use(
+    UseRef.Public(
+      "codecov",
+      "codecov-action",
+      "v2",
+    ),
+    params = Map(
+      "flags" -> List("${{matrix.scala}}", "${{matrix.java}}", "${{matrix.project}}").mkString(",")
+    ),
+  ),
+)
+
 ThisBuild / githubWorkflowAddedJobs ++= Seq(
   WorkflowJob(
     "scalafix",
@@ -633,12 +647,14 @@ lazy val bench = http4sProject("bench")
     libraryDependencies += circeParser,
     undeclaredCompileDependenciesTest := {},
     unusedCompileDependenciesTest := {},
+    coverageEnabled := false,
   )
   .dependsOn(core.jvm, circe.jvm, emberCore.jvm)
 
 lazy val jsArtifactSizeTest = http4sProject("js-artifact-size-test")
   .enablePlugins(ScalaJSPlugin, NoPublishPlugin)
   .settings(
+    coverageEnabled := false,
     // CI automatically links SJS test artifacts in a separate step, to avoid OOMs while running tests
     // By placing the app in Test scope it gets linked as part of that CI step
     Test / scalaJSUseMainModuleInitializer := true,
@@ -689,6 +705,7 @@ lazy val unidocs = http4sProject("unidocs")
 lazy val docs = http4sProject("site")
   .enablePlugins(Http4sSitePlugin)
   .settings(
+    coverageEnabled := false,
     libraryDependencies ++= Seq(
       circeGeneric,
       circeLiteral,
@@ -716,6 +733,7 @@ lazy val examples = http4sProject("examples")
       circeGeneric % Runtime,
       logbackClassic % Runtime,
     ),
+    coverageEnabled := false,
   )
   .dependsOn(server.jvm, theDsl.jvm, circe.jvm)
 
@@ -726,6 +744,7 @@ lazy val examplesEmber = exampleProject("examples-ember")
     startYear := Some(2020),
     fork := true,
     scalacOptions -= "-Xfatal-warnings",
+    coverageEnabled := false,
   )
   .dependsOn(emberServer.jvm, emberClient.jvm)
 
@@ -739,6 +758,7 @@ lazy val examplesDocker = http4sProject("examples-docker")
     Docker / maintainer := "http4s",
     dockerUpdateLatest := true,
     dockerExposedPorts := List(8080),
+    coverageEnabled := false,
   )
   .dependsOn(emberServer.jvm, theDsl.jvm)
 
@@ -798,7 +818,8 @@ def http4sProject(name: String) =
   Project(name, file(name))
     .settings(commonSettings)
     .settings(
-      moduleName := s"http4s-$name"
+      moduleName := s"http4s-$name",
+      coverageEnabled := !tlIsScala3.value,
     )
     .enablePlugins(Http4sPlugin)
     .dependsOn(scalafixInternalRules % ScalafixConfig)
@@ -819,9 +840,11 @@ def http4sCrossProject(name: String, crossType: CrossType) =
         }
         result
       },
+      coverageEnabled := !tlIsScala3.value,
     )
     .jsSettings(
-      Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule))
+      Test / scalaJSLinkerConfig ~= (_.withModuleKind(ModuleKind.CommonJSModule)),
+      coverageEnabled := false,
     )
     .enablePlugins(Http4sPlugin)
     .jsConfigure(_.disablePlugins(DoctestPlugin))
