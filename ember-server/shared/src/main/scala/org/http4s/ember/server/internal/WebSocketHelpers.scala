@@ -122,7 +122,7 @@ object WebSocketHelpers {
       val (stream, onClose) = ctx.webSocket match {
         case WebSocketCombinedPipe(receiveSend, onClose) =>
           incoming
-            .through(decodeFrames[F])
+            .through(decodeFrames[F](close))
             .evalMapFilter(handleIncomingFrame[F](writeFrame, close))
             .through(receiveSend)
             .foreach(writeFrame) -> onClose
@@ -143,7 +143,7 @@ object WebSocketHelpers {
           val writer: Stream[F, Nothing] = send.foreach(writeFrame) ++ Stream.exec(sendClosingFrame)
 
           val reader = incoming
-            .through(decodeFrames[F])
+            .through(decodeFrames[F](close))
             .evalMapFilter(handleIncomingFrame[F](writeFrame, close))
             .through(receive)
 
@@ -168,6 +168,7 @@ object WebSocketHelpers {
       case ping @ WebSocketFrame.Ping(data) =>
         writeFrame(WebSocketFrame.Pong(data)).as(ping.some)
       case frame @ WebSocketFrame.Close(_) =>
+        println("HEERIO" + frame.closeCode)
         closeState.get.flatMap {
           case Open =>
             for {
@@ -188,7 +189,9 @@ object WebSocketHelpers {
       Chunk.array(bytes)
     }
 
-  private def decodeFrames[F[_]](implicit F: Async[F]): Pipe[F, Byte, WebSocketFrame] = stream => {
+  private def decodeFrames[F[_]](
+      closeState: Ref[F, Close]
+  )(implicit F: Async[F]): Pipe[F, Byte, WebSocketFrame] = stream => {
     def go(rest: Stream[F, Byte], acc: Array[Byte]): Pull[F, WebSocketFrame, Unit] =
       rest.pull.uncons.flatMap {
         case Some((chunk, next)) =>
@@ -207,8 +210,11 @@ object WebSocketHelpers {
               }
             }
         case None =>
-          // TODO followup: sometimes the peer closes connection before stream can interrupt itself
-          Pull.raiseError(EndOfStreamError())
+          Pull.eval(closeState.get).flatMap {
+            case Open => Pull.raiseError(EndOfStreamError())
+            case _ => Pull.done
+          }
+
       }
 
     go(stream, Array.emptyByteArray).void.stream
