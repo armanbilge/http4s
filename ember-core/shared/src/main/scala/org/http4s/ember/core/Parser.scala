@@ -68,8 +68,6 @@ private[ember] object Parser {
   )
 
   object HeaderP {
-    import scala.collection.mutable.ListBuffer
-
     private[this] val colon: Byte = ':'.toByte
     private[this] val contentLengthS = "Content-Length"
     private[this] val transferEncodingS = "Transfer-Encoding"
@@ -82,7 +80,7 @@ private[ember] object Parser {
         complete: Boolean,
         chunked: Boolean,
         contentLength: Option[Long],
-        headers: ListBuffer[Header.Raw],
+        headers: List[Header.Raw],
         name: String,
         start: Int,
     )
@@ -95,7 +93,7 @@ private[ember] object Parser {
         complete = false,
         chunked = false,
         contentLength = None,
-        headers = ListBuffer.empty,
+        headers = List.empty,
         name = null,
         start = 0,
       )
@@ -111,7 +109,7 @@ private[ember] object Parser {
       var chunked: Boolean = s.chunked
       var contentLength: Option[Long] = s.contentLength
 
-      val headers: ListBuffer[Header.Raw] = s.headers
+      var headers: List[Header.Raw] = s.headers
       var name: String = s.name
       var start: Int = s.start
       val upperBound = Math.min(message.size - 1, maxHeaderSize)
@@ -158,7 +156,7 @@ private[ember] object Parser {
               chunked = hValue.contains(chunkedS)
             }
             start = idx + 1 // Next Start is after the CRLF
-            headers += newHeader // Add Header
+            headers = newHeader :: headers // Add Header
             state = false // Go back to Looking for HeaderName or Termination
           }
         }
