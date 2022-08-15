@@ -47,7 +47,7 @@ private[ember] object Parser {
           else {
             read.flatMap {
               case Some(chunk) =>
-                val nextBuffer = appendByteArrays(currentBuffer, chunk)
+                val nextBuffer = combineArrays(currentBuffer, chunk.toArray)
                 recurseFind(nextBuffer, read, maxHeaderSize, s)(f)(idx)
               case None if currentBuffer.length > 0 =>
                 F.raiseError(EmberException.ReachedEndOfStream())
