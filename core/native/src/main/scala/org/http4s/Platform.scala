@@ -1,5 +1,5 @@
 /*
- * Copyright 2019 http4s.org
+ * Copyright 2013 http4s.org
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,15 @@
  * limitations under the License.
  */
 
-package org.http4s.ember.client
+package org.http4s
 
-import cats.effect.Async
-import fs2.io.net.unixsocket.UnixSockets
-import org.typelevel.log4cats.Logger
-import org.typelevel.log4cats.noop.NoOpLogger
+import cats.effect.SyncIO
+import org.typelevel.log4cats
 
-private[client] trait EmberClientBuilderPlatform {
+private[http4s] object Platform {
+  final val isJvm = false
+  final val isJs = false
+  final val isNative = true
 
-  private[client] def defaultUnixSockets[F[_]: Async]: Option[UnixSockets[F]] =
-    Some(UnixSockets.forAsync)
-
-}
-
-private[client] trait EmberClientBuilderCompanionPlatform {
-
-  private[client] def defaultLogger[F[_]: Async]: Logger[F] = NoOpLogger[F]
-
+  lazy val loggerFactory: log4cats.LoggerFactory[SyncIO] = log4cats.noop.NoOpFactory[SyncIO]
 }

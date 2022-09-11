@@ -14,22 +14,20 @@
  * limitations under the License.
  */
 
-package org.http4s.ember.client
+package org.http4s.ember.core.h2
 
-import cats.effect.Async
-import fs2.io.net.unixsocket.UnixSockets
-import org.typelevel.log4cats.Logger
-import org.typelevel.log4cats.noop.NoOpLogger
+import cats.syntax.all._
+import fs2.io.net.tls.TLSParameters
 
-private[client] trait EmberClientBuilderPlatform {
+private[h2] abstract class H2TLSPlatform {
 
-  private[client] def defaultUnixSockets[F[_]: Async]: Option[UnixSockets[F]] =
-    Some(UnixSockets.forAsync)
-
-}
-
-private[client] trait EmberClientBuilderCompanionPlatform {
-
-  private[client] def defaultLogger[F[_]: Async]: Logger[F] = NoOpLogger[F]
+  def transform(params: TLSParameters): TLSParameters =
+    TLSParameters(
+      protocolPreferences = List("h2", "http/1.1").some,
+      cipherPreferences = params.cipherPreferences,
+      serverName = params.serverName,
+      verifyHostCallback = params.verifyHostCallback,
+      clientAuthType = params.clientAuthType,
+    )
 
 }
