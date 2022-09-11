@@ -148,7 +148,7 @@ object Http4sPlugin extends AutoPlugin {
   lazy val catsLaws = Def.setting("org.typelevel" %%% "cats-laws" % V.cats)
   lazy val catsParse = Def.setting("org.typelevel" %%% "cats-parse" % V.catsParse)
   lazy val circeCore = Def.setting("com.armanbilge" %%% "circe-core" % V.circe)
-  lazy val circeGeneric = "com.armanbilge" %% "circe-generic" % V.circe
+  lazy val circeGeneric = Def.setting("com.armanbilge" %%% "circe-generic" % V.circe)
   lazy val circeJawn = Def.setting("com.armanbilge" %%% "circe-jawn" % V.circe)
   lazy val circeLiteral = "com.armanbilge" %% "circe-literal" % V.circe
   lazy val circeParser = "com.armanbilge" %% "circe-parser" % V.circe

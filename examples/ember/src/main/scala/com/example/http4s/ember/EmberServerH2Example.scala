@@ -21,7 +21,7 @@ import cats.effect._
 import cats.effect.std.Console
 import cats.syntax.all._
 import com.comcast.ip4s._
-import com.example.http4s.ssl
+// import com.example.http4s.ssl
 import fs2._
 import fs2.io.net._
 import fs2.io.net.tls._
@@ -73,10 +73,11 @@ object EmberServerH2Example extends IOApp {
     }
 
     def testALPN[F[_]: Async: Console] = for {
-      sslContext <- Resource.eval(
-        ssl.loadContextFromClasspath(ssl.keystorePassword, ssl.keyManagerPassword)
-      )
-      tlsContext = Network[F].tlsContext.fromSSLContext(sslContext)
+      // sslContext <- Resource.eval(
+      //   ssl.loadContextFromClasspath(ssl.keystorePassword, ssl.keyManagerPassword)
+      // )
+      // sslContext <- TLSContext.Builder
+      tlsContext <- Network[F].tlsContext.insecureResource
       _ <- EmberServerBuilder
         .default[F]
         .withTLS(tlsContext, TLSParameters.Default)

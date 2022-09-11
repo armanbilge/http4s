@@ -24,8 +24,9 @@ import org.http4s._
 import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.core.h2._
 import org.http4s.implicits._
+import epollcat._
 
-object EmberClientH2Example extends IOApp {
+object EmberClientH2Example extends EpollApp {
 
   object ClientTest {
     def printPushPromiseSupport[F[_]: Async]
@@ -47,14 +48,13 @@ object EmberClientH2Example extends IOApp {
     }
 
     def test[F[_]: Async]: F[Unit] =
-      Resource
-        .eval(Network[F].tlsContext.insecure)
+      Network[F].tlsContext.systemResource
         .flatMap { tls =>
           EmberClientBuilder
             .default[F]
             .withHttp2
             .withTLSContext(tls)
-            .withLogger(org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F])
+            // .withLogger(org.typelevel.log4cats.slf4j.Slf4jLogger.getLogger[F])
             .withPushPromiseSupport(printPushPromiseSupport)
             .build
         }
@@ -68,9 +68,9 @@ object EmberClientH2Example extends IOApp {
                   // uri = uri"https://en.wikipedia.org/wiki/HTTP/2"
                   // uri = uri"https://twitter.com/"
                   // uri = uri"https://banno.com/"
-                  // uri = uri"http://http2.golang.org/reqinfo"
+                  uri = uri"http://http2.golang.org/reqinfo"
                   // uri = uri"http://localhost:8080/push-promise",
-                  uri = uri"http://localhost:8080/trailers",
+                  // uri = uri"http://localhost:8080/trailers",
                   // uri = uri"https://www.nikkei.com/" // PUSH PROMISES
                 )
                 .withAttribute(H2Keys.Http2PriorKnowledge, ())
@@ -81,7 +81,7 @@ object EmberClientH2Example extends IOApp {
               resp.body.compile.drain >> resp.trailerHeaders
                 .flatMap(h => Sync[F].delay(println(s"Resp $resp: trailers: $h")))
             )
-          p
+          Sync[F].delay(println("start")) *> p
         }
   }
 

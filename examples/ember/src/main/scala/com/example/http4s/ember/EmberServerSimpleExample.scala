@@ -31,7 +31,7 @@ import org.http4s.websocket.WebSocketFrame
 
 import scala.concurrent.duration._
 
-object EmberServerSimpleExample extends IOApp {
+object EmberServerSimpleExample extends epollcat.EpollApp {
 
   def run(args: List[String]): IO[ExitCode] = {
     val host = host"0.0.0.0"
@@ -65,6 +65,7 @@ object EmberServerSimpleExample extends IOApp {
         case GET -> Root =>
           Ok(Json.obj("root" -> Json.fromString("GET")))
         case GET -> Root / "hello" / name =>
+          println("here i am")
           Ok(show"Hi $name!")
         case GET -> Root / "chunked" =>
           val body = Stream("This IS A CHUNK\n").repeat

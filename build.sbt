@@ -748,7 +748,7 @@ lazy val docs = http4sProject("site")
   .enablePlugins(Http4sSitePlugin)
   .settings(
     libraryDependencies ++= Seq(
-      circeGeneric,
+      circeGeneric.value,
       circeLiteral,
       cryptobits,
     ),
@@ -766,17 +766,17 @@ lazy val docs = http4sProject("site")
   )
 
 lazy val examples = http4sProject("examples")
-  .enablePlugins(NoPublishPlugin)
+  .enablePlugins(NoPublishPlugin, ScalaNativePlugin)
   .settings(
     description := "Common code for http4s examples",
     startYear := Some(2013),
     libraryDependencies ++= Seq(
-      circeGeneric % Runtime,
+      circeGeneric.value % Runtime,
       logbackClassic % Runtime,
     ),
     coverageEnabled := false,
   )
-  .dependsOn(server.jvm, theDsl.jvm, circe.jvm)
+  .dependsOn(server.native, theDsl.native, circe.native)
 
 lazy val examplesEmber = exampleProject("examples-ember")
   .settings(Revolver.settings)
@@ -786,8 +786,22 @@ lazy val examplesEmber = exampleProject("examples-ember")
     fork := true,
     scalacOptions -= "-Xfatal-warnings",
     coverageEnabled := false,
+    libraryDependencies += epollcat.value,
+    Compile / mainClass := Some("com.example.http4s.ember.EmberServerSimpleExample"),
+    nativeConfig ~= { c =>
+      if (isLinux) { // brew-installed s2n
+        c.withLinkingOptions(c.linkingOptions :+ "-L/home/linuxbrew/.linuxbrew/lib")
+      } else c
+    },
+    envVars ++= {
+      val ldLibPath =
+        if (isLinux)
+          Map("LD_LIBRARY_PATH" -> "/home/linuxbrew/.linuxbrew/lib")
+        else Map.empty
+      Map("S2N_DONT_MLOCK" -> "1") ++ ldLibPath
+    },
   )
-  .dependsOn(emberServer.jvm, emberClient.jvm)
+  .dependsOn(emberServer.native, emberClient.native)
 
 lazy val examplesDocker = http4sProject("examples-docker")
   .in(file("examples/docker"))
@@ -911,7 +925,7 @@ def libraryCrossProject(name: String, crossType: CrossType = CrossType.Full) =
 def exampleProject(name: String) =
   http4sProject(name)
     .in(file(name.replace("examples-", "examples/")))
-    .enablePlugins(NoPublishPlugin)
+    .enablePlugins(NoPublishPlugin, ScalaNativePlugin)
     .settings(libraryDependencies += logbackClassic % Runtime)
     .dependsOn(examples)
 

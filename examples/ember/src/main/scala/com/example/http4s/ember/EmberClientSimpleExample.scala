@@ -19,7 +19,7 @@ package com.example.http4s.ember
 import _root_.io.circe.Json
 import _root_.org.http4s.ember.client.EmberClientBuilder
 import _root_.org.typelevel.log4cats.Logger
-import _root_.org.typelevel.log4cats.slf4j.Slf4jLogger
+// import _root_.org.typelevel.log4cats.slf4j.Slf4jLogger
 import cats.effect._
 import cats.syntax.all._
 import fs2._
@@ -32,15 +32,15 @@ import scodec.bits.ByteVector
 
 import scala.concurrent.duration._
 
-object EmberClientSimpleExample extends IOApp {
+object EmberClientSimpleExample extends epollcat.EpollApp {
 
   val githubReq: Request[IO] = Request[IO](Method.GET, uri"http://christopherdavenport.github.io/")
-  val dadJokeReq: Request[IO] = Request[IO](Method.GET, uri"https://icanhazdadjoke.com/")
-  val googleReq: Request[IO] = Request[IO](Method.GET, uri"https://www.google.com/")
-  val httpBinGet: Request[IO] = Request[IO](Method.GET, uri"https://httpbin.org/get")
-  val httpBinPng: Request[IO] = Request[IO](Method.GET, uri"https://httpbin.org/image/png")
+  val dadJokeReq: Request[IO] = Request[IO](Method.GET, uri"http://icanhazdadjoke.com/")
+  val googleReq: Request[IO] = Request[IO](Method.GET, uri"http://www.google.com/")
+  val httpBinGet: Request[IO] = Request[IO](Method.GET, uri"http://httpbin.org/get")
+  val httpBinPng: Request[IO] = Request[IO](Method.GET, uri"http://httpbin.org/image/png")
 
-  val logger: SelfAwareStructuredLogger[IO] = Slf4jLogger.getLogger[IO]
+  def logger = org.typelevel.log4cats.noop.NoOpLogger[IO]
 
   def run(args: List[String]): IO[ExitCode] =
     EmberClientBuilder
@@ -77,9 +77,9 @@ object EmberClientSimpleExample extends IOApp {
           .map(bv => resp.copy(body = Stream.chunk(Chunk.byteVector(bv))))
       )
 
-  def logTimed[F[_]: Temporal, A](logger: Logger[F], name: String, fa: F[A]): F[A] =
+  def logTimed[F[_]: Async, A](logger: Logger[F], name: String, fa: F[A]): F[A] =
     timedMS(fa).flatMap { case (time, action) =>
-      logger.info(s"Action $name took $time").as(action)
+      Async[F].delay(println(s"Action $name took $time")).as(action)
     }
 
   def timedMS[F[_]: Temporal, A](fa: F[A]): F[(FiniteDuration, A)] = {
